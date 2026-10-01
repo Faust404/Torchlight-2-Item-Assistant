@@ -25,6 +25,12 @@ Nothing here raises on data it does not understand.  An item with an effect
 nobody can name still shows that name, because a tooltip missing a line is a
 great deal better than a tool that will not draw one.
 
+An item comes out of here as a :class:`~tl2stash.card.Card`: the lines above,
+gathered into the sections the game draws them in, along with the tier and the
+kind and the icon that the game puts above them.  ``render`` flattens that back
+to the plain list it has always returned, and everything that only wants the
+text goes on calling it.
+
 Derived by reading what the game's own files say and checking the result
 against real items; not transcribed from another implementation.
 """
@@ -36,6 +42,17 @@ import re
 import struct
 from typing import TYPE_CHECKING
 
+from .card import (
+    ADDED,
+    AFFIX,
+    ARMOR,
+    DAMAGE,
+    TIER_KEYS,
+    TIER_NONE,
+    Block,
+    Card,
+    lines,
+)
 from .dat import VAR_FLAVOR
 from .item import strip_markup
 
@@ -43,7 +60,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .gamedata import GameData
     from .item import Effect, Item
 
-__all__ = ["format_value", "render"]
+__all__ = ["build", "format_value", "render"]
 
 #: A description's holes.  The complete set was read off all 808 descriptions
 #: in the game; a tag outside it is left standing rather than replaced with a
@@ -319,21 +336,20 @@ def _damage_lines(derived) -> list[str]:
     return lines
 
 
-def render(item: "Item", data: "GameData | None" = None) -> list[str]:
-    """The lines of an item's tooltip, in the game's order.
+def build(item: "Item", data: "GameData | None" = None) -> Card:
+    """An item as a card: its headline, its blocks of lines, its gems.
+
+    The lines are the same ones :func:`render` has always produced, in the same
+    order -- what is new is that they arrive grouped by the section they belong
+    to, and that the parts of an item which are not lines at all (its tier, its
+    kind, its icon) come with them.  The window draws cards; everything else
+    goes on reading the flattened list.
 
     ``data`` may be ``None``: the game's files are not always somewhere the
     tool can find them, and without them the lines that need wording come back
-    as the names the save file gave.
+    as the names the save file gave, and the item has no tier, kind or icon.
     """
-    lines: list[str] = []
-
-    title = item.display_name
-    if title:
-        lines.append(title)
-
-    if item.level:
-        lines.append(f"Requires Level {item.level}")
+    blocks: list[tuple[str, list[str]]] = []
 
     # The save file holds one number for a weapon -- its physical maximum --
     # and no elemental part at all, so the game's own arithmetic is used
@@ -342,28 +358,27 @@ def render(item: "Item", data: "GameData | None" = None) -> list[str]:
     # 'Physical Damage 52-74' and 'Electric Damage 77-110'.
     derived = data.derived_for(item) if data is not None else None
     if derived is not None:
-        lines.extend(_damage_lines(derived))
+        kind = DAMAGE if derived.kind == "damage" else ARMOR
+        blocks.append((kind, _damage_lines(derived)))
     else:
         # 0xFFFFFFFF is what the file holds where an item has none of a
         # thing -- jewelry carries it as its armor, a ring as its damage.
         if item.max_damage not in (0, 0xFFFFFFFF):
-            lines.append(f"Damage {item.max_damage}")
+            blocks.append((DAMAGE, [f"Damage {item.max_damage}"]))
         if item.armor not in (0, 0xFFFFFFFF):
-            lines.append(f"Armor {item.armor}")
+            blocks.append((ARMOR, [f"Armor {item.armor}"]))
 
     # Flat damage sits with the rest of the damage, above the effects.
-    lines.extend(_added_damage_lines(item))
+    blocks.append((ADDED, _added_damage_lines(item)))
 
     if data is not None:
-        lines.extend(_effect_lines(item, data))
+        blocks.append((AFFIX, _effect_lines(item, data)))
     else:
-        lines.extend(e.name for e in item.effects + item.effects2 if e.name)
+        blocks.append(
+            (AFFIX, [e.name for e in item.effects + item.effects2 if e.name])
+        )
 
-    # A gem renders as its own item, indented: in the game a socket's contents
-    # read as lines under the item that holds them.
-    for gem in item.gems:
-        lines.extend(f"    {line}" for line in render(gem, data))
-
+    flavor = None
     if data is not None:
         # The item's own data file first, because a unique is not *named*
         # what it is called -- the node behind Wanderlust Pants is
@@ -373,7 +388,28 @@ def render(item: "Item", data: "GameData | None" = None) -> list[str]:
         if not flavor:
             source = data.by_name(item.base_name)
             flavor = source.text(VAR_FLAVOR) if source else None
-        if flavor:
-            lines.append(flavor)
 
-    return lines
+    appearance = data.appearance_for(item) if data is not None else None
+
+    return Card(
+        name=item.display_name,
+        tier=TIER_KEYS.get(appearance.tier, TIER_NONE) if appearance else TIER_NONE,
+        tier_word=appearance.tier if appearance else "",
+        type_name=appearance.type_name if appearance else "",
+        icon=appearance.icon if appearance else None,
+        level=item.level,
+        sockets=item.num_sockets,
+        # An empty section is dropped rather than kept as a heading with
+        # nothing under it, which is what lets `lines` concatenate them.
+        blocks=tuple(Block(kind, tuple(found)) for kind, found in blocks if found),
+        gems=tuple(build(gem, data) for gem in item.gems),
+        flavor=flavor or None,
+    )
+
+
+def render(item: "Item", data: "GameData | None" = None) -> list[str]:
+    """The lines of an item's tooltip, in the game's order.
+
+    The card is the description and this is it flattened; see :func:`build`.
+    """
+    return lines(build(item, data))
