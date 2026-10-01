@@ -21,11 +21,15 @@ from tl2stash.dat import (  # noqa: E402
     VAR_BADDES,
     VAR_BADDESOT,
     VAR_DISPLAYPRECISION,
+    VAR_DISPLAY_NAME,
     VAR_EFFECT_TYPE,
     VAR_GOODDES,
     VAR_GOODDESOT,
     VAR_NAME,
+    VAR_SET,
     VAR_SLOT_BASE,
+    VAR_UNITTYPE,
+    VAR_UNIT_GUID,
     DatFile,
 )
 from tl2stash.gamedata import (  # noqa: E402
@@ -33,6 +37,7 @@ from tl2stash.gamedata import (  # noqa: E402
     GameData,
     archive_path,
     find_install,
+    read_unit_type,
 )
 
 from test_dat import TEXT, TRANSLATE, needs_game, real_game, write_dat  # noqa: E402
@@ -607,6 +612,184 @@ def test_a_unique_s_flavour_is_found_through_its_guid_and_not_its_name(real_game
 def test_an_item_the_archive_does_not_know_has_no_flavour(real_game):
     assert real_game.flavor_for(item(guid=0xDEADBEEF)) is None
     assert real_game.flavor_for(item(guid=0)) is None
+
+
+# --------------------------------------------------------------------------
+# What an item looks like: its rarity, its kind, its icon
+# --------------------------------------------------------------------------
+
+
+def test_the_tier_and_the_kind_are_two_words_in_one_string():
+    """The rule, on the spellings the archive actually uses.
+
+    There is no separator between the two, so the first word is a tier only
+    when it is a word the game uses for one -- and when it is not, the string
+    has no tier at all and is entirely the kind.
+    """
+    assert read_unit_type("UNIQUE 1HSWORD") == ("Unique", "1H Sword")
+    assert read_unit_type("MAGIC BOOTS") == ("Magic", "Boots")
+    assert read_unit_type("UNIQUE SHOULDER ARMOR") == ("Unique", "Shoulder Armor")
+    # An underscore separates them as well as a space does.
+    assert read_unit_type("UNIQUE_COLLAR") == ("Unique", "Collar")
+    # No tier word, so the whole thing is the kind.
+    assert read_unit_type("SWORD") == ("", "Sword")
+    assert read_unit_type("POTION") == ("", "Potion")
+    assert read_unit_type("FISH") == ("", "Fish")
+    # Run together with nothing between them: not a tier, and not guessed at.
+    assert read_unit_type("UNIQUECANNON") == ("", "Uniquecannon")
+    assert read_unit_type("") == ("", "")
+
+
+@needs_game
+def test_a_unique_is_read_as_a_unique_with_its_kind_and_its_icon(real_game):
+    """Bashdrill: a unique fist weapon, and all of this from its own file.
+
+    The save file carries none of it -- it knows a name, a level and a damage
+    number, and that is all.  The item is ``FIST_U04.DAT``, which states only
+    its icon and its base file; the tier and the kind come down the chain from
+    ``base_fists_unique.dat``, which is the inheritance this reads through.
+    """
+    appearance = real_game.appearance_for(_bashdrill())
+
+    assert appearance.tier == "Unique"
+    assert appearance.type_name == "Fist"
+    assert appearance.icon == "icon_weapon_fist14"
+    assert appearance.set_name is None
+    assert appearance.item_level == 45
+
+
+@needs_game
+def test_a_set_piece_is_tiered_by_its_set_and_not_by_its_own_rarity(real_game):
+    """The file calls a set piece magic or unique; the game shows it as a set.
+
+    Both spellings are real: four items in the archive belong to a set and
+    state ``MAGIC`` themselves, and the rest inherit ``UNIQUE`` from a base
+    file.  A set is a third thing beside the two, and the only thing that says
+    so is the ``SET`` field -- which is why it overrides rather than fills in.
+
+    Read out of the game's own files rather than through the code under test:
+    the item's file is found by its guid and the set's name is in the set's
+    own file under ``DISPLAYNAME``, so the expectation cannot come from the
+    tool.  The chain walk in :func:`_a_set_item` is not itself under test --
+    that items inherit their tier is pinned by Bashdrill, which states neither
+    a tier nor an icon and has both.
+    """
+    for wanted in ("MAGIC", "UNIQUE"):
+        guid, unit_type, set_id, shown = _a_set_item(real_game, wanted)
+
+        assert unit_type.startswith(wanted), "the item's own tier word changed"
+        assert set_id != shown, "the internal id is what is shown"
+
+        appearance = real_game.appearance_for(item(guid=guid))
+        assert appearance.tier == "Set", f"a {wanted} set piece is not shown as a set"
+        assert appearance.set_name == shown
+
+
+@needs_game
+def test_no_item_file_anywhere_calls_itself_a_set(real_game):
+    """The measurement that makes the override the whole rule.
+
+    If any ``UNITTYPE`` in the archive read ``SET`` there would be something to
+    read, and the field would not need overriding -- or, worse, an item could
+    be one and not the other.
+    """
+    from tl2stash.pak import PakFile, PakIndex
+
+    man = archive_path(real_game.install)
+    index = PakIndex.read(man)
+    wanted = 0
+    with PakFile(man.with_name("DATA.PAK"), index) as archive:
+        for entry in index.entries:
+            if not entry.startswith("MEDIA/UNITS/ITEMS/") or not entry.endswith(".DAT"):
+                continue
+            try:
+                root = DatFile.parse(archive.read(entry)).root
+            except Exception:  # a file that will not parse states nothing
+                continue
+            for node in root.walk():
+                unit_type = node.text(VAR_UNITTYPE)
+                if unit_type:
+                    assert not unit_type.upper().startswith("SET"), entry
+                    wanted += 1
+
+    assert wanted > 1000, "the sweep stopped finding items with a unit type"
+
+
+@needs_game
+def test_an_item_the_archive_does_not_know_has_no_appearance(real_game):
+    """A modded item's data is in the mod, not in ``DATA.PAK``.
+
+    Nothing raises and nothing is guessed: the caller draws the item without
+    a tier, a kind or an icon, and every stat line it does have still renders.
+    """
+    assert real_game.appearance_for(item(guid=0xDEADBEEF)) is None
+    assert real_game.appearance_for(item(guid=0)) is None
+
+
+def _a_set_item(game, tier_word: str) -> tuple[int, str, str, str]:
+    """``(guid, UNITTYPE, SET id, the set's display name)`` for a real one.
+
+    ``tier_word`` picks which spelling of set piece to return.  Walked out of
+    the archive directly, the way :func:`_affix_effects` is: what is being
+    pinned is that the *game's* files say one thing and the tool reads it, so
+    the expectation cannot come from the tool.
+    """
+    from tl2stash.pak import PakFile, PakIndex
+
+    man = archive_path(game.install)
+    index = PakIndex.read(man)
+    with PakFile(man.with_name("DATA.PAK"), index) as archive:
+        # Keyed by the set's own NAME rather than by its filename: an item's
+        # SET field holds the former, and one of the 88 disagrees with the
+        # latter -- ``TL2_STURMBEORN.DAT`` holds ``STURMBEORN``.
+        shown_for: dict[str, str] = {}
+        for entry in index.entries:
+            if not entry.startswith("MEDIA/SETS/") or not entry.endswith(".DAT"):
+                continue
+            node = DatFile.parse(archive.read(entry)).root
+            name = node.text(VAR_NAME)
+            shown = node.text(VAR_DISPLAY_NAME)
+            if name and shown:
+                shown_for[name.upper()] = shown
+
+        for entry in index.entries:
+            if not entry.startswith("MEDIA/UNITS/ITEMS/") or not entry.endswith(".DAT"):
+                continue
+            stated = game._item_files.get(entry.upper())
+            if stated is None:
+                continue
+            set_id = stated.root.text(VAR_SET)
+            guid = _inherited_text(game, stated.root, VAR_UNIT_GUID)
+            unit_type = _inherited_text(game, stated.root, VAR_UNITTYPE)
+            if not (set_id and unit_type and guid):
+                continue
+            if not unit_type.startswith(tier_word):
+                continue
+            shown = shown_for.get(set_id.upper())
+            assert shown, f"{set_id} is in no set file's NAME"
+            return int(guid) & 0xFFFFFFFFFFFFFFFF, unit_type, set_id, shown
+
+    raise AssertionError(f"no {tier_word}-tier set piece carries all three fields now")
+
+
+def _inherited_text(game, node, var_id: int) -> str | None:
+    """A field's value from the node or the nearest file up the base chain.
+
+    The chain walk is not what this test is about -- it is pinned by Bashdrill,
+    which states neither a tier nor an icon and resolves both.
+    """
+    from tl2stash.dat import VAR_BASEFILE
+    from tl2stash.gamedata import _data_path
+
+    for _ in range(16):  # every real chain is well under this
+        stated = node.text(var_id)
+        if stated:
+            return stated
+        above = node.text(VAR_BASEFILE)
+        if not above:
+            return None
+        node = game._item_files[_data_path(above)].root
+    raise AssertionError("the base chain is longer than any real one")
 
 
 def _affix_effects(game) -> tuple[list[str], dict[str, set[int]]]:

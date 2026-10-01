@@ -73,6 +73,10 @@ MAX_EXTRA_RECORDS = 64
 #: sentence intact.
 _MARKUP = re.compile(r"\|c[0-9A-Fa-f]{8}|\|u")
 
+#: The hole an affix leaves for the item's own name.  Not markup and not
+#: colour -- it is a slot, and what fills it is ``Item.name``.
+_ITEM_TAG = "[ITEM]"
+
 
 def strip_markup(text: str) -> str:
     """Remove colour markup and the trailing NUL from a Torchlight string."""
@@ -160,8 +164,23 @@ class Item:
 
     @property
     def display_name(self) -> str:
-        """Name with affixes, as the game would title it."""
-        parts = [strip_markup(p) for p in (self.prefix, self.name, self.suffix)]
+        """Name with affixes, as the game would title it.
+
+        An affix is free to say where the item's own name goes inside it, and
+        most of them do: ``'of Invigoration'`` is stored as ``'[ITEM] of
+        Invigoration'`` and ``[ITEM]`` is the hole the base name drops into.
+        The string itself says where -- 95 of the archive's 205 ``[ITEM]``
+        affixes put the tag at the front and the rest at the end, so
+        ``'Swift [ITEM]'`` reads ``'Swift Pioneer Belt'`` and ``'[ITEM] of
+        Invigoration'`` reads ``'Pioneer Belt of Invigoration'`` -- which is
+        why the base name is appended only when no affix has already placed
+        it.
+        """
+        base = strip_markup(self.name)
+        prefix = strip_markup(self.prefix).replace(_ITEM_TAG, base)
+        suffix = strip_markup(self.suffix).replace(_ITEM_TAG, base)
+        placed = _ITEM_TAG in self.prefix or _ITEM_TAG in self.suffix
+        parts = (prefix, "" if placed else base, suffix)
         return " ".join(p for p in parts if p)
 
     @property

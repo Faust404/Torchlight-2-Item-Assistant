@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .dat import (
@@ -54,12 +54,15 @@ from .dat import (
     VAR_DAMAGE_POISON,
     VAR_DISPLAY_NAME,
     VAR_FLAVOR,
+    VAR_ICON,
     VAR_LEVEL,
     VAR_MAXDAMAGE,
     VAR_MINDAMAGE,
     VAR_RARITY_DMG_MOD,
+    VAR_SET,
     VAR_SLOT_BASE,
     VAR_SPEED_DMG_MOD,
+    VAR_UNITTYPE,
     VAR_UNIT_GUID,
     DatFile,
     DatNode,
@@ -68,10 +71,12 @@ from .pak import PakFile, PakIndex
 
 __all__ = [
     "ARCHIVE_NAME",
+    "Appearance",
     "Derived",
     "GameData",
     "archive_path",
     "find_install",
+    "read_unit_type",
 ]
 
 #: The files worth reading, out of the archive's 70,443.  An item's numbers
@@ -187,6 +192,125 @@ class Derived:
 
     kind: str
     parts: dict[str, tuple[int, int]]
+
+
+#: The words the game puts in front of an item's kind to say how good it is,
+#: with the number of the archive's 6,262 item files that resolve to each.
+#: Read off the archive rather than invented: these six are every first word
+#: of every inherited ``UNITTYPE`` that is a tier, and the words that are not
+#: here are kinds -- SPELL, MAP, FISH, SWORD, POTION.
+#:
+#: The game has no word for the blue tier other than ``MAGIC``.  A table
+#: elsewhere may call it "rare"; the colour is the same either way, and this
+#: is what the game's own file says.
+QUALITY_WORDS = {
+    "MAGIC": "Magic",  # 2,061
+    "UNIQUE": "Unique",  # 1,742
+    "NORMAL": "Normal",  # 1,660
+    "QUESTITEM": "Quest",  # 151
+    "LEGENDARY": "Legendary",  # 92
+    "LEVEL": "Level",  # 35
+}
+
+#: What a piece of a set is, whatever its own rarity says.
+#:
+#: The archive's statement that an item is in a set is its ``SET`` field
+#: being non-empty, and there are 556 such item files.  Every one of them
+#: resolves to ``UNIQUE`` (346) or ``MAGIC`` (210) -- not one calls itself a
+#: set, which is why this overrides the tier rather than filling in for a
+#: missing one.
+TIER_SET = "Set"
+
+
+@dataclass(frozen=True)
+class Appearance:
+    """What an item looks like, as opposed to what it does.
+
+    Everything here comes from the item's own data file, reached by the guid
+    in the save blob, and every field is inherited: an item states only its
+    differences, so ``BERSERKER_01_BOOTS.DAT`` carries no ``UNITTYPE`` of its
+    own and takes ``'UNIQUE BOOTS'`` from three files up the chain.
+
+    ``tier`` is one of :data:`QUALITY_WORDS`' values, or :data:`TIER_SET`,
+    or the empty string for an item whose file says something that is not a
+    tier at all -- ``UNIQUECANNON`` and ``UNIQUE_COLLAR`` are both in the
+    archive.  The empty string is not a failure and not a guess: it means the
+    item has no rarity to show, and it is drawn the way an unknown one is.
+
+    ``icon`` is a name under ``MEDIA/UI/ICONS`` and is not a path; turning it
+    into pixels is :mod:`tl2stash.icons`' job, and most items resolve.
+    """
+
+    tier: str
+    type_name: str
+    icon: str | None
+    set_name: str | None
+    item_level: int
+
+
+def _appearance(stated: dict[int, DatNode]) -> Appearance:
+    """Read the four appearance fields off an item's inherited variables."""
+    unit_type = _text(stated, VAR_UNITTYPE) or ""
+    tier, type_name = read_unit_type(unit_type)
+
+    set_id = _text(stated, VAR_SET)
+    if set_id:
+        # The file saying it is in a set is the item's own statement about
+        # itself, and it outranks the rarity word: a set piece says ``UNIQUE
+        # BOOTS`` and the game still shows it as its own tier.
+        tier = TIER_SET
+
+    return Appearance(
+        tier=tier,
+        type_name=type_name,
+        icon=_text(stated, VAR_ICON),
+        set_name=set_id,
+        item_level=int(_number(stated, VAR_LEVEL) or 0),
+    )
+
+
+def read_unit_type(unit_type: str) -> tuple[str, str]:
+    """``'UNIQUE 1HSWORD'`` into its tier and its kind.
+
+    The two arrive in one string and there is no separator to trust: the
+    archive writes ``'UNIQUE BOOTS'``, ``'UNIQUE SHOULDER ARMOR'`` and
+    ``'UNIQUECANNON'`` alike.  So the first word is read as a tier only when
+    it is one of the six the game actually uses (see :data:`QUALITY_WORDS`);
+    anything else means the string has no tier in it at all and the whole
+    thing is the kind, which is how ``'SWORD'``, ``'POTION'`` and ``'FISH'``
+    are written.
+
+    The kind comes back as words for reading.  ``'1HSWORD'`` is the game's
+    own spelling and the player is shown ``1H Sword``.
+
+    A tier that is not one of the six comes back as the empty string rather
+    than as a guess.  ``UNIQUECANNON`` is a unique cannon written without a
+    space and is drawn as an item with no rarity, which is wrong but is at
+    least *visibly* wrong; calling it Unique would be right by luck and would
+    stop anyone noticing the next one.
+    """
+    words = unit_type.replace("_", " ").split()
+    if not words:
+        return "", ""
+    tier = QUALITY_WORDS.get(words[0])
+    if tier is None:
+        return "", _readable_type(words)
+    return tier, _readable_type(words[1:])
+
+
+def _readable_type(words: list[str]) -> str:
+    """A kind as words: ``['1HSWORD']`` is ``'1H Sword'``.
+
+    The archive's kinds are run together and shouted, and the two-letter
+    handedness prefixes are the only ones that split at a meaningful place --
+    ``1HSWORD`` is a one-handed sword and ``2HSTAFF`` a two-handed staff,
+    while ``SHOULDERARMOR`` is simply two words.
+    """
+    return " ".join(_spaced(word) for word in words)
+
+
+def _spaced(word: str) -> str:
+    return re.sub(r"^([12])H", r"\1H ", word).title()
 
 
 def archive_path(install: str | Path) -> Path:
@@ -577,6 +701,41 @@ class GameData:
         node = self._inherited(data).get(VAR_FLAVOR)
         return node.text(VAR_FLAVOR) if node is not None else None
 
+    def appearance_for(self, item) -> Appearance | None:
+        """What an item is, and what it looks like: its tier, kind and icon.
+
+        The save file carries none of this.  It says an item is called
+        ``Bashdrill`` and holds so much damage; that it is a *unique fist
+        weapon* drawn with ``icon_weapon_fist14`` is only in the file it was
+        made from, which the guid leads to -- and that file states neither,
+        so it comes down a chain of base files to get here.
+
+        ``None`` when the item cannot be traced to a file, which is what a
+        modded item is -- its data lives in the mod, not in ``DATA.PAK``, and
+        the item's ``guid`` matches nothing.  Callers draw the item without a
+        tier rather than refusing to draw it.
+
+        A set's name is resolved here too, because it is the same lookup: the
+        ``SET`` field holds ``'U_TRUE_NORTH'`` and the set's own file is what
+        calls that ``'True North'``.  ``MEDIA/SETS`` is read for its display
+        names along with everything else, so this costs no extra work.
+        """
+        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
+        if data is None:
+            return None
+
+        appearance = _appearance(self._inherited(data))
+        if appearance.set_name is None:
+            return appearance
+
+        # The set's player-facing name, where its file gives one.  Falling
+        # back to the internal id rather than to nothing: 'U_TRUE_NORTH' is
+        # not what the player sees, but it is better than an unnamed set.
+        return replace(
+            appearance,
+            set_name=self.skill_name(appearance.set_name) or appearance.set_name,
+        )
+
     def _inherited(self, data: DatFile) -> dict[int, DatNode]:
         """Which node states each of an item's fields, base files included.
 
@@ -677,6 +836,19 @@ def _number(stated: dict[int, DatNode], var_id: int) -> float | None:
     """The number a field holds, on whichever node ended up stating it."""
     node = stated.get(var_id)
     return node.number(var_id) if node is not None else None
+
+
+def _text(stated: dict[int, DatNode], var_id: int) -> str | None:
+    """The string a field holds, on whichever node ended up stating it.
+
+    An empty string is treated as absent.  The archive writes ``SET`` as an
+    empty string on the great majority of items and the two mean the same
+    thing here -- there is no set -- so collapsing them saves every caller
+    the same check.
+    """
+    node = stated.get(var_id)
+    text = node.text(var_id) if node is not None else None
+    return text or None
 
 
 def _data_path(name: str) -> str:

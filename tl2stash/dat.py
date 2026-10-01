@@ -69,9 +69,11 @@ __all__ = [
     "VAR_MINDAMAGE",
     "VAR_NAME",
     "VAR_RARITY_DMG_MOD",
+    "VAR_SET",
     "VAR_SLOT_BASE",
     "VAR_SPEED_DMG_MOD",
     "VAR_UNIDENTIFIED_NAME",
+    "VAR_UNITTYPE",
     "VAR_UNIT_GUID",
     "DatFile",
     "DatNode",
@@ -149,6 +151,22 @@ VAR_UNIDENTIFIED_NAME = field_hash("UNIDENTIFIED_NAME")
 
 #: The icon's name, as a stem under ``MEDIA/UI/ICONS``.
 VAR_ICON = field_hash("ICON")
+
+#: What an item *is*, in one string: the tier and the kind together, as
+#: ``'UNIQUE 1HSWORD'`` or ``'MAGIC BOOTS'``.  Most items inherit it rather
+#: than state it -- ``BERSERKER_01_BOOTS.DAT`` carries none of its own and
+#: takes ``'UNIQUE BOOTS'`` from three files up.
+#:
+#: The first word is a tier only when it is one of the six the archive
+#: actually uses -- MAGIC, UNIQUE, NORMAL, QUESTITEM, LEGENDARY, LEVEL -- so
+#: ``'SWORD'`` and ``'POTION'`` are types with no tier in front of them.  The
+#: archive has no ``RARE``: the blue tier is the game's ``MAGIC``.
+VAR_UNITTYPE = field_hash("UNITTYPE")
+
+#: The set an item belongs to, as ``'U_TRUE_NORTH'`` -- the *internal* name,
+#: which is what ``MEDIA/SETS/U_TRUE_NORTH.DAT`` is filed under and what its
+#: ``DISPLAYNAME`` turns into ``'True North'`` for the player.
+VAR_SET = field_hash("SET")
 
 #: ``KEFFECT_TYPE_MELEEDAMAGEBONUS`` and friends: an effect node's own type,
 #: spelled out.  Equal to the node's id, which is what makes an effect's

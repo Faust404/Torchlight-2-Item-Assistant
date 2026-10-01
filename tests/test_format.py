@@ -162,6 +162,27 @@ def test_synthetic_item_parses():
     assert item.raw == blob
 
 
+def test_an_affix_says_where_the_item_s_own_name_goes():
+    """``[ITEM]`` is the hole the base name drops into, and it moves.
+
+    An affix is free to write the item's name into the middle of itself, and
+    the archive's 205 ``[ITEM]`` affixes are about half and half: 95 begin
+    with the tag and the rest end with it.  Reading it as anything but a slot
+    puts the tag on screen -- ``'[ITEM] of Invigoration Pioneer Belt'`` -- and
+    that is the item's title, on every card and in every list.
+    """
+    blob, _ = synthetic_item(name="Pioneer Belt", prefix="[ITEM] of Invigoration")
+    assert parse_item(blob).display_name == "Pioneer Belt of Invigoration"
+
+    blob, _ = synthetic_item(name="War Mallet", prefix="Demolishing [ITEM]")
+    assert parse_item(blob).display_name == "Demolishing War Mallet"
+
+    # An affix with no tag leaves the base name where it has always been:
+    # between the two, in the order prefix, name, suffix.
+    blob, _ = synthetic_item(name="Test Blade", prefix="Keen", suffix="of Flame")
+    assert parse_item(blob).display_name == "Keen Test Blade of Flame"
+
+
 def test_extra_records_shift_the_layout():
     """A non-zero extra-record count must consume exactly 8 bytes per record.
 
