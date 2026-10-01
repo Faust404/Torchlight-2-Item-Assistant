@@ -27,13 +27,15 @@ from tl2stash.card import (  # noqa: E402
     ARMOR,
     DAMAGE,
     TIER_NONE,
+    carried_magic,
+    display_tier,
     lines,
 )
 from tl2stash.item import AddedDamage  # noqa: E402
 from tl2stash.tooltip import build, render  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
-from test_gamedata import _a_set_item, _bashdrill  # noqa: E402
+from test_gamedata import _a_set_item, _an_item_of_tier, _bashdrill  # noqa: E402
 from test_tooltip import effect, item, word  # noqa: E402
 
 
@@ -111,6 +113,79 @@ def test_a_set_piece_wears_the_rarity_of_the_file_it_displaced(real_game):
 
     # And an item with no data file to read has no tier rather than a guess.
     assert build(item(guid=0), real_game).tier == TIER_NONE
+
+
+# --------------------------------------------------------------------------
+# The tier the game shows, which is not always the one the file states
+# --------------------------------------------------------------------------
+
+
+def test_a_plain_item_carries_no_magic_and_keeps_the_tier_its_file_states():
+    """The rule, on the shapes :class:`~tl2stash.item.Item` actually takes."""
+    plain = item()
+    assert not carried_magic(plain)
+    assert display_tier("Normal", plain) == "Normal"
+
+    # A name affix is the mark the player sees: 'Demolishing War Mallet' is
+    # green in the game and its file says NORMAL 1HMACE.
+    assert carried_magic(item(prefix="Demolishing [ITEM]"))
+    assert display_tier("Normal", item(prefix="Demolishing [ITEM]")) == "Magic"
+    assert carried_magic(item(suffix="of the Bear"))
+    # An enchantment is the other mark, and it is the only one a name cannot
+    # show: the enchanter leaves no affix on the item, only this count.
+    assert carried_magic(item(num_enchants=1))
+
+
+def test_magic_does_not_recolour_an_item_that_already_has_a_colour():
+    """Only a Normal item moves; the tiers above it keep their own.
+
+    A green item is not green *instead* of being rare -- the game colours a
+    blue item blue however much is put on it, which is why the rule reads the
+    base tier before it reads anything else.
+    """
+    dressed = item(prefix="Demolishing [ITEM]", num_enchants=2)
+
+    assert display_tier("Rare", dressed) == "Rare"
+    assert display_tier("Unique", dressed) == "Unique"
+    assert display_tier("Set", dressed) == "Set"
+    assert display_tier("", dressed) == ""
+
+
+def test_the_effect_list_is_not_what_makes_an_item_magic():
+    """The measurement that keeps the rule from painting everything green.
+
+    An effect list is the obvious thing to reach for and it is the wrong one:
+    read over every stored item it is non-empty on nearly all of them -- every
+    unique, every set piece, every spell and every fish -- because it is the
+    item's own stat records rather than a mark of something added.  This is
+    the one line standing between the rule and a collection that is green
+    corner to corner.
+    """
+    assert item().effects == []
+    loaded = item(effects=[effect("OFTHEELEPHANT MAX HP", value=81.6)])
+
+    assert loaded.effects, "the item stopped carrying effects"
+    assert not carried_magic(loaded)
+
+
+@needs_game
+def test_a_white_item_with_magic_on_it_is_built_green(real_game):
+    """The whole rule end to end, on a real item file of the game's.
+
+    The rule is tested on its own above; what this pins is that ``build``
+    asks it -- a rule nobody calls is a rule that is not there.  The item is
+    a real ``NORMAL`` one out of the archive, given the two shapes the save
+    file produces: nothing on it, and a name affix.  The affix is the whole
+    difference, so nothing else on the card may move, and only the tier does.
+    """
+    guid, _ = _an_item_of_tier(real_game, "NORMAL")
+
+    plain = build(item(guid=guid), real_game)
+    assert (plain.tier, plain.tier_word) == ("normal", "Normal")
+    assert plain.set_name is None
+
+    dressed = build(item(guid=guid, prefix="Demolishing [ITEM]"), real_game)
+    assert (dressed.tier, dressed.tier_word) == ("magic", "Magic")
 
 
 # --------------------------------------------------------------------------

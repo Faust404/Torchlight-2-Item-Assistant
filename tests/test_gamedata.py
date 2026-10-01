@@ -754,6 +754,37 @@ def test_an_item_the_archive_does_not_know_has_no_appearance(real_game):
     assert real_game.appearance_for(item(guid=0)) is None
 
 
+def _an_item_of_tier(game, tier_word: str) -> tuple[int, str]:
+    """``(guid, kind)`` for a real item file stating ``tier_word``.
+
+    Walked out of the archive directly, like :func:`_a_set_item`, so the
+    expectation cannot come from the tool.  Set pieces are skipped: a white
+    item that belongs to a set would not be a plain one, and membership is
+    :func:`_a_set_item`'s subject.
+
+    The kind comes from :func:`read_unit_type` because it is not what this is
+    for -- a caller that wants to check the parse has its own tests above.
+    """
+    from tl2stash.pak import PakFile, PakIndex
+
+    man = archive_path(game.install)
+    index = PakIndex.read(man)
+    with PakFile(man.with_name("DATA.PAK"), index) as archive:
+        for entry in index.entries:
+            if not entry.startswith("MEDIA/UNITS/ITEMS/") or not entry.endswith(".DAT"):
+                continue
+            stated = game._item_files.get(entry.upper())
+            if stated is None or stated.root.text(VAR_SET):
+                continue
+            guid = _inherited_text(game, stated.root, VAR_UNIT_GUID)
+            unit_type = _inherited_text(game, stated.root, VAR_UNITTYPE)
+            if not (guid and unit_type and unit_type.startswith(tier_word)):
+                continue
+            return int(guid) & 0xFFFFFFFFFFFFFFFF, read_unit_type(unit_type)[1]
+
+    raise AssertionError(f"the archive has no {tier_word} item any more")
+
+
 def _a_set_item(game, tier_word: str) -> tuple[int, str, str, str]:
     """``(guid, UNITTYPE, SET id, the set's display name)`` for a real one.
 

@@ -17,6 +17,10 @@ Qt-free, like the rest of ``tl2stash``.  This says what a card *is*;
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:  # pragma: no cover
+    from tl2stash.item import Item
 
 __all__ = [
     "ADDED",
@@ -27,7 +31,10 @@ __all__ = [
     "DAMAGE",
     "TIER_INK",
     "TIER_KEYS",
+    "TIER_MAGIC",
     "TIER_NONE",
+    "carried_magic",
+    "display_tier",
     "lines",
 ]
 
@@ -51,12 +58,16 @@ AFFIX = "affix"
 #: The tier word the player is shown, by the colour it is drawn in.
 #:
 #: Three of these are also the game's own data tokens, unchanged: ``Normal``,
-#: ``Unique`` and ``Legendary``.  ``Rare`` is where the words and the data part
-#: company, and the game says so itself.  Its own tutorial text reads *"Blue
-#: items are more rare and powerful"*, and the samples taken off its overlay
-#: read ``magical #319C00   rare #2182FF   unique #EF6100`` -- so *rare* is the
-#: blue.  The catch is that the data's token for the blue is ``MAGIC``, and
-#: ``gamedata.QUALITY_WORDS`` is the one place that translation happens.
+#: ``Unique`` and ``Legendary``.  The other two are where the words and the
+#: data part company, and the game says so itself.  Its own tutorial text
+#: reads *"Green items have minor enchantments.  Blue items are more rare and
+#: powerful."*, and the samples taken off its overlay read ``magical #319C00
+#: rare #2182FF   unique #EF6100`` -- so *magical* is the green in the game's
+#: vocabulary and *rare* is the blue.  The catch is that the data's token for
+#: the blue is ``MAGIC``, so the file's ``MAGIC`` is shown as "Rare" here and
+#: "Magic" is the green one.  ``gamedata.QUALITY_WORDS`` is the one place that
+#: translation happens, and :func:`display_tier` is the one place the green is
+#: arrived at.
 #:
 #: ``Set`` is not a tier and is not drawn as one: it is a membership, and a set
 #: piece wears the Rare or Unique colour its own file gives it.  The key is
@@ -65,6 +76,7 @@ AFFIX = "affix"
 TIER_KEYS = {
     "Normal": "normal",
     "Rare": "rare",
+    "Magic": "magic",
     "Unique": "unique",
     "Legendary": "legendary",
     "Set": "set",
@@ -78,18 +90,77 @@ TIER_NONE = "none"
 
 #: The colour each tier key is drawn in, by the key :data:`TIER_KEYS` gives it.
 #: The site's ``--t-*``, which it read out of the game's quality overlays rather
-#: than guessing.
+#: than guessing.  ``magic`` is its ``--magic`` -- the game's ``magical
+#: #319C00`` lifted along its own hue the same way ``set`` is, because the
+#: overlay colours are glows meant to sit on icon art and the unlifted purple
+#: is unreadable as text.  The lift lands on exactly the green an affix line is
+#: written in, which is what the game does too: a green item has green lines.
 #:
 #: Every key is present -- including ``none`` -- so drawing one is a lookup and
 #: never a check.
 TIER_INK = {
     "normal": "#e6e6e6",
     "rare": "#2182ff",
+    "magic": "#7cc24a",
     "unique": "#ef6100",
     "set": "#a855f7",
     "legendary": "#ff3100",
     "none": "#8a8a8a",
 }
+
+#: The tier a Normal item is shown as once there is magic on it.
+TIER_MAGIC = "Magic"
+
+
+class CarriesMagic(Protocol):
+    """What :func:`carried_magic` needs, and all it needs.
+
+    The parsed :class:`~tl2stash.item.Item` has these, and so does a registry
+    row for an item the tool has already taken -- which is the point: the
+    window can colour a list of rows without parsing a single blob.
+    """
+
+    prefix: str
+    suffix: str
+    num_enchants: int
+
+
+def carried_magic(item: Item | CarriesMagic) -> bool:
+    """True when the item carries magic a plain Normal item would not.
+
+    Two marks, and both are marks of something *added* rather than of what the
+    base item rolled with: a name affix (``Demolishing War Mallet``), and an
+    enchantment count, which is what an enchanter leaves behind.  A damage
+    enchantment needs no separate test -- it is an enchantment, so it is
+    already in the count.
+
+    The effect list deliberately is not consulted, though it is the obvious
+    thing to reach for.  Measured over every item in every registry, it is
+    non-empty on nearly all of them -- 214 of 217 spells and fish, and all 72
+    unique, 36 set and 27 rare items -- because it is the item's own stats
+    rather than a mark of anything added.  Reading it as one would paint the
+    whole collection green.
+    """
+    return bool(item.prefix.strip() or item.suffix.strip() or item.num_enchants)
+
+
+def display_tier(base_tier: str, item: Item | CarriesMagic) -> str:
+    """The tier the game shows for this *instance*, given its base file's.
+
+    ``UNITTYPE`` gives the base file's rarity, and everything above Normal
+    keeps it however much magic is put on: a unique stays orange and a rare
+    stays blue when they are enchanted.  A Normal item is the one case that
+    moves -- put an affix or an enchantment on it and the game gives it a green
+    name and calls it magic.
+
+    No data file has a word for that state, because it is the instance's and
+    not the file's.  This is where it is arrived at, and it is the only place:
+    the tooltip and the collection list both read it, so they cannot come to
+    different answers about the same item.
+    """
+    if base_tier == "Normal" and carried_magic(item):
+        return TIER_MAGIC
+    return base_tier
 
 
 @dataclass(frozen=True)

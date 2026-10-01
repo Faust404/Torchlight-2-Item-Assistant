@@ -187,6 +187,21 @@ def test_a_set_piece_says_so_in_the_one_word_its_tier_cannot(qapp):
     assert inner == f'<span style="color:{TIER_INK["unique"]}">Unique</span> Set Boots'
 
 
+def test_a_green_item_is_inked_green(qapp):
+    """The tier the references could not tell us about, drawn.
+
+    A magic item's name and tile take the same green the game gives it, which
+    is the same green an affix line is written in.
+    """
+    drawn = ItemCard(card(tier="magic", tier_word="Magic", type_name="1H Mace"))
+
+    name = drawn.findChild(QLabel, "an")
+    assert TIER_INK["magic"] in name.styleSheet()
+    assert drawn.findChild(IconTile).ink.name() == TIER_INK["magic"]
+    (kind,) = texts(drawn, "dtype")
+    assert TIER_INK["magic"] in kind
+
+
 def test_the_corner_says_what_the_item_asks_and_what_it_holds(qapp):
     drawn = ItemCard(card(level=45, sockets=1))
     assert texts(drawn, "pill") == ["Level 45", "1 Socket"]

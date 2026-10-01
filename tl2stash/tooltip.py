@@ -51,6 +51,7 @@ from .card import (
     TIER_NONE,
     Block,
     Card,
+    display_tier,
     lines,
 )
 from .dat import VAR_FLAVOR
@@ -390,7 +391,11 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
             flavor = source.text(VAR_FLAVOR) if source else None
 
     appearance = data.appearance_for(item) if data is not None else None
-    tier_word = appearance.tier if appearance else ""
+    # The base file's word is not always the one the player is shown: the game
+    # gives a Normal item a green name the moment there is magic on it.  The
+    # collection list comes through here for its tier too, so the two cannot
+    # read different rarities off the same item.
+    tier_word = display_tier(appearance.tier, item) if appearance else ""
 
     return Card(
         name=item.display_name,
