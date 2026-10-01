@@ -35,8 +35,9 @@ from tl2stash.gamedata import (  # noqa: E402
     find_install,
 )
 
-from test_dat import TEXT, TRANSLATE, write_dat  # noqa: E402
+from test_dat import TEXT, TRANSLATE, needs_game, real_game, write_dat  # noqa: E402
 from test_pak import write_synthetic_pak  # noqa: E402
+from test_tooltip import item  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -319,7 +320,12 @@ def test_an_affix_name_shared_by_several_is_settled_by_the_one_it_ends_with(game
     Two affixes are called ``OFFLAME MELEEDAMAGEBONUS`` and grant different
     effects -- in the shipped game 107 share one name -- so a second rule is
     needed.  An affix is named for the item it suits plus the effect it
-    grants, so the granted effect is the one the name *ends* with.
+    grants, so the granted effect is *usually* the one the name ends with.
+
+    Usually, not always: this is the fallback for a record whose index lands
+    nowhere, and see
+    ``test_an_affix_name_does_not_say_which_effect_it_grants`` for the names
+    it gets wrong.
     """
     assert game.effect_for("OFFLAME MELEEDAMAGEBONUS") is game.by_name(
         "MELEEDAMAGEBONUS"
@@ -400,3 +406,281 @@ def test_a_container_the_data_does_not_name_has_no_name(game):
     assert game.container_name(999) is None
     assert game.stash_tab(999) is None
     assert game.stash_tab(21) is None
+
+
+# --------------------------------------------------------------------------
+# An item's own numbers, worked out against the real data files
+#
+# These need the game installed, and they are the tests that matter: they ask
+# for numbers that were read off the game's own item pages, so agreeing with
+# them is evidence rather than self-consistency.
+# --------------------------------------------------------------------------
+
+
+@needs_game
+def test_a_weapon_s_damage_is_worked_out_from_its_data_file(real_game):
+    """The save file holds one number for a weapon and no split at all.
+
+    ``HAMMER_U03B`` -- Bonebreaker -- stores its physical maximum as 239.  The
+    player reads ``Physical 120-239`` and ``Fire 80-159``, and those four
+    numbers exist only in the item's data file, as shares of a nominal damage
+    that a by-level curve sizes.
+    """
+    it = item(guid=6933962607845725281)
+    derived = real_game.derived_for(it)
+
+    assert derived is not None and derived.kind == "damage"
+    assert derived.parts == {"physical": (120, 239), "fire": (80, 159)}
+
+
+@needs_game
+def test_armour_is_worked_out_from_its_data_file(real_game):
+    """``COLLAR_UNIQUE_DEGRADE06`` -- a level 45 Chokehold.
+
+    Five parts, and the physical one is 85: ``85.224``, rounded to nearest
+    rather than up.  A ceiling would put it at 86, which is what the game does
+    *not* print, so this number is also what pins the rounding rule.
+    """
+    it = item(guid=-7711194175558023803)  # written negative; see below
+    derived = real_game.derived_for(it)
+
+    assert derived is not None and derived.kind == "armor"
+    assert derived.parts == {
+        "physical": (85, 85),
+        "fire": (32, 32),
+        "ice": (32, 32),
+        "electric": (32, 32),
+        "poison": (32, 32),
+    }
+
+
+@needs_game
+def test_a_guid_written_negative_finds_the_same_file(real_game):
+    """Half the archive writes the id as a negative decimal and the save file
+    writes the same bytes as a large positive, so both spellings have to
+    arrive at one file."""
+    signed = -7711194175558023803
+    assert real_game.derived_for(item(guid=signed)) is not None
+    assert real_game.derived_for(item(guid=signed & 0xFFFFFFFFFFFFFFFF)) is not None
+
+
+@needs_game
+def test_an_item_the_data_files_do_not_know_gives_nothing(real_game):
+    """A modded item, or one from a save whose install has moved on.  Nothing
+    is the right answer; a plausible-looking guess is not."""
+    assert real_game.derived_for(item(guid=0)) is None
+    assert real_game.derived_for(item(guid=0xDEADBEEF)) is None
+
+
+@needs_game
+def test_a_skill_is_found_by_the_name_an_affix_shares_with_it(real_game):
+    """``WC_PROC_FULLHEAL`` names an affix *and* a skill.
+
+    Only the skill carries the display name, which is what makes looking the
+    name up as a display name work where looking it up as a node does not.
+    """
+    assert real_game.skill_name("WC_PROC_FULLHEAL") == "Fully Heal Self"
+    assert real_game.skill_name("wc_proc_fullheal") == "Fully Heal Self"
+    # An affix that grants no skill has no display name to give.
+    assert real_game.skill_name("OFTHEBEAR DAMAGE BONUS") is None
+    assert real_game.skill_name("") is None
+
+
+# --------------------------------------------------------------------------
+# What an effect record names, settled against the game's own affix files
+# --------------------------------------------------------------------------
+
+
+@needs_game
+def test_an_affix_name_does_not_say_which_effect_it_grants(real_game):
+    """The fact the whole resolution order rests on.
+
+    An affix node names, under ``TYPE``, the effect it grants.  369 distinct
+    affix names between them grant 1,552 effects, and ``OFTHETURTLE ARMOR
+    BONUS`` is one name for thirteen of them -- ``ARMOR BONUS``, which it ends
+    with, and also ``PERCENT CRITICAL DAMAGE``, ``STRENGTH BONUS`` and ten
+    others.
+
+    So reading the effect off the name is not a rule, it is a guess that is
+    usually right.  The record's own ``index`` is what settles it, and that is
+    why it is consulted first.
+    """
+    effects, granted = _affix_effects(real_game)
+
+    legal = granted["OFTHETURTLE ARMOR BONUS"]
+    assert len(legal) >= 13, "the sweep has stopped finding affixes"
+    named = {effects[position] for position in legal}
+    assert "ARMOR BONUS" in named, "the name it ends with is one of them"
+    assert {"PERCENT CRITICAL DAMAGE", "STRENGTH BONUS", "DEXTERITY BONUS"} <= named
+
+    # And a name whose suffix is a real effect but not the only one.
+    flame = {effects[p] for p in granted["OFFLAME DAMAGE BONUS"]}
+    assert "DODGE CHANCE BONUS" in flame, "this is what the suffix rule gets wrong"
+
+
+@needs_game
+def test_every_record_index_names_an_effect_its_affix_may_grant(real_game):
+    """The measurement that makes the index a fact rather than a preference.
+
+    If ``index`` were a roll number or an affix id -- anything but the effect's
+    position in ``EFFECTSLIST`` -- it would land outside the handful of effects
+    its own affix name permits almost every time.  Across 400 real effect
+    records on the user's items it never once did, including the 104 that carry
+    no name at all and so cannot be resolved any other way.
+
+    Bashdrill is the item this was found on, so it is the one pinned here.
+    """
+    effects, granted = _affix_effects(real_game)
+    it = _bashdrill()
+
+    checked = 0
+    for record in list(it.effects) + list(it.effects2):
+        if not record.name:
+            continue
+        legal = granted.get(record.name.upper())
+        if legal is None:
+            continue  # a modded affix the vanilla data has never heard of
+        assert record.index in legal, (
+            f"{record.name} carries index {record.index} = "
+            f"{effects[record.index]!r}, which it may not grant"
+        )
+        checked += 1
+
+    assert checked >= 7, "the item stopped exercising the rule"
+
+
+@needs_game
+def test_bashdrill_reads_as_the_game_shows_it(real_game):
+    """The item the bug was reported on, line for line.
+
+    Every one of these lines was wrong before: the armour bonus, the dodge
+    chance and the silence all came out as other effects, because the effect
+    was being read off the affix name instead of off the record's index.
+    ``OFTHETURTLE ARMOR BONUS`` is called that and grants ``PERCENT ARMOR
+    BONUS``; ``OFFLAME DAMAGE BONUS`` -- "of Flame", on a lightning weapon --
+    grants ``DODGE CHANCE BONUS``.
+
+    Three of the records carry no name at all, and the damage is not in the
+    save file: both come out of the game's data, so this is the whole chain
+    from a blob to a tooltip in one assertion.
+    """
+    assert _tooltip(_bashdrill(), real_game) == [
+        "Bashdrill",
+        "Requires Level 45",
+        "Physical Damage 52-74",
+        "Electric Damage 77-110",
+        "+2% to Physical Armor",
+        "+5% Attack Speed",
+        "+2% Critical Hit Chance",
+        "2% increase in the amount of gold found",
+        "+5% to Electric Damage",
+        "Charge rate increased by 5%",
+        "+1% Dodge chance",
+        "5% chance to Shock for 5 sec.",
+        "Silence for 1 sec.",
+        # The italic line.  It is not in the reference dump this was checked
+        # against, and it was missing here until the flavour text stopped
+        # being looked up by the item's *name*: a unique is not named what it
+        # is called, so that found nothing for any of them.
+        "If your enemies don't get the point, drill it into their heads.",
+    ]
+
+
+@needs_game
+def test_a_unique_s_flavour_is_found_through_its_guid_and_not_its_name(real_game):
+    """A unique is not *named* what it is called.
+
+    The node behind Wanderlust Pants is ``wanderer_02_pants_alt_set``, so
+    searching the archive for the display name finds nothing -- which is how
+    every unique lost its flavour line.  The guid in the save file leads to
+    the file, and it is the same route the damage and armour take.
+    """
+    it = _bashdrill()
+    assert real_game.by_name(it.base_name) is None, "the name lookup started working"
+
+    assert real_game.flavor_for(it) == (
+        "If your enemies don't get the point, drill it into their heads."
+    )
+
+
+@needs_game
+def test_an_item_the_archive_does_not_know_has_no_flavour(real_game):
+    assert real_game.flavor_for(item(guid=0xDEADBEEF)) is None
+    assert real_game.flavor_for(item(guid=0)) is None
+
+
+def _affix_effects(game) -> tuple[list[str], dict[str, set[int]]]:
+    """``(EFFECTSLIST names in order, affix name -> the positions it may grant)``.
+
+    Read out of the game's own files rather than from the code under test:
+    every affix node carries the name of the effect it grants, and an effect
+    name is a position in ``EFFECTSLIST``, so the two can be joined without
+    asking ``GameData`` anything.
+    """
+    from tl2stash.gamedata import archive_path
+    from tl2stash.pak import PakFile, PakIndex
+
+    man = archive_path(game.install)
+    index = PakIndex.read(man)
+    with PakFile(man.with_name("DATA.PAK"), index) as archive:
+        listed = DatFile.parse(archive.read("MEDIA/EFFECTSLIST.DAT"))
+        effects = [node.text(VAR_NAME) for node in listed.root.children]
+        position = {name.upper(): i for i, name in enumerate(effects)}
+
+        granted: dict[str, set[int]] = {}
+        for entry in index.entries:
+            if not entry.startswith("MEDIA/AFFIXES/ITEMS/") or not entry.endswith(".DAT"):
+                continue
+            try:
+                affixes = DatFile.parse(archive.read(entry))
+            except Exception:  # a file that will not parse is not this test's business
+                continue
+            for node in affixes.root.walk():
+                name = node.text(VAR_NAME)
+                grants = node.text(VAR_AFFIX_EFFECT)
+                if name and grants and grants.upper() in position:
+                    granted.setdefault(name.upper(), set()).add(position[grants.upper()])
+
+    return effects, granted
+
+
+#: Bashdrill, as the save file holds it -- the item the stats bug was reported
+#: on.  A real blob rather than a built one, because what is being pinned is
+#: how *real* records are read: which of them carry a name, which carry none,
+#: and what their indices are.
+_BASH_DRILL = (
+    "ALPWaN4JcEQkCQBCAGEAcwBoAGQAcgBpAGwAbAAAAAAAOjAYz2YfDvQ6MBjPZh8O9M0rst8gPFRd"
+    "AAAAAAD///////////////////////////////8AAAAAAAAAAAsNGAAAAQEBAQABAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAA"
+    "gD8AAAAAAAAAAAAAAAAAAAAAAACAPy0AAAABAAAAAQAAAAAAAAAAAAAASAAAAP////8BAAAA////"
+    "////////////AQAAAAAAAAAAAAQAAAAHAAAAQYAAABcATwBGAFQASABFAFQAVQBSAFQATABFACAA"
+    "QQBSAE0ATwBSACAAQgBPAE4AVQBTAAIAAABAAAAAQAAAFwAAAAAAAAAAAAAALQAAAAAAesQAAAAA"
+    "AAAAQAMAAABBgAAAHwBPAEYAVABIAEUAVABJAEcARQBSACAAUABFAFIAQwBFAE4AVAAgAEEAVABU"
+    "AEEAQwBLACAAUwBQAEUARQBEAAIAAKBAAACgQAAAFgAAAAAAAAAAAAAALQAAAAAAesQAAAAAAACg"
+    "QAMAAABBgAAAGwBPAEYAVABIAEUATQBBAFMAVABFAFIAIABDAFIASQBUAEkAQwBBAEwAIABDAEgA"
+    "QQBOAEMARQACAAAAQAAAAEAAADcAAAAAAAAAAAAAAC0AAAAAAHrEAAAAAAAAAEADAAAAQYAAABwA"
+    "TwBGAFQASABFAE0ASQBTAEUAUgAgAFAARQBSAEMARQBOAFQAIABHAE8ATABEACAARABSAE8AUAAC"
+    "AAAAQAAAAEAAABwAAAAAAAAAAAAAAC0AAAAAAHrEAAAAAAAAAEADAAAAQYAAABgATwBGAEwASQBH"
+    "AEgAVABOAEkATgBHACAARABBAE0AQQBHAEUAIABCAE8ATgBVAFMAAgAAoEAAAKBAAAAZAAAABAAA"
+    "AAAAAAAtAAAAAAB6xAAAAAAAAKBAAwAAAEGAAAAAAAIAAKBAAACgQAAArgAAAAYAAAAAAAAALQAA"
+    "AAAAesQAAAAAAACgQAMAAABBgAAAFABPAEYARgBMAEEATQBFACAARABBAE0AQQBHAEUAIABCAE8A"
+    "TgBVAFMAAgAAgD8AAIA/AACyAAAABgAAAAAAAAAtAAAAAAB6xAAAAAAAAIA/AwAAAAAAAAACAAAA"
+    "QaAAABsATwBGAFQASABFAE0AQQBTAFQARQBSACAAQwBSAEkAVABJAEMAQQBMACAAQwBIAEEATgBD"
+    "AEUA1xEqlEfdU18CAACgQAAAoEAAAG0AAAAAAAAAAgAAAC0AAAAAAKBAAAAAAAAAoEAAAAAAQaAC"
+    "AAAA3hFRqcbjD5kCAADIQgAAyEIAAIAAAAAAAAAAAgAAAC0AAAAAAIA/AAAAAAAAyEIAAAAADkUA"
+    "RgBGAEUAQwBUAF8AU0BJAEwARQBOAEMARQAAAAAAAAAAAA=="
+)
+
+
+def _bashdrill():
+    import base64
+
+    from tl2stash.item import parse_item
+
+    return parse_item(base64.b64decode(_BASH_DRILL))
+
+
+def _tooltip(it, game) -> list[str]:
+    from tl2stash.tooltip import render
+
+    return render(it, game)

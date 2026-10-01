@@ -17,7 +17,8 @@ save file and into its own database.
 | file watcher | done — acts on the game's own saves |
 | a separate stash and database per save file | done |
 | the game's data files (PAK/DAT) | done — 10,355 files in 0.74 s |
-| in-game item stats | done — 202 of 208 named effects resolve |
+| in-game item stats | done — damage, armour, effects and flat damage all render |
+| checked against an independent item database | 17 of 30 match line for line; all 13 differences accounted for |
 | desktop GUI (PySide6) | done |
 | packaging to `.exe` (PyInstaller) | not started |
 
@@ -98,10 +99,10 @@ details pane says so.
 
 ## Notes on the format
 
-The format layer is a port of [FNIStash](https://github.com/fluffynukeit/FNIStash)
-(Daniel Austin, 2013), the only public TL2 save implementation that survives
-contact with real save files. Two things were established here that FNIStash
-does not have:
+The save-format layer is a port of
+[FNIStash](https://github.com/fluffynukeit/FNIStash) (Daniel Austin, 2013), the
+only public TL2 save implementation that survives contact with real save files.
+Two things were established here that FNIStash does not have:
 
 **The extra-record count.** Each item carries a `u32` that FNIStash describes
 as "added for the new stash format" and skips straight past. It is a *count* of
@@ -117,27 +118,95 @@ the four location bytes zeroed. Hashing the blob whole would give a moved item
 a new identity — and since placing an item into the stash *is* a move, that
 would break the main flow.
 
-**What an effect record actually names.** An item's effect record names an
-*affix*, not an effect, and an affix name is not unique: 107 different affixes
-in the shipped game are called `OFFLAME DAMAGE BONUS`, granting everything from
-fire damage to dodge chance. What each one carries is a node naming the effect
-it grants, which is unique and which `EFFECTSLIST.DAT` has wording for; where
-that still leaves several, the affix's own name settles it, because it ends
-with the effect it grants. FNIStash instead reads an index off the record and
-uses it as a position in `EFFECTSLIST` — measured, that agrees on 92 of 176
-real occurrences, and the same affix comes with different indices on different
-items, so it is not a position in anything.
-
-The other half is that a description is a template: `[VALUE]`, `[VALUE1..5]`,
-`[DURATION]`, `[DMGTYPE]`, `[VALUE_OT]`, and `[NAME]`. All 808 were read to
-build the list of twelve tags. The numbers are formatted the way the game
-formats them, which is a ceiling followed by a cut: `23.04` armour is `24`, and
-`0.30000000000000004` at one decimal is `0.4`.
-
 Cross-checked against an independent reverse-engineering of the same format,
 [heiybb/tl2-mikuro-runtime](https://github.com/heiybb/tl2-mikuro-runtime),
 which describes the container layout, the checksum seed (`5331` = `0x14D3`)
 and the scramble transform identically.
+
+## Notes on the game's data
+
+`pak.py`, `dat.py`, `gamedata.py` and `tooltip.py` are not ports of anything.
+They were written from the file format itself, by observing `DATA.PAK` and
+cross-checking against the public DAT2TXT notes. What follows is what that
+turned up.
+
+**What an effect record names.** A record carries an `index`, a `name` and a
+value, and the `index` is the effect's **position in `EFFECTSLIST.DAT`** — that
+is what says which effect is meant.
+
+The `name` beside it cannot, because it is an *affix* name and affix names are
+shared: 369 of them between them grant 1,552 effects, and `OFTHETURTLE ARMOR
+BONUS` is one name for thirteen — `ARMOR BONUS`, which it ends with, and also
+`STRENGTH BONUS`, `DEXTERITY BONUS` and `PERCENT CRITICAL DAMAGE`. So the name
+narrows the field without settling it, and reading the effect off it is a guess
+that is usually right. Usually is not good enough: it is how Bashdrill's armour
+bonus, dodge chance and silence were each read as some other stat.
+
+Two measurements settle it. Across 400 real effect records, **every** index
+lands inside the set its own affix name permits — 215 of 215 where the name is
+one the game's files know. And 104 of those records carry **no name at all**,
+so no name-based rule can resolve them; their index is the only handle there
+is. The name is kept as the fallback for a record whose index lands nowhere,
+which is what a mod's items do.
+
+**A variable's id is a hash of its name.** Every field in a DAT file is
+identified by a 32-bit number, and it is Knuth's DEK hash of the field's
+uppercase name: `h` starts at the name's length, then each character does
+`h = ((h << 5) ^ (h >> 27) ^ c)`. `NAME` is `0x00660DE5`. Of the 33 constants
+in `dat.py`, 25 reproduce from their own name and 4 more hash correctly under
+the name the *game* uses (`VAR_FLAVOR` is the field `DESCRIPTION`). The last 4
+have no name yet.
+
+**Damage and armour are not in the save file.** The save holds one number for a
+weapon — its physical maximum — and no elemental split at all. The split comes
+from the item's own data file, which gives each element a share of a nominal
+damage, and the size comes from a by-level curve in
+`MEDIA/GRAPHS/STATS/BASE_WEAPON_DAMAGE.DAT`. Bashdrill's lone `72` is the
+`Physical Damage 52-74` and `Electric Damage 77-110` the player reads. Armour
+is the same idea against `ARMOR_PLAYER_BYLEVEL_FORSET.DAT`.
+
+**The numbers have two rules, not one.** A positive value rounds toward
+positive infinity — `23.04` armour is `24`, `28.875` Mana is `29` — while a
+negative one is left exactly as stored. That is not a rounding rule anyone
+would choose, and it is not one rule: across a 6,173-item corpus, 42 rendered
+numbers carry a fraction and every one of them is negative and verbatim
+(`-1.1%`, never `-1%`), which no rounding produces. A whole number never ends
+in `.0`: not one of 7,140 shipped stat lines does.
+
+**Some effects are a skill's name.** A description is a template —
+`[VALUE]`, `[VALUE1..5]`, `[DURATION]`, `[DMGTYPE]`, `[VALUE_OT]`, `[NAME]`,
+twelve tags read off all 808 descriptions. `[NAME]` is the only one that is not
+a number, and it is a *skill's* display name: `WC_PROC_FULLHEAL` is an affix
+under `MEDIA/AFFIXES/ITEMS` and a skill under `MEDIA/SKILLS/ARBITER`, and only
+the skill carries `Fully Heal Self`.
+
+Description strings carry the game's own colour markup (`|c00ff9933Charge|u
+rate`), and `[VALUE_OT]` rounds the rate *before* multiplying it by the
+duration — a 5-second affix stored at 11.259 reads `+12 Physical Damage` and
+`60 Physical Damage over 5 sec.`, where multiplying the stored float gives 57.
+
+### How far this is verified
+
+The rendered lines are checked against an independent item database,
+[tl2db](https://tl2db.hreddy.in), which publishes a pre-rendered tooltip for
+each of 6,173 items. Comparing the set of stat lines, ignoring the numbers
+(every roll differs, since that database holds base items and the tool holds
+the player's rolled instances), **17 of the 30 items in the tool match line for
+line.** The other 13 are all accounted for, and none of them is a wrong stat:
+
+| difference | seen on | what it is |
+|---|---|---|
+| `Charge  rate` (two spaces) | 12 | the reference replaced the colour codes with a space; the game's own template is `Charge\|u rate`, so one space is right |
+| flat enchant/socket damage | 2 | rolled onto the item in play, so absent from a base-item database |
+| a socketed gem, indented | 1 | the reference does not model socket contents |
+| `Learn <spell>` | 3 | same — spells are not what that database lists |
+| `15% chance to Block` | 2 | a shield's own block, which it files under another field |
+| `CHEATED ITEM` | 2 | a marker on items spawned by a console command |
+
+The counts overlap — one item can differ in two ways — and in every one of
+these the tool is showing something the game shows and the reference does not
+model, or spacing the game does not have. Nothing in the list is a stat read
+wrongly, which is what the comparison was for.
 
 ## Tests
 

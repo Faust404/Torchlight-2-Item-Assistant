@@ -6,10 +6,12 @@ game's data files, and this puts the two together.
 
 Two things make it more than a lookup.
 
-The first is that the effect a record names is an *affix*, whose name is not
-unique -- 107 affixes are called ``OFFLAME DAMAGE BONUS``.  Which effect is
-meant is settled in :meth:`~tl2stash.gamedata.GameData.effect_for`, and the
-records that cannot be settled fall back to the name the save file gave.
+The first is that an effect record carries both an index and a name, and only
+one of them is decisive.  The index is the effect's position in
+``EFFECTSLIST.DAT``.  The name is an *affix* name, and affix names are shared
+-- ``OFTHETURTLE ARMOR BONUS`` is one name for thirteen different effects --
+so it is the fallback, for a record whose index lands nowhere.  A record
+neither can settle shows the name the save file gave.
 
 The second is that the wording is a template with holes in it.  ``[VALUE]`` is
 the effect's value, ``[VALUE1]`` to ``[VALUE5]`` are its value list,
@@ -34,7 +36,8 @@ import re
 import struct
 from typing import TYPE_CHECKING
 
-from .dat import VAR_DISPLAY_NAME, VAR_FLAVOR
+from .dat import VAR_FLAVOR
+from .item import strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
     from .gamedata import GameData
@@ -63,37 +66,61 @@ _DAMAGE_TYPES = {
 #: What the game writes as an effect's duration when it does not wear off.
 PERMANENT = -1000.0
 
-#: The wording that states a penalty, for each description type.  An effect's
-#: wording carries its own sign -- ``'+[VALUE] [DMGTYPE] Damage'`` against
-#: ``'-[VALUE] [DMGTYPE] Damage'`` -- so a record that says "positive wording"
-#: and then holds -10 cannot be written with the wording it asked for.  Real
-#: items do this, so the sign of the value is what decides, and the magnitude
-#: goes into whichever wording matches.  (Not observed from the game, which
-#: cannot be run here: it is the only reading of the data that produces
-#: ``-10 All Damage`` rather than ``+-10 All Damage``.)
-_PENALTY_FOR = {0x00: 0x03, 0x01: 0x03, 0x02: 0x04, 0x03: 0x03, 0x04: 0x04}
+#: The effects that *are* an item's armour rather than a stat on it.  A piece
+#: carrying one states its armour twice -- once as this effect and once as the
+#: ``ARMOR_*`` fields the armour line is built from -- and the game shows the
+#: armour line, not the effect.  The names are the only thing distinguishing
+#: them: ``INNATE FIRE DEFENSE`` is an item's own fire armour, while plain
+#: ``FIRE DEFENSE``, four lines above it in the list, is a stat an affix
+#: grants and is shown like any other.
+_INNATE_DEFENSE = re.compile(r"^INNATE .* DEFENSE$")
+
+#: The added-damage line: ``+13 Physical Damage``.
+_ADDED_DAMAGE = "+{value} {element} Damage"
+
+
+def _places(value: float, precision: int) -> int:
+    """How many decimals the game keeps for ``value``.  See :func:`shown_value`."""
+    return max(precision, 1) if value < 0 else precision
+
+
+def shown_value(value: float, precision: int) -> float:
+    """The number the game writes, as a number.
+
+    A positive value rounds *toward positive infinity* -- 28.875 Mana is
+    ``29``, not ``29`` by luck but because 28.875 ceilings there, and 23.04
+    armour is ``24``.  That is not how anyone would choose to round; it is
+    what the game does, and the two differ on ordinary input.
+
+    A negative value is left alone instead.  Across a 6,173-item corpus, 42
+    rendered numbers carry a fraction and every one of them is negative and
+    shown exactly as stored -- ``-1.1%``, never ``-1%`` -- which no rounding
+    rule produces, so there is nothing to apply.  One decimal is kept as the
+    floor, so that a value stored as ``-19031.34375`` does not arrive with
+    five digits of noise attached.
+    """
+    places = _places(value, precision)
+    scale = 10**places
+    if value < 0:
+        return math.floor(value * scale + 0.5) / scale
+    return math.ceil(value * scale) / scale
 
 
 def format_value(value: float, precision: int = 1) -> str:
     """A number as the game shows it.
 
-    Rounds *up*, then cuts the decimal string to length -- which is not how
-    anyone would choose to round.  It matters because it is what the game
-    does, and because the two differ on ordinary input: 0.30000000000000004
-    at one decimal is 0.3 by any sensible reading, and the game shows 0.4.
-
-    Not zero-padded, so 1.5 at two decimals is '1.5' and not '1.50'; and the
-    cut keeps one character more than the precision, so a number whose decimal
-    string runs out early simply comes back short.
+    Not zero-padded: 1.5 at two decimals is '1.5' and not '1.50'.  And a whole
+    number is never written with a point and a zero -- '+5% Attack Speed' is
+    every attack-speed line in the shipped game, and not one of its 7,140 stat
+    lines ends in '.0'.  Decimals appear only where there is a real fraction
+    to show.
     """
-    if precision <= 0:
-        return str(math.ceil(value))
-
-    scaled = math.ceil(value * 10**precision) / 10**precision
-    whole, dot, fraction = repr(scaled).partition(".")
+    places = _places(value, precision)
+    whole, dot, fraction = repr(shown_value(value, precision)).partition(".")
     if not dot:
         return whole
-    return f"{whole}.{fraction[:precision]}"
+    text = f"{whole}.{fraction[:places]}" if places else whole
+    return text[:-2] if text.endswith(".0") else text
 
 
 def _as_float(word: int) -> float:
@@ -106,8 +133,14 @@ def _as_float(word: int) -> float:
 
 
 def _as_duration(seconds: float, precision: int) -> str:
-    text = format_value(seconds, precision)
-    return f"{text} second" if text == "1" else f"{text} seconds"
+    """A length of time, as the game writes it: ``5 sec.`` and ``1 sec.``.
+
+    One form for both, abbreviated, and with the stop.  The game's stat lines
+    use it 612 times to nothing -- the several hundred lines that do say
+    'second' are all saying something else ('+2 seconds of Burn', '7 Mana
+    recovery per second').
+    """
+    return f"{format_value(seconds, precision)} sec."
 
 
 def _substitute(
@@ -119,25 +152,43 @@ def _substitute(
 ) -> str:
     """Fill in a description's holes.
 
-    ``value`` is the number for ``[VALUE]``, which is the effect's own unless
-    the sign moved it into the other wording.  ``[VALUE_OT]`` is that number
+    ``value`` is the number for ``[VALUE]``.  ``[VALUE_OT]`` is that number
     multiplied by the duration; the game does not store the product, it writes
     it out here, which is why a damage-over-time effect carries a number that
     looks unrelated to what the player reads.
+
+    A template that writes its own ``+`` or ``-`` in front of a hole has
+    already stated the sign, so that hole gets the magnitude.  Only one effect
+    in the game needs it -- ``'-[VALUE]% [DMGTYPE] Damage Taken for each
+    monster within [VALUE3]m'``, whose records hold -3 -- and without it the
+    line reads ``--3%``.  Everywhere else the value goes in as it stands,
+    which is what the game does: a record whose wording already says
+    "reduced by" and whose number is -10 reads ``reduced by -10%``.
     """
     values = effect.values
 
-    def at(index: int) -> str:
-        if index < len(values):
-            return format_value(_as_float(values[index]), precision)
-        return "?"
-
     def fill(match: re.Match) -> str:
         tag = match.group(1)
+        # re.sub hands back the whole template as the match's string, so the
+        # character the tag was written after is one step to the left.
+        written = template[match.start() - 1] if match.start() else ""
+        fix = abs if written in "+-" else (lambda number: number)
+
+        def at(index: int) -> str:
+            if index < len(values):
+                return format_value(fix(_as_float(values[index])), precision)
+            return "?"
+
         if tag == "VALUE":
-            return format_value(value, precision)
+            return format_value(fix(value), precision)
         if tag == "VALUE_OT":
-            return format_value(value * _as_float(effect.duration), precision)
+            # The number the player read on the always-on line, times the
+            # duration -- rounded first, and the product rounded after.  A
+            # 5-second 'of the Bear' affix stored at 11.259 is '+12 Physical
+            # Damage' and '60 Physical Damage over 5 sec.'; multiplying the
+            # stored number instead gives 57.
+            rate = shown_value(fix(value), precision)
+            return format_value(fix(rate * _as_float(effect.duration)), precision)
         if tag == "DURATION":
             return _as_duration(_as_float(effect.duration), precision)
         if tag == "DMGTYPE":
@@ -167,35 +218,104 @@ def _effect_lines(item: "Item", data: "GameData") -> list[str]:
     """
     lines: list[str] = []
     for effect in list(item.effects) + list(item.effects2):
-        if not effect.name:
-            # Nameless records are ordinary -- they carry values the item's
-            # other lines already use, and the game shows nothing for them.
-            continue
-
-        node = data.effect_for(effect.name)
+        # The record's index is a position in EFFECTSLIST.DAT, and that is
+        # what says which effect is meant.  The name beside it is an affix
+        # name -- and an affix name is not unique, so it is only a fallback
+        # for a record whose index lands nowhere.
+        node = data.effect(effect.index) or data.effect_for(effect.name)
         if node is None:
             # Nothing settled which effect this is, so the name the save file
             # gave stands in for the sentence that would have been written.
-            lines.append(effect.name)
+            # A record with no name either has nothing to show.
+            if effect.name:
+                lines.append(effect.name)
             continue
 
-        value = _as_float(effect.value)
+        if _INNATE_DEFENSE.match(node.name or ""):
+            # An item that states its own armour states it twice: once here
+            # and once as the ARMOR_* fields the armour line is worked out
+            # from.  The game shows the second, so this one is not a line.
+            continue
+
+        # Which wording is used is what the record asks for and nothing else.
+        # A record can ask for the positive wording and still hold a negative
+        # number -- seven of the user's items do -- and the game writes both
+        # out: 'Damage Taken is reduced by -2%'.  Choosing the wording from
+        # the sign instead would read 'increased by 2%', which is the same
+        # number and the opposite stat.
         template = data.effect_template(node, effect.description_type)
-        if value < 0:
-            penalty = data.effect_template(
-                node, _PENALTY_FOR.get(effect.description_type, 0x03)
-            )
-            if penalty:
-                template, value = penalty, -value
         if not template:
-            lines.append(effect.name)
+            if effect.name:
+                lines.append(effect.name)
             continue
 
-        source = data.by_name(effect.name)
-        name = source.text(VAR_DISPLAY_NAME) if source else None
-        lines.append(
-            _substitute(template, effect, data.display_precision(node), name, value)
+        # A template is a display string and carries the game's colour markup:
+        # '|c00ff9933Charge|u rate increased by [VALUE]%'.  The codes run either
+        # side of a word and the spaces sit outside them, so dropping them
+        # leaves the sentence the player reads.
+        template = strip_markup(template)
+
+        line = _substitute(
+            template,
+            effect,
+            data.display_precision(node),
+            # [NAME] is the *skill* the effect casts or alters, not the effect
+            # and not the affix.  See GameData.skill_name.
+            data.skill_name(effect.name) or effect.name or None,
+            _as_float(effect.value),
         )
+        # Templates are written with a trailing space where a hole ends the
+        # sentence ('... is reduced by [VALUE]% '); it is layout in the game's
+        # tooltip, and a line of it here.
+        lines.append(line.rstrip())
+    return lines
+
+
+def _added_damage_lines(item: "Item") -> list[str]:
+    """Flat damage the item carries, one line per element.
+
+    Separate from the weapon's own damage above: this is what a socket or an
+    enchantment adds on top, and the save file records it per element as three
+    numbers -- how much of it came from an effect, from a socket and from an
+    enchantment.  The player sees the total, so that is what is shown.
+
+    Bashdrill's own damage is worked out from its data file; its
+    ``+13 Physical Damage`` is here instead.
+    """
+    lines = []
+    for added in item.added_damages:
+        total = sum(
+            _as_float(part)
+            for part in (added.from_effect, added.from_socket, added.from_enchant)
+        )
+        if not total:
+            continue
+        element = _DAMAGE_TYPES.get(added.damage_type)
+        if element is None:
+            continue
+        lines.append(
+            _ADDED_DAMAGE.format(value=format_value(total, 0), element=element)
+        )
+    return lines
+
+
+def _damage_lines(derived) -> list[str]:
+    """The damage or armour an item has, one line per element.
+
+    A lone physical figure is written the plain way -- ``Armor 20``, not
+    ``Physical Armor 20`` -- because that is the only kind of armour most
+    pieces have and naming it says nothing.  As soon as there is a second
+    element, or the one there is is not physical, the element is named,
+    because then it is saying something.
+    """
+    word = "Damage" if derived.kind == "damage" else "Armor"
+    parts = derived.parts
+    plain = len(parts) == 1 and "physical" in parts
+
+    lines = []
+    for element, (low, high) in parts.items():
+        span = str(low) if low == high else f"{low}-{high}"
+        lines.append(f"{word} {span}" if plain else f"{element.title()} {word} {span}")
     return lines
 
 
@@ -215,12 +335,24 @@ def render(item: "Item", data: "GameData | None" = None) -> list[str]:
     if item.level:
         lines.append(f"Requires Level {item.level}")
 
-    # 0xFFFFFFFF is what the file holds where an item has none of a thing --
-    # jewelry carries it as its armor, a ring as its damage.
-    if item.max_damage not in (0, 0xFFFFFFFF):
-        lines.append(f"Damage {item.max_damage}")
-    if item.armor not in (0, 0xFFFFFFFF):
-        lines.append(f"Armor {item.armor}")
+    # The save file holds one number for a weapon -- its physical maximum --
+    # and no elemental part at all, so the game's own arithmetic is used
+    # where it can be: the item's data file says how the damage divides, and
+    # a by-level curve says how large it is.  Bashdrill's '72' becomes
+    # 'Physical Damage 52-74' and 'Electric Damage 77-110'.
+    derived = data.derived_for(item) if data is not None else None
+    if derived is not None:
+        lines.extend(_damage_lines(derived))
+    else:
+        # 0xFFFFFFFF is what the file holds where an item has none of a
+        # thing -- jewelry carries it as its armor, a ring as its damage.
+        if item.max_damage not in (0, 0xFFFFFFFF):
+            lines.append(f"Damage {item.max_damage}")
+        if item.armor not in (0, 0xFFFFFFFF):
+            lines.append(f"Armor {item.armor}")
+
+    # Flat damage sits with the rest of the damage, above the effects.
+    lines.extend(_added_damage_lines(item))
 
     if data is not None:
         lines.extend(_effect_lines(item, data))
@@ -233,8 +365,14 @@ def render(item: "Item", data: "GameData | None" = None) -> list[str]:
         lines.extend(f"    {line}" for line in render(gem, data))
 
     if data is not None:
-        source = data.by_name(item.base_name)
-        flavor = source.text(VAR_FLAVOR) if source else None
+        # The item's own data file first, because a unique is not *named*
+        # what it is called -- the node behind Wanderlust Pants is
+        # ``wanderer_02_pants_alt_set``.  A base item usually is, so its name
+        # is tried second and is what a guid-less item has to go on.
+        flavor = data.flavor_for(item)
+        if not flavor:
+            source = data.by_name(item.base_name)
+            flavor = source.text(VAR_FLAVOR) if source else None
         if flavor:
             lines.append(flavor)
 

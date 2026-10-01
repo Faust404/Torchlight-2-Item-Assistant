@@ -65,7 +65,13 @@ MAX_EXTRA_RECORDS = 64
 
 #: Torchlight embeds ``|cAARRGGBB`` colour codes directly in display strings,
 #: e.g. ``|cFFF2ACB1Spell: Heal Self IV``.  They are markup, not name.
-_MARKUP = re.compile(r"\|c[0-9A-Fa-f]{8}")
+#:
+#: ``|u`` is the second half of the pair and the only other code the game
+#: uses: it ends the coloured run.  Both are dropped rather than replaced, so
+#: ``|c00ff9933Charge|u rate`` reads ``Charge rate`` -- they sit either side of
+#: a word, with the spaces outside them, and taking them out leaves the
+#: sentence intact.
+_MARKUP = re.compile(r"\|c[0-9A-Fa-f]{8}|\|u")
 
 
 def strip_markup(text: str) -> str:

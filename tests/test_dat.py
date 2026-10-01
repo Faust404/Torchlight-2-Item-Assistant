@@ -19,17 +19,25 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tl2stash import dat  # noqa: E402
 from tl2stash.dat import (  # noqa: E402
+    VAR_AFFIX_EFFECT,
     VAR_BADDES,
     VAR_BADDESOT,
+    VAR_BASEFILE,
     VAR_DISPLAYPRECISION,
+    VAR_DISPLAY_NAME,
     VAR_EFFECT_TYPE,
+    VAR_FLAVOR,
     VAR_GOODDES,
     VAR_GOODDESOT,
+    VAR_ICON,
     VAR_NAME,
     VAR_SLOT_BASE,
+    VAR_UNIDENTIFIED_NAME,
     DatFile,
     DatNode,
+    field_hash,
 )
 from tl2stash.binary import ParseError  # noqa: E402
 from tl2stash.gamedata import GameData, find_install  # noqa: E402
@@ -250,6 +258,83 @@ needs_game = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def game():
     return GameData.load(_INSTALL)
+
+
+#: The same fixture under the name the other test modules import it by.
+real_game = game
+
+
+# --------------------------------------------------------------------------
+# A variable's id is the DEK hash of its name
+# --------------------------------------------------------------------------
+
+
+def test_the_id_of_a_variable_is_the_dek_hash_of_its_name():
+    """Checkable arithmetic rather than a constant to be taken on trust.
+
+    ``h`` starts at the name's length; each byte then does
+    ``h = ((h << 5) ^ (h >> 27) ^ byte)``.  The literal below is the id the
+    files hold for ``NAME``, read off them before the rule was known.
+    """
+    assert field_hash("NAME") == 0x00660DE5
+
+
+def test_every_constant_this_module_measured_reproduces_from_its_name():
+    """The twelve that were measured before the rule was found, and the ones
+    found since by using it.  All of them at once, so a wrong one cannot hide
+    behind a right one."""
+    assert field_hash("NAME") == VAR_NAME
+    assert field_hash("BASEFILE") == VAR_BASEFILE
+    assert field_hash("UNIDENTIFIED_NAME") == VAR_UNIDENTIFIED_NAME
+    assert field_hash("ICON") == VAR_ICON
+    assert field_hash("GOODDES") == VAR_GOODDES
+    assert field_hash("GOODDESOT") == VAR_GOODDESOT
+    assert field_hash("BADDES") == VAR_BADDES
+    assert field_hash("BADDESOT") == VAR_BADDESOT
+    assert field_hash("DISPLAYPRECISION") == VAR_DISPLAYPRECISION
+    # The game's own name for the field an affix names its effect under.
+    assert field_hash("TYPE") == VAR_AFFIX_EFFECT
+    assert field_hash("DISPLAYNAME") == VAR_DISPLAY_NAME
+    assert field_hash("DESCRIPTION") == VAR_FLAVOR
+
+
+def test_the_ids_no_name_has_reproduced_are_these_four():
+    """Every constant either falls out of the rule or is listed here.
+
+    Two different things stop a constant reproducing from *its own* name.  The
+    module names four of them for what the field means rather than what it is
+    called -- ``VAR_FLAVOR`` is the field ``DESCRIPTION``, ``VAR_EFFECT_TYPE``
+    is the field ``EFFECT`` -- and those hash correctly under the game's
+    spelling.  The rest are simply their own names.
+
+    What is left over is four ids with no name at all, and that is the point
+    of writing the list down: none of them is a hash of a name nobody has
+    guessed yet by accident, and a fifth cannot join them without someone
+    deciding it belongs.
+    """
+    renamed = {
+        VAR_AFFIX_EFFECT: "TYPE",
+        VAR_DISPLAY_NAME: "DISPLAYNAME",
+        VAR_FLAVOR: "DESCRIPTION",
+        VAR_EFFECT_TYPE: "EFFECT",
+    }
+
+    unexplained = []
+    for name in dir(dat):
+        if not name.startswith("VAR_"):
+            continue
+        value = getattr(dat, name)
+        if not isinstance(value, int):
+            continue
+        if field_hash(renamed.get(value, name[4:])) != value:
+            unexplained.append(name)
+
+    assert sorted(unexplained) == [
+        "VAR_ARMOR_MIN_WEIGHT",
+        "VAR_ARMOR_MULT",
+        "VAR_ARMOR_WEIGHT",
+        "VAR_SLOT_BASE",
+    ]
 
 
 @pytest.fixture(scope="module")

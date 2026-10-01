@@ -41,9 +41,22 @@ from .binary import ParseError, Reader
 
 __all__ = [
     "VAR_AFFIX_EFFECT",
+    "VAR_ARMOR_ELECTRIC",
+    "VAR_ARMOR_FIRE",
+    "VAR_ARMOR_ICE",
+    "VAR_ARMOR_MIN_WEIGHT",
+    "VAR_ARMOR_MULT",
+    "VAR_ARMOR_PHYSICAL",
+    "VAR_ARMOR_POISON",
+    "VAR_ARMOR_WEIGHT",
     "VAR_BADDES",
     "VAR_BADDESOT",
     "VAR_BASEFILE",
+    "VAR_DAMAGE_ELECTRIC",
+    "VAR_DAMAGE_FIRE",
+    "VAR_DAMAGE_ICE",
+    "VAR_DAMAGE_PHYSICAL",
+    "VAR_DAMAGE_POISON",
     "VAR_DISPLAYPRECISION",
     "VAR_DISPLAY_NAME",
     "VAR_EFFECT_TYPE",
@@ -51,11 +64,18 @@ __all__ = [
     "VAR_GOODDES",
     "VAR_GOODDESOT",
     "VAR_ICON",
+    "VAR_LEVEL",
+    "VAR_MAXDAMAGE",
+    "VAR_MINDAMAGE",
     "VAR_NAME",
+    "VAR_RARITY_DMG_MOD",
     "VAR_SLOT_BASE",
+    "VAR_SPEED_DMG_MOD",
     "VAR_UNIDENTIFIED_NAME",
+    "VAR_UNIT_GUID",
     "DatFile",
     "DatNode",
+    "field_hash",
 ]
 
 #: How deep a tree may nest before the file is called corrupt.  Real files
@@ -77,51 +97,87 @@ _TYPE_TRANSLATE = 8
 #: The types whose value is an index into the dictionary.
 _TEXT_TYPES = (_TYPE_TEXT, _TYPE_TRANSLATE)
 
+def field_hash(name: str) -> int:
+    """The id a DAT variable is filed under, from its name.
+
+    A variable's id is not an arbitrary constant: it is Knuth's DEK hash of
+    the field's own name, upper-cased --
+
+        h = len(name)
+        for c in name: h = ((h << 5) ^ (h >> 27) ^ c) & 0xFFFFFFFF
+
+    which means the ids in the files can be *checked* rather than merely
+    collected.  Twelve of the constants below were originally read off the
+    files without knowing this, and all twelve reproduce exactly, which is
+    what makes this more than a plausible-looking guess.  It also means a
+    field nobody has catalogued yet can be looked up by name instead of
+    guessed at.
+
+    Four of the constants below are named for what the field *means* rather
+    than what it is called, so they hash under the game's spelling and not
+    under their own: ``VAR_FLAVOR`` is the field ``DESCRIPTION``,
+    ``VAR_EFFECT_TYPE`` is the field ``EFFECT``.  Four more -- ``VAR_SLOT_BASE``
+    and the three unnamed armour fields -- have no name yet, and no name tried
+    has produced them.
+    """
+    data = name.encode("ascii")
+    value = len(data)
+    for byte in data:
+        value = ((value << 5) ^ (value >> 27) ^ byte) & 0xFFFFFFFF
+    return value
+
+
 # -- the variables this tool reads -------------------------------------------
 #
 # Each of these was found by dumping the files that carry it and reading what
 # came back, then confirmed against a second, unrelated file: the name
 # variable alone turns up on items, affixes, skills, sets, inventory slots and
-# effects, holding the right string every time.
+# effects, holding the right string every time.  Where a name is known it is
+# now written as :func:`field_hash` of that name, so the claim is checkable
+# rather than a number to be taken on trust.
 
 #: What the thing is called.  Present on every named node in the archive.
-VAR_NAME = 0x00660DE5
+VAR_NAME = field_hash("NAME")
 
 #: The file this one inherits from -- a magic sword says it is based on
 #: ``media/units/items/swords/base_sword.dat`` and need only give the
 #: differences.
-VAR_BASEFILE = 0xE27227C5
+VAR_BASEFILE = field_hash("BASEFILE")
 
 #: The name shown before the item is identified.
-VAR_UNIDENTIFIED_NAME = 0xB9F80B70
+VAR_UNIDENTIFIED_NAME = field_hash("UNIDENTIFIED_NAME")
 
 #: The icon's name, as a stem under ``MEDIA/UI/ICONS``.
-VAR_ICON = 0x006585AE
+VAR_ICON = field_hash("ICON")
 
 #: ``KEFFECT_TYPE_MELEEDAMAGEBONUS`` and friends: an effect node's own type,
 #: spelled out.  Equal to the node's id, which is what makes an effect's
 #: position in EFFECTSLIST.DAT meaningful.
-VAR_EFFECT_TYPE = 0x0E421C35
+#:
+#: The game's own name for the field is ``EFFECT``, which is what the hash is
+#: taken over; the constant is named for what it *means* instead.
+VAR_EFFECT_TYPE = field_hash("EFFECT")
 
 # The four description templates an effect can carry.  Which one the game
 # uses is decided by the ``description_type`` on the effect record inside the
 # item -- the data file only supplies the words.  Not every effect has all
 # four: 208 of the 239 carry GOODDES, 198 carry BADDESOT.
-VAR_GOODDES = 0x5AD318DA  # '+[VALUE] Melee weapon damage bonus'
-VAR_GOODDESOT = 0x4C62A0DF  # the same, for [DURATION] seconds
-VAR_BADDES = 0x003318F2  # '-[VALUE] Melee weapon damage penalty'
-VAR_BADDESOT = 0xCC63CFB4
+VAR_GOODDES = field_hash("GOODDES")  # '+[VALUE] Melee weapon damage bonus'
+VAR_GOODDESOT = field_hash("GOODDESOT")  # the same, for [DURATION] seconds
+VAR_BADDES = field_hash("BADDES")  # '-[VALUE] Melee weapon damage penalty'
+VAR_BADDESOT = field_hash("BADDESOT")
 
 #: How many decimal places to show an effect's value to.  1 on fourteen of the
 #: effects, 2 on three, 0 on the rest.
-VAR_DISPLAYPRECISION = 0xE5A5EDCC
+VAR_DISPLAYPRECISION = field_hash("DISPLAYPRECISION")
 
 #: The block an inventory container numbers its slots from.  ``BAG_ARMS_SLOT``
 #: declares 3322, and the save file's container 24 holds items in slots 3322
 #: upwards; the two were matched on exactly that.
 VAR_SLOT_BASE = 0x173B97DF
 
-#: The name of the *effect* an affix grants.
+#: The name of the *effect* an affix grants.  The game's own name for this
+#: field is ``TYPE``.
 #:
 #: An item's effect record names an affix, not an effect -- ``OFTHEELEPHANT MAX
 #: HP`` is the affix, and it is not unique: 107 different affixes are called
@@ -129,15 +185,59 @@ VAR_SLOT_BASE = 0x173B97DF
 #: chance.  Each of them carries an effect node, and *that* node's VAR_AFFIX_
 #: EFFECT is the effect proper (``MAX HP``, ``DAMAGE BONUS``) -- a name that is
 #: unique and that EFFECTSLIST holds description wording for.
-VAR_AFFIX_EFFECT = 0x006B6E45
+VAR_AFFIX_EFFECT = field_hash("TYPE")
 
 #: The name to show for a skill or a monster.  Distinct from VAR_NAME, which
 #: on a skill is its internal id: a spell node called ``Fireball III`` reads
 #: ``spell_fireball`` under VAR_NAME and ``Fireball III`` under this.
-VAR_DISPLAY_NAME = 0x832F7C76
+VAR_DISPLAY_NAME = field_hash("DISPLAYNAME")
 
 #: Flavour text: the italic line under a unique item's name.
-VAR_FLAVOR = 0x13B3DCA2
+VAR_FLAVOR = field_hash("DESCRIPTION")
+
+# -- the numbers a weapon's damage is built from -----------------------------
+#
+# A save file records a weapon's *physical maximum* and nothing else -- no
+# minimum, and no elemental part at all -- so the rest has to be worked out
+# from the item's own data file.  These are the fields that do it; the
+# arithmetic is in :mod:`tl2stash.gamedata`.
+
+#: The item's own unit id, as a decimal string.  This is the same number the
+#: save file carries on the item, and it is what ties a stored item back to
+#: the data file it was made from.
+VAR_UNIT_GUID = field_hash("UNIT_GUID")
+
+VAR_LEVEL = field_hash("LEVEL")
+VAR_MINDAMAGE = field_hash("MINDAMAGE")
+VAR_MAXDAMAGE = field_hash("MAXDAMAGE")
+
+#: A percentage modifier on the item's nominal damage: one for the weapon
+#: class's own speed, one for its rarity.  Both default to 100.
+VAR_SPEED_DMG_MOD = field_hash("SPEED_DMG_MOD")
+VAR_RARITY_DMG_MOD = field_hash("RARITY_DMG_MOD")
+
+#: How much of the damage is of each element.  They are shares of the whole,
+#: not absolute numbers, which is why they are read as a group.
+VAR_DAMAGE_PHYSICAL = field_hash("DAMAGE_PHYSICAL")
+VAR_DAMAGE_FIRE = field_hash("DAMAGE_FIRE")
+VAR_DAMAGE_ICE = field_hash("DAMAGE_ICE")
+VAR_DAMAGE_ELECTRIC = field_hash("DAMAGE_ELECTRIC")
+VAR_DAMAGE_POISON = field_hash("DAMAGE_POISON")
+
+#: The same, for armour.
+VAR_ARMOR_PHYSICAL = field_hash("ARMOR_PHYSICAL")
+VAR_ARMOR_FIRE = field_hash("ARMOR_FIRE")
+VAR_ARMOR_ICE = field_hash("ARMOR_ICE")
+VAR_ARMOR_ELECTRIC = field_hash("ARMOR_ELECTRIC")
+VAR_ARMOR_POISON = field_hash("ARMOR_POISON")
+
+#: Two fields on the base armour file that the item inherits rather than
+#: states: how heavy the piece is, and how much armour that weight is worth.
+#: Neither is a hashed name -- both are among the field ids nobody has a name
+#: for, so they are recorded as they were read.
+VAR_ARMOR_WEIGHT = 0x1ED83664
+VAR_ARMOR_MIN_WEIGHT = 0x1ED83772
+VAR_ARMOR_MULT = 0xE720656C
 
 
 class DatNode:
