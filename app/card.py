@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, lines
+from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, TIER_INK, lines
 from tl2stash.icons import IconLibrary
 
 __all__ = ["IconCache", "IconTile", "ItemCard", "ItemPane", "TIER_INK", "emphasis"]
@@ -82,22 +82,11 @@ FLAVOUR = "#8d8579"
 TILE_BG = "#100f0e"
 PLACEHOLDER = "#5c5650"
 
-#: The colour each tier is drawn in, by the key
-#: :data:`tl2stash.card.TIER_KEYS` gives it.  The site's ``--t-*``, which it read
-#: out of the game's own quality overlays rather than guessing; ``set`` is
-#: lifted along its own hue because the game's purple is a glow meant to sit on
-#: icon art and is unreadable as text.
-#:
-#: Every key is present -- including ``none``, for a quest item, a potion, a
-#: fish or an item from a mod -- so drawing one is a lookup and never a check.
-TIER_INK = {
-    "normal": "#e6e6e6",
-    "magic": "#2182ff",
-    "unique": "#ef6100",
-    "set": "#a855f7",
-    "legendary": "#ff3100",
-    "none": "#8a8a8a",
-}
+# The colour each tier is drawn in now lives in ``tl2stash.card``, beside the
+# tier table it is keyed by: the collection list inks a whole column of items
+# with it and has no business importing a widget to do that.  It is re-exported
+# from here because this is where the card's own code and its tests have always
+# read it from.
 
 #: The tile's two computed effects.  The site writes both as a function of the
 #: tier colour: the border is that colour mixed 48% toward transparent, and the
@@ -397,17 +386,24 @@ class ItemCard(QFrame):
         """``<tier> <type>`` -- ``Unique Fist`` -- with the tier in its colour.
 
         The tier word is the one word in the line carrying something the type
-        does not, so it is the one word painted in the tier's own colour.  An
-        item with neither has no line rather than an empty one.
+        does not, so it is the one word painted in the tier's own colour.  A
+        set piece adds the one word its tier cannot say, in the site's own
+        order: ``Unique Set Boots``.  An item with none of the three has no
+        line at all rather than an empty one.
         """
-        if not card.type_name and not card.tier_word:
+        if not (card.type_name or card.tier_word or card.set_name):
             return None
 
-        kind = html.escape(card.type_name)
+        said: list[str] = []
         if card.tier_word:
             word = html.escape(card.tier_word)
-            kind = f'<span style="color:{ink}">{word}</span> {kind}'
-        label = QLabel(f'<span style="color:{MUTED}">{kind}</span>')
+            said.append(f'<span style="color:{ink}">{word}</span>')
+        if card.set_name:
+            said.append("Set")
+        if card.type_name:
+            said.append(html.escape(card.type_name))
+
+        label = QLabel(f'<span style="color:{MUTED}">{" ".join(said)}</span>')
         label.setObjectName("dtype")
         label.setTextFormat(Qt.TextFormat.RichText)
         return label

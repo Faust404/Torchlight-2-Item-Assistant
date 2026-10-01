@@ -25,6 +25,7 @@ __all__ = [
     "Block",
     "Card",
     "DAMAGE",
+    "TIER_INK",
     "TIER_KEYS",
     "TIER_NONE",
     "lines",
@@ -47,16 +48,23 @@ ARMOR = "armor"
 ADDED = "added"
 AFFIX = "affix"
 
-#: The colours a card's name and its icon tile can be inked, by the game's own
-#: word for the tier.
+#: The tier word the player is shown, by the colour it is drawn in.
 #:
-#: ``Magic`` is the blue one.  The website this is drawn after calls that
-#: colour Rare, and calls the tier Rare with it; the game's files say ``MAGIC``
-#: and nothing says RARE, so the game's word is the one used.  The colour is
-#: the same blue either way.
+#: Three of these are also the game's own data tokens, unchanged: ``Normal``,
+#: ``Unique`` and ``Legendary``.  ``Rare`` is where the words and the data part
+#: company, and the game says so itself.  Its own tutorial text reads *"Blue
+#: items are more rare and powerful"*, and the samples taken off its overlay
+#: read ``magical #319C00   rare #2182FF   unique #EF6100`` -- so *rare* is the
+#: blue.  The catch is that the data's token for the blue is ``MAGIC``, and
+#: ``gamedata.QUALITY_WORDS`` is the one place that translation happens.
+#:
+#: ``Set`` is not a tier and is not drawn as one: it is a membership, and a set
+#: piece wears the Rare or Unique colour its own file gives it.  The key is
+#: kept because the site paints the set *ladder* purple, and this tool will
+#: want the same colour the day it draws one.
 TIER_KEYS = {
     "Normal": "normal",
-    "Magic": "magic",
+    "Rare": "rare",
     "Unique": "unique",
     "Legendary": "legendary",
     "Set": "set",
@@ -67,6 +75,21 @@ TIER_KEYS = {
 #: found, which a modded item never can be.  Always a key the colours have, so
 #: that drawing a card is a lookup and never a check.
 TIER_NONE = "none"
+
+#: The colour each tier key is drawn in, by the key :data:`TIER_KEYS` gives it.
+#: The site's ``--t-*``, which it read out of the game's quality overlays rather
+#: than guessing.
+#:
+#: Every key is present -- including ``none`` -- so drawing one is a lookup and
+#: never a check.
+TIER_INK = {
+    "normal": "#e6e6e6",
+    "rare": "#2182ff",
+    "unique": "#ef6100",
+    "set": "#a855f7",
+    "legendary": "#ff3100",
+    "none": "#8a8a8a",
+}
 
 
 @dataclass(frozen=True)
@@ -97,12 +120,18 @@ class Card:
     requiring, and 0 when it records none.  ``sockets`` is how many it has, not
     how many are filled -- the gems that fill them are ``gems``, each a card of
     its own because that is how the game draws one.
+
+    ``set_name`` is the set the item belongs to, when it belongs to one.  It is
+    not a tier: a set piece is shown as the rare or unique thing its own file
+    says it is, and this is the one place the membership is drawn out -- the
+    kind line reads ``Unique Set Boots``.
     """
 
     name: str
     tier: str
     tier_word: str
     type_name: str
+    set_name: str | None
     icon: str | None
     level: int
     sockets: int

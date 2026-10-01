@@ -200,11 +200,17 @@ class Derived:
 #: of every inherited ``UNITTYPE`` that is a tier, and the words that are not
 #: here are kinds -- SPELL, MAP, FISH, SWORD, POTION.
 #:
-#: The game has no word for the blue tier other than ``MAGIC``.  A table
-#: elsewhere may call it "rare"; the colour is the same either way, and this
-#: is what the game's own file says.
+#: The keys are the game's own tokens and the values are the words shown, and
+#: they differ for exactly one tier: the files say ``MAGIC`` and the player is
+#: shown "Rare".  That is what the item databases call it -- TIDBI's whole tier
+#: vocabulary is ``{RARE, UNIQUE, LEGENDARY}``, with no MAGIC word anywhere in
+#: it -- and it is also what the *game's* own UI calls that colour.  The
+#: samples taken off its item overlay read ``magical #319C00   rare #2182FF
+#: unique #EF6100``: the blue is "rare" in the game's own vocabulary, and
+#: "magical" is the green -- which no file of the game's states, so it is not
+#: in this table.
 QUALITY_WORDS = {
-    "MAGIC": "Magic",  # 2,061
+    "MAGIC": "Rare",  # 2,061
     "UNIQUE": "Unique",  # 1,742
     "NORMAL": "Normal",  # 1,660
     "QUESTITEM": "Quest",  # 151
@@ -212,14 +218,11 @@ QUALITY_WORDS = {
     "LEVEL": "Level",  # 35
 }
 
-#: What a piece of a set is, whatever its own rarity says.
-#:
-#: The archive's statement that an item is in a set is its ``SET`` field
-#: being non-empty, and there are 556 such item files.  Every one of them
-#: resolves to ``UNIQUE`` (346) or ``MAGIC`` (210) -- not one calls itself a
-#: set, which is why this overrides the tier rather than filling in for a
-#: missing one.
-TIER_SET = "Set"
+#: :data:`QUALITY_WORDS` longest word first, so that a tier written run
+#: together with its kind is split at the longest one it starts with.
+_QUALITY_BY_LENGTH = tuple(
+    sorted(QUALITY_WORDS.items(), key=lambda pair: -len(pair[0]))
+)
 
 
 @dataclass(frozen=True)
@@ -231,11 +234,17 @@ class Appearance:
     differences, so ``BERSERKER_01_BOOTS.DAT`` carries no ``UNITTYPE`` of its
     own and takes ``'UNIQUE BOOTS'`` from three files up the chain.
 
-    ``tier`` is one of :data:`QUALITY_WORDS`' values, or :data:`TIER_SET`,
-    or the empty string for an item whose file says something that is not a
-    tier at all -- ``UNIQUECANNON`` and ``UNIQUE_COLLAR`` are both in the
-    archive.  The empty string is not a failure and not a guess: it means the
-    item has no rarity to show, and it is drawn the way an unknown one is.
+    ``tier`` is one of :data:`QUALITY_WORDS`' values, or the empty string for
+    an item whose file says something that is not a tier at all -- a spell, a
+    fish, a potion.  The empty string is not a failure and not a guess: it
+    means the item has no rarity to show, and it is drawn the way an unknown
+    one is.
+
+    A set piece carries the tier of the rarity it displaced: the archive's 556
+    set items are all ``UNIQUE`` (346) or ``MAGIC`` (210), and not one calls
+    itself a set.  So set membership is ``set_name`` rather than a tier -- it
+    is something an item is *in*, not something it is, and the game colours a
+    set piece as the rare or unique thing its own file says it is.
 
     ``icon`` is a name under ``MEDIA/UI/ICONS`` and is not a path; turning it
     into pixels is :mod:`tl2stash.icons`' job, and most items resolve.
@@ -249,22 +258,13 @@ class Appearance:
 
 
 def _appearance(stated: dict[int, DatNode]) -> Appearance:
-    """Read the four appearance fields off an item's inherited variables."""
-    unit_type = _text(stated, VAR_UNITTYPE) or ""
-    tier, type_name = read_unit_type(unit_type)
-
-    set_id = _text(stated, VAR_SET)
-    if set_id:
-        # The file saying it is in a set is the item's own statement about
-        # itself, and it outranks the rarity word: a set piece says ``UNIQUE
-        # BOOTS`` and the game still shows it as its own tier.
-        tier = TIER_SET
-
+    """Read the appearance fields off an item's inherited variables."""
+    tier, type_name = read_unit_type(_text(stated, VAR_UNITTYPE) or "")
     return Appearance(
         tier=tier,
         type_name=type_name,
         icon=_text(stated, VAR_ICON),
-        set_name=set_id,
+        set_name=_text(stated, VAR_SET),
         item_level=int(_number(stated, VAR_LEVEL) or 0),
     )
 
@@ -274,28 +274,39 @@ def read_unit_type(unit_type: str) -> tuple[str, str]:
 
     The two arrive in one string and there is no separator to trust: the
     archive writes ``'UNIQUE BOOTS'``, ``'UNIQUE SHOULDER ARMOR'`` and
-    ``'UNIQUECANNON'`` alike.  So the first word is read as a tier only when
-    it is one of the six the game actually uses (see :data:`QUALITY_WORDS`);
-    anything else means the string has no tier in it at all and the whole
-    thing is the kind, which is how ``'SWORD'``, ``'POTION'`` and ``'FISH'``
-    are written.
+    ``'UNIQUECANNON'`` alike.  So the first word is read as a tier when it is
+    one of the six the game actually uses (see :data:`QUALITY_WORDS`), and
+    when it is not, the tier is taken from the start of it instead -- longest
+    quality word first, and only while a kind is left over.
+
+    The run-together spelling is rare -- 23 of the archive's 6,262 item files
+    are ``UNIQUECANNON`` -- but it is not nothing, and the reference database
+    reads those items as Unique (``The Rabble-Rouser``, ``q: "Unique"``,
+    ``ut: "UNIQUECANNON"``), which is what a player sees in the game.  A first
+    word that merely *starts* with a quality word and has no such file behind
+    it is unaffected: the words that are kinds -- ``SWORD``, ``POTION``,
+    ``FISH``, ``SPELL`` -- begin with none of the six.
 
     The kind comes back as words for reading.  ``'1HSWORD'`` is the game's
     own spelling and the player is shown ``1H Sword``.
 
-    A tier that is not one of the six comes back as the empty string rather
-    than as a guess.  ``UNIQUECANNON`` is a unique cannon written without a
-    space and is drawn as an item with no rarity, which is wrong but is at
-    least *visibly* wrong; calling it Unique would be right by luck and would
-    stop anyone noticing the next one.
+    A tier that is still not one of the six comes back as the empty string
+    rather than as a guess: it means the string has no tier in it at all, and
+    the whole of it is the kind.
     """
     words = unit_type.replace("_", " ").split()
     if not words:
         return "", ""
+
     tier = QUALITY_WORDS.get(words[0])
-    if tier is None:
-        return "", _readable_type(words)
-    return tier, _readable_type(words[1:])
+    if tier is not None:
+        return tier, _readable_type(words[1:])
+
+    for word, written in _QUALITY_BY_LENGTH:
+        if words[0].startswith(word) and len(words[0]) > len(word):
+            return written, _readable_type([words[0][len(word) :], *words[1:]])
+
+    return "", _readable_type(words)
 
 
 def _readable_type(words: list[str]) -> str:

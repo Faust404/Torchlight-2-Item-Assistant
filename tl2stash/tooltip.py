@@ -390,12 +390,14 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
             flavor = source.text(VAR_FLAVOR) if source else None
 
     appearance = data.appearance_for(item) if data is not None else None
+    tier_word = appearance.tier if appearance else ""
 
     return Card(
         name=item.display_name,
-        tier=TIER_KEYS.get(appearance.tier, TIER_NONE) if appearance else TIER_NONE,
-        tier_word=appearance.tier if appearance else "",
+        tier=TIER_KEYS.get(tier_word, TIER_NONE),
+        tier_word=tier_word,
         type_name=appearance.type_name if appearance else "",
+        set_name=appearance.set_name if appearance else None,
         icon=appearance.icon if appearance else None,
         level=item.level,
         sockets=item.num_sockets,

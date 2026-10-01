@@ -21,7 +21,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, TIER_NONE, lines  # noqa: E402
+from tl2stash.card import (  # noqa: E402
+    ADDED,
+    AFFIX,
+    ARMOR,
+    DAMAGE,
+    TIER_NONE,
+    lines,
+)
 from tl2stash.item import AddedDamage  # noqa: E402
 from tl2stash.tooltip import build, render  # noqa: E402
 
@@ -84,15 +91,23 @@ def test_the_card_s_blocks_are_the_game_s_sections_in_the_game_s_order(real_game
 
 
 @needs_game
-def test_a_set_piece_is_inked_as_a_set(real_game):
+def test_a_set_piece_wears_the_rarity_of_the_file_it_displaced(real_game):
     """Where the two halves of the card join.
 
-    ``appearance_for`` says the item is in a set; the card turns that into the
-    colour key the window looks its ink up by.  They are separate steps, and
-    this is the one that would silently stop happening.
+    ``appearance_for`` says what rarity the file states and what set the item
+    belongs to; the card turns the first into the colour key the window looks
+    its ink up by and carries the second beside it.  They are separate steps,
+    and this is the one that would silently stop happening -- the failure being
+    a set piece drawn in a colour the game never gives it.
     """
-    guid, _, _, _ = _a_set_item(real_game, "UNIQUE")
-    assert build(item(guid=guid), real_game).tier == "set"
+    for wanted, key, word in (("MAGIC", "rare", "Rare"), ("UNIQUE", "unique", "Unique")):
+        guid, _, _, shown = _a_set_item(real_game, wanted)
+        card = build(item(guid=guid), real_game)
+
+        assert (card.tier, card.tier_word) == (key, word)
+        # Membership is not lost by not being the tier: it is the one word the
+        # kind line adds, and the reason it exists is the line it produces.
+        assert card.set_name == shown
 
     # And an item with no data file to read has no tier rather than a guess.
     assert build(item(guid=0), real_game).tier == TIER_NONE

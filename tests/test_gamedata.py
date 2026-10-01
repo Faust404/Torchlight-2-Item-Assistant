@@ -625,9 +625,13 @@ def test_the_tier_and_the_kind_are_two_words_in_one_string():
     There is no separator between the two, so the first word is a tier only
     when it is a word the game uses for one -- and when it is not, the string
     has no tier at all and is entirely the kind.
+
+    The tier word that comes back is the *displayed* one rather than the file's
+    token, because a card is what this feeds: the file's ``MAGIC`` is the blue
+    the game calls rare.  See :data:`tl2stash.gamedata.QUALITY_WORDS`.
     """
     assert read_unit_type("UNIQUE 1HSWORD") == ("Unique", "1H Sword")
-    assert read_unit_type("MAGIC BOOTS") == ("Magic", "Boots")
+    assert read_unit_type("MAGIC BOOTS") == ("Rare", "Boots")
     assert read_unit_type("UNIQUE SHOULDER ARMOR") == ("Unique", "Shoulder Armor")
     # An underscore separates them as well as a space does.
     assert read_unit_type("UNIQUE_COLLAR") == ("Unique", "Collar")
@@ -635,9 +639,28 @@ def test_the_tier_and_the_kind_are_two_words_in_one_string():
     assert read_unit_type("SWORD") == ("", "Sword")
     assert read_unit_type("POTION") == ("", "Potion")
     assert read_unit_type("FISH") == ("", "Fish")
-    # Run together with nothing between them: not a tier, and not guessed at.
-    assert read_unit_type("UNIQUECANNON") == ("", "Uniquecannon")
     assert read_unit_type("") == ("", "")
+
+
+def test_a_tier_word_run_together_with_its_kind_is_still_read():
+    """``UNIQUECANNON`` is one real spelling of the game's, and one only.
+
+    Measured over the archive it is the sole token where the tier and the kind
+    are written with nothing between them: it parses to no tier at all when
+    only whole words are tried, and the item it belongs to -- The Rabble-Rouser
+    -- is a unique.  So the longest tier word the token *starts* with is taken
+    and the rest is the kind.
+
+    Splitting on a prefix is the kind of rule that can quietly eat a kind, so
+    the second half of this is the guard: the split only happens where the
+    token really does start with a tier word.  ``UNIQUEITEM`` is not an
+    ``UNITTYPE`` the game writes -- the measured kinds are ``Fist``, ``Boots``,
+    ``1H Mace`` and the like, and not one of them begins with a tier word --
+    it is here to fail if the rule ever widens to a substring search.
+    """
+    assert read_unit_type("UNIQUECANNON") == ("Unique", "Cannon")
+    assert read_unit_type("UNIQUEITEM") == ("Unique", "Item")
+    assert read_unit_type("THEUNIQUECANNON") == ("", "Theuniquecannon")
 
 
 @needs_game
@@ -659,13 +682,14 @@ def test_a_unique_is_read_as_a_unique_with_its_kind_and_its_icon(real_game):
 
 
 @needs_game
-def test_a_set_piece_is_tiered_by_its_set_and_not_by_its_own_rarity(real_game):
-    """The file calls a set piece magic or unique; the game shows it as a set.
+def test_a_set_piece_is_shown_as_the_rarity_its_own_file_states(real_game):
+    """The file calls a set piece magic or unique, and that is what is shown.
 
     Both spellings are real: four items in the archive belong to a set and
     state ``MAGIC`` themselves, and the rest inherit ``UNIQUE`` from a base
-    file.  A set is a third thing beside the two, and the only thing that says
-    so is the ``SET`` field -- which is why it overrides rather than fills in.
+    file.  Membership is not a rarity and is carried separately, in
+    ``set_name``, which is what lets the card say ``Unique Set Boots`` -- the
+    tier says the one thing and the name the other.
 
     Read out of the game's own files rather than through the code under test:
     the item's file is found by its guid and the set's name is in the set's
@@ -674,24 +698,28 @@ def test_a_set_piece_is_tiered_by_its_set_and_not_by_its_own_rarity(real_game):
     that items inherit their tier is pinned by Bashdrill, which states neither
     a tier nor an icon and has both.
     """
-    for wanted in ("MAGIC", "UNIQUE"):
+    for wanted, shown_as in (("MAGIC", "Rare"), ("UNIQUE", "Unique")):
         guid, unit_type, set_id, shown = _a_set_item(real_game, wanted)
 
         assert unit_type.startswith(wanted), "the item's own tier word changed"
         assert set_id != shown, "the internal id is what is shown"
 
         appearance = real_game.appearance_for(item(guid=guid))
-        assert appearance.tier == "Set", f"a {wanted} set piece is not shown as a set"
+        assert appearance.tier == shown_as, (
+            f"a {wanted} set piece should read as {shown_as}"
+        )
         assert appearance.set_name == shown
 
 
 @needs_game
 def test_no_item_file_anywhere_calls_itself_a_set(real_game):
-    """The measurement that makes the override the whole rule.
+    """Why membership is a separate field and not a tier word.
 
-    If any ``UNITTYPE`` in the archive read ``SET`` there would be something to
-    read, and the field would not need overriding -- or, worse, an item could
-    be one and not the other.
+    If some ``UNITTYPE`` read ``SET`` there would be a token to parse and the
+    tier could carry membership by itself -- and an item could then be one and
+    not the other.  There is none, so a set piece keeps the rarity of the file
+    it displaced and membership rides beside it in ``set_name``, which is
+    exactly the split ``tl2stash.card.TIER_KEYS`` documents.
     """
     from tl2stash.pak import PakFile, PakIndex
 

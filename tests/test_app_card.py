@@ -35,6 +35,7 @@ from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from app.card import (  # noqa: E402
     HEAD,
+    MUTED,
     TIER_INK,
     Hairline,
     IconCache,
@@ -68,6 +69,7 @@ def card(**kwargs) -> Card:
         "tier": "unique",
         "tier_word": "Unique",
         "type_name": "Fist",
+        "set_name": None,
         "icon": None,
         "level": 45,
         "sockets": 1,
@@ -168,6 +170,21 @@ def test_the_kind_line_names_the_tier_in_its_colour_and_the_kind_in_grey(qapp):
 def test_an_item_with_no_kind_and_no_tier_has_no_kind_line(qapp):
     drawn = ItemCard(card(tier_word="", type_name=""))
     assert texts(drawn, "dtype") == []
+
+
+def test_a_set_piece_says_so_in_the_one_word_its_tier_cannot(qapp):
+    """``Unique Set Boots``: the tier says the rarity and the membership rides
+    beside it, which is the site's own line and the only place a card names a
+    set at all."""
+    drawn = ItemCard(
+        card(tier="unique", tier_word="Unique", type_name="Boots", set_name="Berserker")
+    )
+    (kind,) = texts(drawn, "dtype")
+
+    # The membership is not what the item *is*, so it does not get the tier's
+    # colour: the ink opens and closes around the rarity word and nothing else.
+    inner = kind.removeprefix(f'<span style="color:{MUTED}">').removesuffix("</span>")
+    assert inner == f'<span style="color:{TIER_INK["unique"]}">Unique</span> Set Boots'
 
 
 def test_the_corner_says_what_the_item_asks_and_what_it_holds(qapp):
