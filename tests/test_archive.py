@@ -225,11 +225,17 @@ def test_real_stash_rebuilds_byte_exactly(source, tmp_path):
 @pytest.mark.skipif(not _REAL, reason="no Torchlight 2 saves on this machine")
 @pytest.mark.parametrize("source", _REAL)
 def test_real_stash_round_trip_through_archive(source, tmp_path):
-    """Take a real save, remove one item, and read it back."""
+    """Take a real save, remove one item, and read it back.
+
+    Skipped on an empty stash, which is the tool's own end state rather than
+    anything wrong with the file -- there is simply no item to remove.
+    """
     copy = tmp_path / "sharedstash_v2.bin"
     shutil.copy2(source, copy)
 
     before = read_stash_file(copy)
+    if not before.items:
+        pytest.skip(f"{source} is empty -- everything in it has been absorbed")
     victim = before.items[0]
 
     report = archive_stash(copy, {victim.fingerprint})

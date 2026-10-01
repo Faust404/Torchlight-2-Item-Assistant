@@ -119,10 +119,65 @@ def test_window_uses_the_file_it_was_given(qapp, tmp_path):
         win.close()
 
 
-def test_stash_and_collection_are_both_listed(window):
+def test_the_two_panels_describe_different_places(window):
+    """At startup: three items in the game, none of them ours.
+
+    The panels are not two views of one list.  The left one is the file; the
+    right one is the tool.  Until something is absorbed they share no rows, so
+    an empty collection is the correct answer to "what does the tool hold?"
+    """
     assert window.stash_model.rowCount() == 3
-    assert window.collection_model.rowCount() == 3
+    assert window.collection_model.rowCount() == 0
     assert "3" in window.stash_group.title()
+    assert "0" in window.collection_group.title()
+
+
+def test_the_collection_lists_only_what_the_tool_holds(window, monkeypatch):
+    """The contract for the right-hand panel.
+
+    An item in the stash is the game's until it is absorbed.  It must not sit
+    in the tool's list looking like something the tool is responsible for --
+    which is what happened while the panel showed every item ever seen, each
+    tagged with where it currently was.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    window.auto_absorb.setChecked(False)
+    window._sync()
+    assert window.stash_model.rowCount() == 3
+    assert window.collection_model.rowCount() == 0, (
+        "the collection listed items the tool had not taken"
+    )
+
+    window._absorb_all()
+    assert window.stash_model.rowCount() == 0
+    assert window.collection_model.rowCount() == 3
+
+
+def test_an_item_put_back_drops_off_the_collection(window, monkeypatch):
+    """The user's third point, at the window level.
+
+    Putting an item back has to be visible in the place the player is looking.
+    The item leaves the tool's list on the same refresh and turns up in the
+    game's panel, so the two lists keep answering their own questions.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    window.auto_absorb.setChecked(False)
+    window._absorb_all()
+    assert window.collection_model.rowCount() == 3
+
+    window.collection_view.selectRow(0)
+    window._restore_selected()
+
+    assert window.collection_model.rowCount() == 2, "the restored item stayed in the tool"
+    assert window.stash_model.rowCount() == 1, "the restored item is not in the game's panel"
 
 
 def test_the_stash_column_shows_where_things_are(window):
@@ -133,7 +188,15 @@ def test_the_stash_column_shows_where_things_are(window):
     assert sorted(names) == ["Alpha", "Beta", "Gamma"]
 
 
-def test_search_filters_the_collection(window):
+def test_search_filters_the_collection(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    window.auto_absorb.setChecked(False)
+    window._absorb_all()
+
     window.search.setText("Beta")
     assert window.collection_proxy.rowCount() == 1
     assert window.collection_proxy.index(0, 0).data() == "Beta"
@@ -257,7 +320,7 @@ def test_restore_puts_the_selection_back(window, monkeypatch):
     window._restore_selected()
 
     assert window.stash_model.rowCount() == 1
-    assert window.collection_model.rowCount() == 3
+    assert window.collection_model.rowCount() == 2
 
 
 def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch):

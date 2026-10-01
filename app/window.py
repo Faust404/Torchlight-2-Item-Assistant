@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from tl2stash.saves import SaveLocation, find_save_locations, live_location
-from tl2stash.service import ItemService
+from tl2stash.service import STATUS_ABSORBED, ItemService
 from tl2stash.watcher import StashWatcher
 
 from .models import (
@@ -377,7 +377,12 @@ class MainWindow(QMainWindow):
 
         fill_stash(self.stash_model, items)
 
-        rows = self.service.registry.rows()
+        # Only what the tool holds.  An item that is in the game -- one that
+        # never left, or one the player has just put back -- is in the left
+        # panel's hands, not this one's.  Listing it here as well, tagged with
+        # where it currently is, made these two lists overlap and left the
+        # reader to work out which entries they were actually responsible for.
+        rows = self.service.registry.rows(status=STATUS_ABSORBED)
         placements = self.service.registry.placements_for(str(self.service.source))
         placed = {
             print_: f"{container_label(p['container'])} · slot {p['slot']}"
@@ -385,9 +390,8 @@ class MainWindow(QMainWindow):
         }
         fill_collection(self.collection_model, rows, placed)
 
-        held = sum(1 for row in rows if row["status"] == "absorbed")
         self.stash_group.setTitle(f"In the game ({len(items)})")
-        self.collection_group.setTitle(f"In the tool ({len(rows)}) — {held} absorbed")
+        self.collection_group.setTitle(f"In the tool ({len(rows)})")
 
     def _in_game_count(self) -> int:
         assert self.service is not None

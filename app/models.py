@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 STASH_COLUMNS = ["Item", "Lvl", "Tab", "Slot"]
-COLLECTION_COLUMNS = ["Item", "Lvl", "Sockets", "Where", "Found in"]
+COLLECTION_COLUMNS = ["Item", "Lvl", "Sockets", "Found in"]
 
 
 def container_label(container: int) -> str:
@@ -81,33 +81,30 @@ def fill_collection(
     rows: list,
     placed: dict[str, str],
 ) -> None:
-    """Show what the tool has.
+    """Show what the tool holds.
 
-    ``rows`` are registry rows and ``placed`` maps a fingerprint to where the
-    item was last seen, so an item taken from the game still says which tab it
-    came out of.
+    ``rows`` are registry rows for items the tool has taken; the caller filters
+    them, because this list answers exactly one question -- *what is in here?*
+    An item sitting in the game is not in this list, whether it never left or
+    the player just put it back.  It is in the panel on the left instead, which
+    reads the file and so is the honest place to look for it.
+
+    Listing everything the registry had ever seen, each row tagged with where
+    it currently was, meant this list had to be read rather than trusted.  Now
+    membership is the answer and the columns are free to describe the item.
+
+    ``placed`` maps a fingerprint to where the item was last seen, so an item
+    taken out of the game still says which tab it came from.
     """
     model.removeRows(0, model.rowCount())
     for row in rows:
-        absorbed = row["status"] == "absorbed"
-        returned = row["status"] == "returned"
         name = _cell(row["name"])
         name.setData(row["fingerprint"], Qt.ItemDataRole.UserRole)
-        if absorbed:
-            # The one distinction that matters in this list.
-            name.setForeground(Qt.GlobalColor.darkGreen)
-
-        # "Returned" is worth its own word: the item is in the game because
-        # the player put it there, so it will not be swept up automatically
-        # the way everything else in the stash is.
-        status = "In tool" if absorbed else ("Returned" if returned else "In game")
-        where = placed.get(row["fingerprint"], "")
         model.appendRow(
             [
                 name,
                 _cell(str(row["level"]), sort=row["level"]),
                 _cell(str(row["num_sockets"]), sort=row["num_sockets"]),
-                _cell(status, sort=(0 if absorbed else 1 if returned else 2)),
-                _cell(where),
+                _cell(placed.get(row["fingerprint"], "")),
             ]
         )
