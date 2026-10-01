@@ -20,6 +20,7 @@ save file and into its own database.
 | in-game item stats | done — damage, armour, effects and flat damage all render |
 | checked against an independent item database | 17 of 30 match line for line; all 13 differences accounted for |
 | desktop GUI (PySide6) | done |
+| the item card, drawn as the tl2-db site draws it | done — tier ink, game art cut from the PAK, affix lines in the game's green |
 | packaging to `.exe` (PyInstaller) | not started |
 
 ## How it works
