@@ -1,9 +1,10 @@
-"""The rail: what the collection holds, and what to show of it.
+"""The rail: the kinds of thing the collection has, and what to show of them.
 
-Three facets, laid over each other down the left edge: the kinds of thing the
-collection has, the rarities, and a level range.  A window with a hundred items
-in it is not a list anyone reads -- it is a list you narrow -- and these are the
-three ways a player narrows one.
+One facet, down the left edge: the tree of kinds.  The other two -- the
+rarities and the level range -- are in the bar across the top (:mod:`app.
+filters`), where they cost the wall of cards none of its width.  The kinds stay
+here because a kind is a *path*: a sword is a one-handed weapon, a helmet is
+armor, and a tree is the only control that says so at a glance.
 
 The tree is the reference database's, which is the game's own kinds gathered
 into six groups.  Its **shape** is what the collection actually holds, so a
@@ -13,8 +14,8 @@ Keeping the shape still is a deliberate departure from the reference, which
 rebuilds its rows on every filter change and drops the ones that reach zero --
 boxes that vanish from under the cursor as you tick them.
 
-Nothing here decides anything.  It draws what it is told to draw, says what has
-been ticked, and emits :attr:`SidePanel.changed`; :class:`~app.models.
+Nothing here decides anything.  It draws what it is told to draw, says what
+has been ticked, and emits :attr:`SidePanel.changed`; :class:`~app.models.
 CollectionFilter` is what makes that mean anything.
 """
 
@@ -25,23 +26,14 @@ from collections.abc import Iterable, Mapping
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
-    QGridLayout,
-    QHBoxLayout,
     QHeaderView,
-    QLabel,
-    QPushButton,
-    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from tl2stash.card import TIER_INK
 from tl2stash.taxonomy import OTHER, TYPE_GROUPS, Place
-
-from .models import TIER_CHIPS
 
 __all__ = ["SidePanel"]
 
@@ -50,37 +42,6 @@ __all__ = ["SidePanel"]
 #: to say what a quest object *is*, so its file says only that it is a quest
 #: object.
 UNCLASSIFIED = "Unclassified"
-
-#: The highest level the game has an item at, so the range cannot be set past
-#: what the collection could hold.  Level 100 is the character cap; an item's
-#: own requirement runs a little above it.
-LEVEL_MAX = 100
-
-#: How dim a chip is drawn when it is not ticked.
-OFF_INK = "#6f6963"
-OFF_BORDER = "#33302c"
-
-
-def _chip_style(ink: str) -> str:
-    """A rarity chip: the tier's own colour, in the reference's pill shape.
-
-    Tinted while ticked and grey while not, so that a glance at the column says
-    which rarities are in play without reading a single word.  The indicator is
-    collapsed to nothing and the pill itself is the control -- a checkbox's box
-    beside a coloured pill is two things saying one thing.
-    """
-    return (
-        "QCheckBox {"
-        f" color: {ink};"
-        f" border: 1px solid {ink};"
-        " border-radius: 9px; padding: 3px 8px;"
-        " background: rgba(255, 255, 255, 0.05);"
-        "}"
-        "QCheckBox::indicator { width: 0px; height: 0px; }"
-        "QCheckBox:!checked {"
-        f" color: {OFF_INK}; border-color: {OFF_BORDER}; background: transparent;"
-        "}"
-    )
 
 
 def _rail_order() -> list[tuple[str, str | None]]:
@@ -119,10 +80,10 @@ def _arranged(
 
 
 class SidePanel(QWidget):
-    """The three facets, and a signal when any of them moves."""
+    """The tree of kinds, and a signal when anything in it moves."""
 
-    #: Something was ticked, unticked or retyped.  Emitted once per change, and
-    #: never while the panel is being rebuilt underneath the user.
+    #: Something was ticked or unticked.  Emitted once per change, and never
+    #: while the panel is being rebuilt underneath the user.
     changed = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -144,19 +105,8 @@ class SidePanel(QWidget):
         self.tree = self._build_tree()
         column.addWidget(self.tree, stretch=1)
 
-        column.addWidget(self._rule("Rarity"))
-        column.addLayout(self._build_chips())
-
-        column.addWidget(self._rule("Level"))
-        column.addLayout(self._build_levels())
-
-        column.addStretch(0)
-        self.clear_button = QPushButton("Clear filters")
-        self.clear_button.clicked.connect(self.reset)
-        column.addWidget(self.clear_button)
-
         self.set_shape(())
-        self.set_counts({}, {})
+        self.set_counts({})
 
     # -- construction ----------------------------------------------------
 
@@ -176,52 +126,6 @@ class SidePanel(QWidget):
         tree.itemChanged.connect(self._item_changed)
         return tree
 
-    def _rule(self, text: str) -> QLabel:
-        """A small heading over one of the facets."""
-        label = QLabel(text)
-        label.setObjectName("facet")
-        label.setStyleSheet(
-            "QLabel#facet { color: #8b837b; padding-top: 6px; }"
-        )
-        return label
-
-    def _build_chips(self) -> QGridLayout:
-        """The rarity chips, two to a row in the game's own order."""
-        grid = QGridLayout()
-        grid.setSpacing(4)
-        self.chips: dict[str, QCheckBox] = {}
-        for i, word in enumerate(TIER_CHIPS):
-            chip = QCheckBox(word)
-            chip.setStyleSheet(_chip_style(TIER_INK[word.lower()]))
-            chip.setToolTip(f"Show only the {word.lower()} items.")
-            chip.toggled.connect(self._facet_changed)
-            grid.addWidget(chip, i // 2, i % 2)
-            self.chips[word] = chip
-        return grid
-
-    def _build_levels(self) -> QHBoxLayout:
-        """A min and a max, where zero means "no bound" rather than "level 0"."""
-        row = QHBoxLayout()
-        row.setSpacing(4)
-        self.low = self._spin()
-        self.high = self._spin()
-        row.addWidget(self.low)
-        row.addWidget(QLabel("to"))
-        row.addWidget(self.high)
-        row.addStretch(1)
-        return row
-
-    def _spin(self) -> QSpinBox:
-        spin = QSpinBox()
-        spin.setRange(0, LEVEL_MAX)
-        # Zero is not a level the game has an item at, so it is free to mean
-        # "any" -- and meaning it in the widget is what keeps the empty string
-        # out of the range arithmetic.
-        spin.setSpecialValueText("Any")
-        spin.setValue(0)
-        spin.valueChanged.connect(self._facet_changed)
-        return spin
-
     # -- what the panel is told ------------------------------------------
 
     def set_shape(self, places: Iterable[Place]) -> None:
@@ -240,12 +144,8 @@ class SidePanel(QWidget):
         self._ticked &= wanted
         self._rebuild()
 
-    def set_counts(
-        self,
-        places: Mapping[Place, int] | None = None,
-        tiers: Mapping[str, int] | None = None,
-    ) -> None:
-        """Put the numbers on the rows and the chips.
+    def set_counts(self, places: Mapping[Place, int] | None = None) -> None:
+        """Put the numbers on the rows.
 
         These are what the filters *would* leave rather than what they do
         leave, so a row reading zero is a row that has nothing behind it under
@@ -261,8 +161,6 @@ class SidePanel(QWidget):
             for i in range(self.tree.topLevelItemCount()):
                 group_item = self.tree.topLevelItem(i)
                 group_item.setText(1, str(self._sum(group_item)))
-            for word, chip in self.chips.items():
-                chip.setText(f"{word}  {(tiers or {}).get(word, 0)}")
         finally:
             self._updating = False
 
@@ -286,14 +184,6 @@ class SidePanel(QWidget):
         """The leaves that are ticked, flattened -- a group is its children."""
         return set(self._ticked)
 
-    def tiers(self) -> set[str]:
-        """The rarity words that are ticked."""
-        return {word for word, chip in self.chips.items() if chip.isChecked()}
-
-    def level_range(self) -> tuple[int | None, int | None]:
-        """The bounds, either of which is ``None`` when the box says "Any"."""
-        return (self.low.value() or None, self.high.value() or None)
-
     # -- the user --------------------------------------------------------
 
     def _item_changed(self, item: QTreeWidgetItem, column: int) -> None:
@@ -312,20 +202,12 @@ class SidePanel(QWidget):
         self._ticked = ticked
         self.changed.emit()
 
-    def _facet_changed(self, *_) -> None:
-        if not self._updating:
-            self.changed.emit()
-
     def reset(self) -> None:
         """Untick everything, which is the state the window starts in."""
         self._updating = True
         try:
             for leaf in self._leaves.values():
                 leaf.setCheckState(0, Qt.CheckState.Unchecked)
-            for chip in self.chips.values():
-                chip.setChecked(False)
-            self.low.setValue(0)
-            self.high.setValue(0)
         finally:
             self._updating = False
         self._ticked = set()

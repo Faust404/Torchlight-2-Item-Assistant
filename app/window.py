@@ -1,11 +1,12 @@
 """The main window.
 
-The layout is the argument.  On the left, the kinds the collection holds; in
-the middle, what the game has; on the right, what the tool has -- drawn as the
-game draws it, one card per item.  The player puts things in the shared stash
-and this empties it -- so the window is arranged around a single gesture rather
-than around a file format, because the file format is not what anyone wants to
-think about.
+The layout is the argument.  Above everything, what to show and what to do with
+it -- the filters in one row and the actions in the row over them.  Below it,
+the kinds the collection holds down the left, what the game has in the middle,
+and what the tool has on the right, drawn as the game draws it, one card per
+item.  The player puts things in the shared stash and this empties it -- so the
+window is arranged around a single gesture rather than around a file format,
+because the file format is not what anyone wants to think about.
 
 The cards are the reason there is no item pane: a tile *is* the card, so a
 second copy of the same card beside the grid would be a second answer to a
@@ -26,7 +27,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -46,6 +46,7 @@ from tl2stash.watcher import StashWatcher
 
 from .card import IconCache
 from .catalog import ICON_SIZE, Catalog
+from .filters import FilterBar
 from .models import (
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
@@ -152,6 +153,10 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addLayout(self._build_toolbar())
+        # The filters are a row of the window rather than a column of it: what
+        # narrows a collection is asked once and then read past, and a column
+        # asks for its width on every one of the collection's rows.
+        layout.addWidget(self._build_filters())
         layout.addWidget(self._build_splitter(), stretch=1)
         self.setCentralWidget(central)
         self.status = self.statusBar()
@@ -195,18 +200,24 @@ class MainWindow(QMainWindow):
 
         return bar
 
+    def _build_filters(self) -> FilterBar:
+        """The row of controls that narrow the collection, above the cards."""
+        self.filters = FilterBar()
+        self.filters.changed.connect(self._filters_changed)
+        return self.filters
+
     def _build_splitter(self) -> QSplitter:
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # The rail comes first because it is the first thing to reach for: a
         # collection of any size is narrowed before it is read.  It is narrow,
-        # because what it holds now is one column of kind names -- the search
-        # and the rest of the filters are in the bar above.
-        self.filter_group = QGroupBox("Filter")
-        filters = QVBoxLayout(self.filter_group)
+        # because what it holds is one column of kind names and nothing else --
+        # every other control is in the bar above.
+        self.type_group = QGroupBox("Type")
+        kinds = QVBoxLayout(self.type_group)
         self.sidebar = SidePanel()
-        filters.addWidget(self.sidebar)
-        splitter.addWidget(self.filter_group)
+        kinds.addWidget(self.sidebar)
+        splitter.addWidget(self.type_group)
 
         self.stash_group = QGroupBox("In the game")
         left = QVBoxLayout(self.stash_group)
@@ -216,12 +227,6 @@ class MainWindow(QMainWindow):
 
         self.collection_group = QGroupBox("In the tool")
         right = QVBoxLayout(self.collection_group)
-
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search the collection…")
-        self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self._filter_changed)
-        right.addWidget(self.search)
 
         # One line, with the whole of it -- what is missing and how to point
         # the tool at the game -- on its tooltip.  It used to be a pane of
@@ -244,7 +249,12 @@ class MainWindow(QMainWindow):
 
         self.sidebar.changed.connect(self._filters_changed)
 
-        splitter.setSizes([170, 320, 900])
+        # The rail holds a kind word and its count and nothing else, so it is
+        # given the width the longest of them needs -- "Unclassified", indented
+        # under its group -- and every pixel past that goes to the cards, which
+        # are the thing here worth looking at.  The handle is the player's;
+        # this is only where it starts.
+        splitter.setSizes([165, 300, 935])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
@@ -366,11 +376,12 @@ class MainWindow(QMainWindow):
             return
         location = self._sources[index]
 
-        # A different stash is a different collection, and ticks left over from
-        # the last one would silently hide most of it -- a narrowing nobody
-        # asked for and, because the shape changes with it, one that can be
-        # hard to see.  Cleared before the first read, not after.
+        # A different stash is a different collection, and filters left over
+        # from the last one would silently hide most of it -- a narrowing
+        # nobody asked for and, because the shape changes with it, one that can
+        # be hard to see.  Cleared before the first read, not after.
         self.sidebar.reset()
+        self.filters.reset()
 
         if self.service is not None:
             self.service.close()
@@ -673,27 +684,32 @@ class MainWindow(QMainWindow):
         assert self.service is not None
         return len(self.service.stash_items())
 
-    def _filter_changed(self, text: str) -> None:
-        self.collection_proxy.setFilterFixedString(text)
-        # The counts follow the search box as well as the facets: a number that
-        # ignored what the player had typed would be a count of a list they are
-        # not looking at.
-        self._count_sidebar()
-        self._rebuild_collection()
-
     def _filters_changed(self) -> None:
-        """Apply what the sidebar has ticked, then say what each tick would leave."""
+        """Apply every facet, then say what each one would leave.
+
+        One slot for the whole job, whether it was a kind ticked in the rail or
+        a chip ticked in the bar: the proxy holds all four facets at once, so
+        applying three of them and rebuilding would be a redraw of a list the
+        player is not looking at.  Each setter returns without touching the
+        rows when its facet has not moved, which is what keeps this free on the
+        polls that changed nothing.
+        """
+        self.collection_proxy.setFilterFixedString(self.filters.search_text())
         self.collection_proxy.set_places(self.sidebar.places())
-        self.collection_proxy.set_tiers(self.sidebar.tiers())
-        self.collection_proxy.set_level_range(*self.sidebar.level_range())
-        self._count_sidebar()
+        self.collection_proxy.set_tiers(self.filters.tiers())
+        self.collection_proxy.set_level_range(*self.filters.level_range())
+        self._count_facets()
         self._rebuild_collection()
 
-    def _count_sidebar(self) -> None:
-        self.sidebar.set_counts(
-            self.collection_proxy.counts(PLACE_ROLE),
-            self.collection_proxy.counts(TIER_ROLE),
-        )
+    def _count_facets(self) -> None:
+        """Put the numbers on the rail and the chips.
+
+        Both are what the filters *would* leave rather than what they do, and
+        both follow the search box: a number that ignored what the player had
+        typed would be a count of a list they are not looking at.
+        """
+        self.sidebar.set_counts(self.collection_proxy.counts(PLACE_ROLE))
+        self.filters.set_counts(self.collection_proxy.counts(TIER_ROLE))
 
     def _describe(self) -> str:
         if self.service is None:

@@ -317,14 +317,14 @@ def test_search_filters_the_collection(window, monkeypatch):
     window.auto_absorb.setChecked(False)
     window._absorb_all()
 
-    window.search.setText("Beta")
+    window.filters.search.setText("Beta")
     assert window.collection_proxy.rowCount() == 1
     assert window.collection_proxy.index(0, 0).data() == "Beta"
     assert [row.name for row in window.grid.rows()] == ["Beta"], (
         "the wall did not follow the search"
     )
 
-    window.search.setText("")
+    window.filters.search.setText("")
     assert window.collection_proxy.rowCount() == 3
     assert window.grid.count() == 3
 
@@ -340,7 +340,7 @@ def test_a_search_that_matches_nothing_says_so(window, monkeypatch):
     window.auto_absorb.setChecked(False)
     window._absorb_all()
 
-    window.search.setText("nothing like this")
+    window.filters.search.setText("nothing like this")
     assert window.grid.count() == 0
     empty = window.grid.findChild(QLabel, "empty")
     assert not empty.isHidden()

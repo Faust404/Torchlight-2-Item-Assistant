@@ -262,14 +262,14 @@ def fill_collection(
 
 
 class CollectionFilter(QSortFilterProxyModel):
-    """The collection list, narrowed by what the sidebar has ticked.
+    """The collection, narrowed by what the controls above it have ticked.
 
-    Four things narrow it and they AND: the search box, the kinds ticked in the
-    rail, the rarity chips, and a level range.  A facet with nothing ticked is
-    not a filter at all, so a window whose sidebar has just been cleared shows
-    the whole collection -- which is what makes the sidebar safe to ignore.
+    Four things narrow it and they AND: the search box, the kinds ticked in
+    the rail, the rarity chips, and a level range.  A facet with nothing ticked
+    is not a filter at all, so a window whose controls have just been cleared
+    shows the whole collection -- which is what makes them safe to ignore.
 
-    Ticking a *group* is the same as ticking everything in it, so the sidebar
+    Ticking a *group* is the same as ticking everything in it, so the rail
     flattens its tree to a set of places and hands that over; there is no
     "which groups" anywhere in here.
 
@@ -278,7 +278,7 @@ class CollectionFilter(QSortFilterProxyModel):
     that one facet ignored, so the number beside "Unique" stays the number of
     uniques there *are* rather than dropping to zero the moment something else
     is ticked.  That is the reference database's own ``matches(o, skip)``, and
-    it is the whole reason the sidebar's numbers are worth reading.
+    it is the whole reason the numbers beside a control are worth reading.
     """
 
     def __init__(self, parent=None) -> None:

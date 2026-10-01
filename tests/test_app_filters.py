@@ -1,20 +1,22 @@
-"""Tests for narrowing the collection: the proxy, and the rail that drives it.
+"""Tests for narrowing the collection: the proxy, and the controls over it.
 
-Two halves, and they are tested apart because they answer different questions.
+Three parts, and they are tested apart because they answer different questions.
 :class:`~app.models.CollectionFilter` decides what a set of ticks *means*, and
 is tested against a model built by hand so that every case can be stated
 exactly -- including the ones the game's own data does not happen to have.
-:class:`~app.sidebar.SidePanel` decides what the rail looks like and what it
-says has been ticked, and is tested against the shapes it will be handed.
+:class:`~app.sidebar.SidePanel` and :class:`~app.filters.FilterBar` decide what
+the controls look like and what they say has been ticked -- the kinds down the
+left edge, the search, the rarities and the level range across the top -- and
+are tested against the shapes they will be handed.
 
 They meet at one value, ``(group, subgroup, kind)``, and the sharpest test here
 is about why that value is a triple rather than a kind word: the empty kind is
 a real kind in two different groups, and a filter keyed on the word alone would
 tick a quest object and an item from a mod at the same time.
 
-One test at the end runs the pair against the real game, because the proxy
-being right and the rail being right does not prove the window wired them to
-each other.
+One test at the end runs them against the real game, because the proxy being
+right and the controls being right does not prove the window wired them to each
+other.
 """
 
 from __future__ import annotations
@@ -38,12 +40,14 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
+from app.filters import LEVEL_MAX, FilterBar  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
     LEVEL_ROLE,
     PLACE_ROLE,
     TIER_ROLE,
+    TIER_CHIPS,
     CollectionFilter,
     fill_collection,
     new_model,
@@ -307,7 +311,7 @@ def test_the_search_box_narrows_the_counts(qapp):
 
 
 # --------------------------------------------------------------------------
-# The rail
+# The rail, which is the kinds and nothing else
 # --------------------------------------------------------------------------
 
 
@@ -375,45 +379,44 @@ def test_ticking_a_group_ticks_what_is_under_it(qapp):
     assert panel.places() == {BOOTS, HELMET}
 
 
-def test_clearing_puts_every_facet_back(qapp):
+def test_the_number_beside_a_kind_is_what_ticking_it_would_show(qapp):
+    """The rail's own reason for having a second column."""
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+
+    panel.set_counts({BOOTS: 3})
+
+    armor, weapons = panel.tree.topLevelItem(0), panel.tree.topLevelItem(1)
+    assert armor.child(0).text(0) == "Boots"
+    assert armor.child(0).text(1) == "3"
+    # A group is what is under it ...
+    assert armor.text(1) == "3"
+    # ... and a kind with nothing behind it says so rather than going blank.
+    sword = weapons.child(0).child(0)
+    assert sword.text(0) == "Sword"
+    assert sword.text(1) == "0"
+
+
+def test_clearing_the_rail_puts_back_what_was_ticked(qapp):
     panel = _panel()
     panel.set_shape([BOOTS, SWORD])
     panel.tree.topLevelItem(0).child(0).setCheckState(0, Qt.CheckState.Checked)
-    panel.chips["Unique"].setChecked(True)
-    panel.low.setValue(20)
-    panel.high.setValue(30)
-    assert panel.places() and panel.tiers() and panel.level_range() != (None, None)
+    assert panel.places()
 
     panel.reset()
 
     assert panel.places() == set()
-    assert panel.tiers() == set()
-    assert panel.level_range() == (None, None)
 
 
-def test_a_level_box_of_zero_means_any_rather_than_level_zero(qapp):
-    panel = _panel()
-
-    panel.low.setValue(0)
-    panel.high.setValue(45)
-
-    assert panel.level_range() == (None, 45)
-    assert panel.low.specialValueText() == "Any"
-
-
-def test_the_panel_says_so_when_a_facet_moves(qapp):
-    """One signal for all three facets, because the window does one thing with
-    it: re-apply everything and re-count."""
+def test_the_rail_says_so_when_a_kind_moves(qapp):
     panel = _panel()
     panel.set_shape([BOOTS])
     heard = []
     panel.changed.connect(lambda: heard.append(1))
 
     panel.tree.topLevelItem(0).child(0).setCheckState(0, Qt.CheckState.Checked)
-    panel.chips["Rare"].setChecked(True)
-    panel.low.setValue(10)
 
-    assert len(heard) == 3
+    assert len(heard) == 1
 
 
 def test_rebuilding_the_rail_is_not_a_change_the_user_made(qapp):
@@ -424,7 +427,7 @@ def test_rebuilding_the_rail_is_not_a_change_the_user_made(qapp):
     panel.changed.connect(lambda: heard.append(1))
 
     panel.set_shape([BOOTS, SWORD])
-    panel.set_counts({BOOTS: 3, SWORD: 1}, {"Unique": 4})
+    panel.set_counts({BOOTS: 3, SWORD: 1})
 
     assert heard == []
 
@@ -438,6 +441,124 @@ def test_a_tick_on_a_kind_the_collection_has_lost_goes_with_it(qapp):
     panel.set_shape([SWORD])
 
     assert panel.places() == set()
+
+
+# --------------------------------------------------------------------------
+# The bar, which is everything else
+# --------------------------------------------------------------------------
+
+
+def _bar() -> FilterBar:
+    """A bar on its own; the test that asks for it has already made the app."""
+    return FilterBar()
+
+
+def test_the_bar_reads_back_what_is_in_it(qapp):
+    """The window asks the bar for its facets rather than reaching into its
+    widgets, so what the bar says is what the filter gets."""
+    bar = _bar()
+
+    assert bar.search_text() == ""
+    assert bar.tiers() == set()
+    assert bar.level_range() == (None, None)
+
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+    bar.low.setValue(45)
+
+    assert bar.search_text() == "drill"
+    assert bar.tiers() == {"Unique"}
+    assert bar.level_range() == (45, None)
+
+
+def test_the_bar_carries_a_chip_for_every_rarity_the_game_has(qapp):
+    """The same five words the cards are inked with, and in the game's own
+    order, because a chip and a card's kind line name the same thing."""
+    bar = _bar()
+
+    assert list(bar.chips) == list(TIER_CHIPS)
+    assert "Legendary" in bar.chips
+
+
+def test_a_level_box_of_zero_means_any_rather_than_level_zero(qapp):
+    bar = _bar()
+
+    bar.low.setValue(0)
+    bar.high.setValue(45)
+
+    assert bar.level_range() == (None, 45)
+    assert bar.low.specialValueText() == "Any"
+    assert bar.low.maximum() == LEVEL_MAX
+
+
+def test_the_counts_go_on_the_chips(qapp):
+    """What :meth:`CollectionFilter.counts` is for: the number beside a rarity
+    is what ticking it would show, so it stays worth reading while another
+    rarity is ticked."""
+    bar = _bar()
+
+    bar.set_counts({"Unique": 4, "Rare": 1})
+
+    assert bar.chips["Unique"].text() == "Unique  4"
+    assert bar.chips["Rare"].text() == "Rare  1"
+    # A rarity with nothing behind it says zero rather than going blank.
+    assert bar.chips["Legendary"].text() == "Legendary  0"
+
+
+def test_clearing_the_bar_puts_every_control_back(qapp):
+    bar = _bar()
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+    bar.low.setValue(20)
+    bar.high.setValue(30)
+    assert bar.search_text() and bar.tiers() and bar.level_range() != (None, None)
+
+    bar.reset()
+
+    assert bar.search_text() == ""
+    assert bar.tiers() == set()
+    assert bar.level_range() == (None, None)
+
+
+def test_the_bar_says_so_when_anything_in_it_moves(qapp):
+    """One signal for all four controls, because the window does one thing with
+    it: re-apply every facet and re-count."""
+    bar = _bar()
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.search.setText("drill")
+    bar.chips["Rare"].setChecked(True)
+    bar.low.setValue(10)
+
+    assert len(heard) == 3
+
+
+def test_putting_the_counts_on_the_chips_is_not_a_change_made(qapp):
+    """Writing the numbers is the window's doing, not the player's, and a chip
+    whose text was rewritten must not come back round as a tick."""
+    bar = _bar()
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.set_counts({"Unique": 4})
+
+    assert heard == []
+
+
+def test_clearing_the_bar_is_one_change_rather_than_four(qapp):
+    """A reset is the player pressing one button, so the window hears about it
+    once -- four signals would be four redraws of the same list."""
+    bar = _bar()
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+    bar.low.setValue(20)
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.reset()
+
+    assert len(heard) == 1
 
 
 # --------------------------------------------------------------------------
