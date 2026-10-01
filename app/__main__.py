@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent / "var" / "items.db"
+VAR_DIR = Path(__file__).resolve().parent.parent / "var"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,7 +30,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from .window import MainWindow
 
-    db_path = DEFAULT_DB
+    # Left unset, each stash gets its own database under var/.  Passing --db
+    # pools every stash into one file, which is useful for looking at them
+    # together and wrong for actually storing items in: an item taken from the
+    # modded stash would be restorable into the vanilla one.
+    db_path = None
     source = None
     for arg in argv:
         if arg.startswith("--db="):
@@ -39,7 +43,13 @@ def main(argv: list[str] | None = None) -> int:
             source = Path(arg.split("=", 1)[1])
         elif arg in ("-h", "--help"):
             print(__doc__)
-            print("usage: python -m app [--db=PATH] [--save=PATH]")
+            print(
+                "usage: python -m app [--db=PATH] [--save=PATH]\n"
+                f"\n"
+                f"  --save=PATH  open this stash file instead of the one being played\n"
+                f"  --db=PATH    store every stash in one database (default: one\n"
+                f"               file per stash under {VAR_DIR})"
+            )
             return 0
         else:
             print(f"unknown argument: {arg}", file=sys.stderr)

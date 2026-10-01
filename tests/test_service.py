@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash import StashWatcher  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
+from tl2stash.saves import SaveLocation  # noqa: E402
 from tl2stash.service import (  # noqa: E402
     STATUS_ABSORBED,
     STATUS_IN_STASH,
@@ -40,7 +41,7 @@ def db_path(tmp_path):
 @pytest.fixture
 def service(stash_path, db_path):
     write_synthetic_stash(stash_path, ["Alpha", "Beta", "Gamma"])
-    with ItemService(db_path, stash_path) as svc:
+    with ItemService(db_path, SaveLocation.at(stash_path)) as svc:
         yield svc
 
 
@@ -342,7 +343,7 @@ def test_search_narrows_with_every_term(service):
 def test_absorb_survives_a_reopened_database(stash_path, db_path):
     """The registry is the durable half, so it has to outlive the process."""
     write_synthetic_stash(stash_path, ["Alpha", "Beta"])
-    with ItemService(db_path, stash_path) as svc:
+    with ItemService(db_path, SaveLocation.at(stash_path)) as svc:
         svc.absorb_all()
 
     with Registry(db_path) as registry:

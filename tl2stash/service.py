@@ -37,6 +37,7 @@ from .archive import (
 from .crypto import read_save_file
 from .item import Item
 from .registry import Registry, ScanResult
+from .saves import SaveLocation
 from .stash import Stash, read_stash
 
 __all__ = [
@@ -103,10 +104,22 @@ class ItemService:
     Use as a context manager, or call :meth:`close`.
     """
 
-    def __init__(self, db_path: str | Path, source: str | Path) -> None:
+    def __init__(self, db_path: str | Path, location: SaveLocation) -> None:
         self.registry = Registry(db_path)
-        self.source = Path(source)
+        self.location = location
+        self.source = Path(location.path)
         self._stash: Stash | None = None
+
+    @property
+    def source_key(self) -> str:
+        """What the registry calls this stash.
+
+        Always the location's key, never its path -- see
+        :attr:`SaveLocation.key`.  Taking the location object rather than a
+        bare path is what makes that unavoidable: there is no path here to
+        accidentally key on.
+        """
+        return self.location.key
 
     def __enter__(self) -> "ItemService":
         return self
@@ -126,7 +139,7 @@ class ItemService:
         """
         save = read_save_file(self.source)
         self._stash = read_stash(save)
-        return self.registry.scan(self._stash, str(self.source))
+        return self.registry.scan(self._stash, self.source_key)
 
     @property
     def stash(self) -> Stash:
@@ -225,7 +238,7 @@ class ItemService:
             row = self.registry.get(print_)
             if row is None:
                 continue
-            place = self.registry.last_placement(print_, str(self.source))
+            place = self.registry.last_placement(print_, self.source_key)
             requests.append(
                 RestoreRequest(
                     raw=row["raw"],

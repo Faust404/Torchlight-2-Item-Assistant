@@ -180,6 +180,47 @@ def test_an_item_put_back_drops_off_the_collection(window, monkeypatch):
     assert window.stash_model.rowCount() == 1, "the restored item is not in the game's panel"
 
 
+def test_modded_and_vanilla_do_not_share_a_pile(qapp, tmp_path, monkeypatch):
+    """The user's fourth point, stated as a property.
+
+    Two stashes, two databases.  An item absorbed out of one is not in the
+    other -- and could not be put back into it, because that database has
+    never held its bytes.  That is the point of a file each rather than a
+    column: the separation cannot be forgotten in a query.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+
+    vanilla = tmp_path / "save" / "76561198328811052" / "sharedstash_v2.bin"
+    modded = tmp_path / "modsave" / "76561198328811052" / "sharedstash_v2.bin"
+    for path in (vanilla, modded):
+        path.parent.mkdir(parents=True)
+    write_synthetic_stash(vanilla, ["Alpha"])
+    write_synthetic_stash(modded, ["Beta"])
+
+    var = tmp_path / "var"
+    one = MainWindow(db_dir=var, source=vanilla)
+    two = MainWindow(db_dir=var, source=modded)
+    try:
+        assert one.service.source_key == "vanilla/76561198328811052"
+        assert two.service.source_key == "modded/76561198328811052"
+
+        one._absorb_all()
+        two._absorb_all()
+
+        assert one.service.registry.path != two.service.registry.path
+        assert one.service.registry.path.name == "items-vanilla-76561198328811052.db"
+        assert two.service.registry.path.name == "items-modded-76561198328811052.db"
+        assert {r["name"] for r in one.service.registry.rows()} == {"Alpha"}
+        assert {r["name"] for r in two.service.registry.rows()} == {"Beta"}
+    finally:
+        one.close()
+        two.close()
+
+
 def test_the_stash_column_shows_where_things_are(window):
     names = [
         window.stash_model.item(row, 0).text()

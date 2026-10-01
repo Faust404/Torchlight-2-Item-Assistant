@@ -42,6 +42,30 @@ class SaveLocation:
         return f"{self.kind} · {self.steam_id}"
 
     @property
+    def key(self) -> str:
+        """The registry's name for this stash -- its identity.
+
+        Deliberately not the path.  The absolute path changes when a Steam
+        library moves between drives, or when the game is reinstalled, and a
+        registry keyed on it would then be looking at a stash it had never
+        seen: every item in it would be new, and every item recorded under the
+        old path would look lost.  Which tree it is and whose it is survives
+        all of that.
+        """
+        return f"{self.kind}/{self.steam_id}"
+
+    @property
+    def db_name(self) -> str:
+        """This stash's own database file name.
+
+        One file per stash rather than one file with a source column, so that
+        a modded item cannot be restored into a vanilla save -- not because
+        the code checks, but because the vanilla stash's database has never
+        held it.
+        """
+        return f"items-{self.kind}-{self.steam_id}.db"
+
+    @property
     def exists(self) -> bool:
         return self.path.is_file()
 
@@ -53,8 +77,25 @@ class SaveLocation:
     def size(self) -> int:
         return self.path.stat().st_size if self.exists else 0
 
+    @classmethod
+    def at(cls, path: str | Path) -> "SaveLocation":
+        """Identity for a stash file given by path alone.
+
+        Discovery knows which tree it walked in; a file named on the command
+        line does not come with that answer.  Both routes have to arrive at
+        the same identity, or the same stash ends up in the registry twice
+        under two names -- which is exactly what happened here, and is why
+        this derivation lives in one place instead of at each call site.
+        """
+        path = Path(path)
+        return cls(
+            path=path,
+            kind="modded" if "modsave" in path.parts else "vanilla",
+            steam_id=path.parent.name,
+        )
+
     def __str__(self) -> str:
-        return f"{self.kind}/{self.steam_id}"
+        return self.key
 
 
 def find_save_locations(root: Path | None = None) -> list[SaveLocation]:

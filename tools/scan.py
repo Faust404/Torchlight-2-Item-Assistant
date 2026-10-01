@@ -19,14 +19,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash import read_stash_file  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
-from tl2stash.saves import SAVE_ROOT, find_save_locations  # noqa: E402
+from tl2stash.saves import SAVE_ROOT, SaveLocation, find_save_locations  # noqa: E402
 
-DEFAULT_DB = Path(__file__).resolve().parent.parent / "var" / "items.db"
+VAR_DIR = Path(__file__).resolve().parent.parent / "var"
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument(
+        "--db", type=Path, default=None,
+        help="scan every stash into this one database, instead of giving each "
+             "stash its own file under var/",
+    )
     parser.add_argument(
         "--file", type=Path, action="append", default=None,
         help="scan this stash file instead of auto-discovery (repeatable)",
@@ -34,19 +38,28 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     if args.file:
-        targets = [(str(path), path) for path in args.file]
+        # Identity comes from the same derivation discovery uses, so scanning
+        # a file by hand and scanning it through the app name it identically.
+        # They did not, before: the two routes produced two registry keys for
+        # one stash, and neither could see the other's items.
+        targets = [SaveLocation.at(path) for path in args.file]
     else:
-        locations = find_save_locations()
-        if not locations:
+        targets = find_save_locations()
+        if not targets:
             print(f"no shared stash files found under {SAVE_ROOT}", file=sys.stderr)
             return 2
-        targets = [(str(loc), loc.path) for loc in locations]
 
-    with Registry(args.db) as registry:
-        for label, path in targets:
-            print(f"== {label}")
-            stash = read_stash_file(path)
-            result = registry.scan(stash, source=label)
+    for location in targets:
+        db = args.db if args.db is not None else VAR_DIR / location.db_name
+        print(f"== {location.label}   [{location.key}]")
+        try:
+            stash = read_stash_file(location.path)
+        except OSError as exc:
+            print(f"   ! could not read {location.path}: {exc}")
+            continue
+
+        with Registry(db) as registry:
+            result = registry.scan(stash, source=location.key)
             print(f"   {result.summary}")
             for item in result.added:
                 print(
@@ -59,9 +72,11 @@ def main(argv: list[str]) -> int:
             for entry in stash.failed:
                 print(f"   ! unparseable partition {entry.index}: {entry.error}")
 
-        print()
-        print(f"registry: {args.db}")
-        print(f"distinct items: {len(registry.rows())}  (copies: {registry.item_count()})")
+            print(f"   database: {db}")
+            print(
+                f"   distinct items: {len(registry.rows())}"
+                f"  (copies: {registry.item_count()})"
+            )
 
     return 0
 

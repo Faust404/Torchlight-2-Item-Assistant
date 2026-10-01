@@ -50,12 +50,26 @@ POLL_MS = 2000
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db_path: str | Path, source: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        source: str | Path | None = None,
+        db_dir: str | Path | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Torchlight 2 Item Assistant")
         self.resize(1100, 640)
 
-        self.db_path = Path(db_path)
+        # ``db_path`` given means one database for every stash, which is what
+        # --db asks for.  Left out, each stash gets its own file in ``db_dir``
+        # -- the default, because a player with both a vanilla and a modded
+        # stash has two separate stashes, and pooling them would make "put
+        # this back" a question with two possible answers.
+        self.db_path = Path(db_path) if db_path is not None else None
+        self.db_dir = (
+            Path(db_dir) if db_dir is not None
+            else Path(__file__).resolve().parent.parent / "var"
+        )
         self.service: ItemService | None = None
         self.watcher: StashWatcher | None = None
         self._sources: list[SaveLocation] = []
@@ -175,14 +189,7 @@ class MainWindow(QMainWindow):
                 # to whichever save happens to sort first would quietly point
                 # the tool at a *different* stash, and this tool's whole job
                 # is deciding which items leave which file.
-                self._sources.insert(
-                    0,
-                    SaveLocation(
-                        path=target,
-                        kind="modded" if "modsave" in target.parts else "vanilla",
-                        steam_id=target.parent.name,
-                    ),
-                )
+                self._sources.insert(0, SaveLocation.at(target))
 
         if not self._sources:
             self._set_status("No Torchlight 2 shared stash found on this machine.")
@@ -220,7 +227,10 @@ class MainWindow(QMainWindow):
 
         if self.service is not None:
             self.service.close()
-        self.service = ItemService(self.db_path, location.path)
+        db_path = (
+            self.db_path if self.db_path is not None else self.db_dir / location.db_name
+        )
+        self.service = ItemService(db_path, location)
         self.watcher = StashWatcher(location.path)
 
         self._sync(write=False)
@@ -383,7 +393,7 @@ class MainWindow(QMainWindow):
         # where it currently is, made these two lists overlap and left the
         # reader to work out which entries they were actually responsible for.
         rows = self.service.registry.rows(status=STATUS_ABSORBED)
-        placements = self.service.registry.placements_for(str(self.service.source))
+        placements = self.service.registry.placements_for(self.service.source_key)
         placed = {
             print_: f"{container_label(p['container'])} · slot {p['slot']}"
             for print_, p in placements.items()
