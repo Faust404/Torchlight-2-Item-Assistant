@@ -25,7 +25,9 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "COLLECTION_COLUMNS",
     "FINGERPRINT_ROLE",
+    "FOUND_ROLE",
     "LEVEL_ROLE",
+    "MEMBERS_ROLE",
     "PLACE_ROLE",
     "STASH_COLUMNS",
     "TIER_ROLE",
@@ -36,8 +38,15 @@ __all__ = [
     "new_model",
 ]
 
-STASH_COLUMNS = ["Item", "Lvl", "Tab", "Slot"]
-COLLECTION_COLUMNS = ["Item", "Lvl", "Sockets", "Found in"]
+#: Two columns apiece.  The collection is not a table at all any more -- it is
+#: a grid of cards drawn from the model's rows -- so its one column is where a
+#: row keeps what it knows, and the model is what the filters read.
+#:
+#: The stash keeps the item and its level, which is what a row of that list is
+#: for; where it sat is on the name cell's tooltip, which costs nothing and
+#: explains itself on hover, rather than in two columns nobody reads.
+STASH_COLUMNS = ["Item", "Lvl"]
+COLLECTION_COLUMNS = ["Item"]
 
 #: The rarity chips' order and their words, which is the game's own order and
 #: the reference's vocabulary.  ``Set`` is not among them because it is not a
@@ -65,10 +74,18 @@ TIER_CHIPS = ("Normal", "Magic", "Rare", "Unique", "Legendary")
 #: in two different groups: a quest item and an item whose data file the game
 #: has not got are both kinds of nothing, and they are filed under Misc and
 #: Other respectively.  A filter keyed on the word alone would tick both.
+#:
+#: ``MEMBERS_ROLE`` holds every fingerprint the row stands for.  A row is a
+#: *tile*: the tool's copies of one item are gathered into one row however many
+#: rolls of it there are, and this is what turns a selection of that row back
+#: into the items it is made of.  ``FOUND_ROLE`` is the last-seen place, as the
+#: text the tile's footer shows.
 FINGERPRINT_ROLE = Qt.ItemDataRole.UserRole
 TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
 PLACE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
 LEVEL_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 3)
+MEMBERS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 4)
+FOUND_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 5)
 
 
 def container_label(container: int, data: "GameData | None" = None) -> str:
@@ -137,6 +154,11 @@ def fill_stash(
 ) -> None:
     """Show what is in the save file right now.
 
+    Two columns and no more: the item and the level it asks for.  Which tab and
+    which slot it came out of is on the name cell's tooltip -- it is worth
+    having when it is asked for and worth nothing in a column, since the row a
+    player is looking at is the row they just put something in.
+
     ``data`` names the tabs; without it they fall back to the container id.
     ``catalog`` supplies the tier, the kind and the picture, and without it the
     rows are the plain names they were before there was one.
@@ -147,29 +169,58 @@ def fill_stash(
         name.setData(item.fingerprint, FINGERPRINT_ROLE)
         if catalog is not None:
             _describe(name, catalog.entry(item.fingerprint, item), item.level)
-        if item.num_sockets:
-            name.setToolTip(f"{item.num_sockets} socket(s)")
+        name.setToolTip(_where_it_sat(item, data))
 
-        # No sort override on the tab, unlike level and slot: this column
-        # sorts by the label the player can see.  That is the same order as
-        # the container ids would give -- the tabs are "Tab 1" to "Tab 3", or
-        # "Tab 24" upwards when the game's data is missing -- and sorting by
-        # anything else would be sorting by something not on screen.
-        container = item.location.container
-        tab = _cell(container_label(container, data))
-        if data is not None:
-            internal = data.container_name(container)
-            if internal:
-                tab.setToolTip(internal)
+        model.appendRow([name, _cell(str(item.level), sort=item.level)])
 
-        model.appendRow(
-            [
-                name,
-                _cell(str(item.level), sort=item.level),
-                tab,
-                _cell(str(item.location.slot_index), sort=item.location.slot_index),
-            ]
-        )
+
+def _where_it_sat(item: Item, data: "GameData | None") -> str:
+    """The name cell's tooltip: the tab, the slot, and the bag's own name.
+
+    The internal name is the second line because it is the second question --
+    ``SHARED_STASH_BAG_ARMS`` says what the bag was built for, which is not
+    what the player is looking at but is what a save file or a bug report
+    talks about.
+    """
+    lines = [
+        f"{container_label(item.location.container, data)} · slot {item.location.slot_index}"
+    ]
+    if data is not None:
+        internal = data.container_name(item.location.container)
+        if internal:
+            lines.append(internal)
+    if item.num_sockets:
+        lines.append(f"{item.num_sockets} socket(s)")
+    return "\n".join(lines)
+
+
+def _gathered(rows: list) -> list[list]:
+    """The registry rows, gathered into the tiles they draw as.
+
+    Two rows are one tile when they are the same *item* rather than the same
+    bytes: the same base item wearing the same two affixes, under the same
+    name.  That is the reference tool's own rule, and it is why two
+    differently-rolled copies of one unique are one card with a count rather
+    than two cards that look alike.
+
+    The name is part of the key and the level is not, which is the one thing
+    here worth arguing about.  Two drops of one unique at two levels are one
+    item -- its stats follow its level, and comparing the two rolls is exactly
+    what the card's button is for.  Two rows with one guid and two names are
+    two *things*, and no rule that merged them could be right: the name is
+    what the card draws, so two names are two cards.  Over the player's own
+    registry the two rules come to the same 37 tiles, which is the measurement
+    that says the name costs nothing -- it is there for the item a mod writes
+    its own guid for.
+
+    Byte-identical copies never get here as two rows: the registry has already
+    collapsed them into one with a copy count.
+    """
+    groups: dict[tuple, list] = {}
+    for row in rows:
+        key = (row["guid"], row["prefix"], row["suffix"], row["name"])
+        groups.setdefault(key, []).append(row)
+    return list(groups.values())
 
 
 def fill_collection(
@@ -178,7 +229,7 @@ def fill_collection(
     placed: dict[str, str],
     catalog: Catalog | None = None,
 ) -> None:
-    """Show what the tool holds.
+    """Show what the tool holds, one row per *item* rather than per copy.
 
     ``rows`` are registry rows for items the tool has taken; the caller filters
     them, because this list answers exactly one question -- *what is in here?*
@@ -188,7 +239,10 @@ def fill_collection(
 
     Listing everything the registry had ever seen, each row tagged with where
     it currently was, meant this list had to be read rather than trusted.  Now
-    membership is the answer and the columns are free to describe the item.
+    membership is the answer and the row is free to be the tile: the copies of
+    one item are gathered by :func:`_gathered`, the first of them is what the
+    tile draws, and ``MEMBERS_ROLE`` carries the rest so that selecting the
+    tile is selecting every copy of it.
 
     ``placed`` maps a fingerprint to where the item was last seen, so an item
     taken out of the game still says which tab it came from.  ``catalog``
@@ -196,19 +250,15 @@ def fill_collection(
     row of text into a row of the game's own items.
     """
     model.removeRows(0, model.rowCount())
-    for row in rows:
-        name = _cell(row["name"])
-        name.setData(row["fingerprint"], FINGERPRINT_ROLE)
+    for group in _gathered(rows):
+        first = group[0]
+        name = _cell(first["name"])
+        name.setData(first["fingerprint"], FINGERPRINT_ROLE)
+        name.setData(tuple(row["fingerprint"] for row in group), MEMBERS_ROLE)
+        name.setData(placed.get(first["fingerprint"], ""), FOUND_ROLE)
         if catalog is not None:
-            _describe(name, catalog.entry(row["fingerprint"], row), row["level"])
-        model.appendRow(
-            [
-                name,
-                _cell(str(row["level"]), sort=row["level"]),
-                _cell(str(row["num_sockets"]), sort=row["num_sockets"]),
-                _cell(placed.get(row["fingerprint"], "")),
-            ]
-        )
+            _describe(name, catalog.entry(first["fingerprint"], first), first["level"])
+        model.appendRow([name])
 
 
 class CollectionFilter(QSortFilterProxyModel):

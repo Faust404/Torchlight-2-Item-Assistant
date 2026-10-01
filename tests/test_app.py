@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 import app.window as window_module  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
@@ -31,8 +31,10 @@ from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
 #: The real search, kept before any fixture can stand in front of it.
 _REAL_FIND_INSTALL = window_module.find_install
 
-from test_archive import write_synthetic_stash  # noqa: E402
+from test_archive import write_stash_of, write_synthetic_stash  # noqa: E402
+from test_format import synthetic_item  # noqa: E402
 from test_gamedata import install as synthetic_install  # noqa: E402
+from tl2stash import parse_item  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -224,7 +226,7 @@ def test_an_item_put_back_drops_off_the_collection(window, monkeypatch):
     """The user's third point, at the window level.
 
     Putting an item back has to be visible in the place the player is looking.
-    The item leaves the tool's list on the same refresh and turns up in the
+    The item leaves the tool's cards on the same refresh and turns up in the
     game's panel, so the two lists keep answering their own questions.
     """
     from PySide6.QtWidgets import QMessageBox
@@ -235,11 +237,13 @@ def test_an_item_put_back_drops_off_the_collection(window, monkeypatch):
     window.auto_absorb.setChecked(False)
     window._absorb_all()
     assert window.collection_model.rowCount() == 3
+    assert window.grid.count() == 3
 
-    window.collection_view.selectRow(0)
+    window.grid.select_row(0)
     window._restore_selected()
 
     assert window.collection_model.rowCount() == 2, "the restored item stayed in the tool"
+    assert window.grid.count() == 2, "its card stayed on the wall"
     assert window.stash_model.rowCount() == 1, "the restored item is not in the game's panel"
 
 
@@ -284,12 +288,24 @@ def test_modded_and_vanilla_do_not_share_a_pile(qapp, tmp_path, monkeypatch):
         two.close()
 
 
-def test_the_stash_column_shows_where_things_are(window):
+def test_the_stash_row_is_the_item_and_its_level(window):
+    """Two columns, and where the thing sat is on the name cell's tooltip.
+
+    The "In the game" list is the list the player empties, so it is the item
+    and the level it asks for -- the tiling is for the tool's own items.  Which
+    tab and slot it came out of is a question about one item, asked by pointing
+    at it.
+    """
     names = [
         window.stash_model.item(row, 0).text()
         for row in range(window.stash_model.rowCount())
     ]
     assert sorted(names) == ["Alpha", "Beta", "Gamma"]
+    assert window.stash_model.columnCount() == 2
+    assert [
+        window.stash_model.item(row, 1).text()
+        for row in range(window.stash_model.rowCount())
+    ] == ["5", "5", "5"]
 
 
 def test_search_filters_the_collection(window, monkeypatch):
@@ -304,9 +320,80 @@ def test_search_filters_the_collection(window, monkeypatch):
     window.search.setText("Beta")
     assert window.collection_proxy.rowCount() == 1
     assert window.collection_proxy.index(0, 0).data() == "Beta"
+    assert [row.name for row in window.grid.rows()] == ["Beta"], (
+        "the wall did not follow the search"
+    )
 
     window.search.setText("")
     assert window.collection_proxy.rowCount() == 3
+    assert window.grid.count() == 3
+
+
+def test_a_search_that_matches_nothing_says_so(window, monkeypatch):
+    """An empty wall with a search in the box is a different nothing from an
+    empty collection, and the one thing a player will wonder is which."""
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    window.auto_absorb.setChecked(False)
+    window._absorb_all()
+
+    window.search.setText("nothing like this")
+    assert window.grid.count() == 0
+    empty = window.grid.findChild(QLabel, "empty")
+    assert not empty.isHidden()
+    assert "matches these filters" in empty.text()
+
+
+def test_the_wall_says_what_to_do_when_the_tool_is_empty(window):
+    """The first thing a new player sees.  An empty panel is a question, and
+    this is the answer to it: the stash is the inbox."""
+    assert window.collection_model.rowCount() == 0
+    assert window.grid.count() == 0
+    assert "shared stash" in window.grid.findChild(QLabel, "empty").text()
+
+
+def test_one_card_stands_for_every_copy_of_its_item(qapp, tmp_path, monkeypatch):
+    """Two rolls of one unique: two items, one card, and the card says so.
+
+    This is the shape the copy count exists for, and the reason putting a card
+    back can put back more than one thing.  The status line says which of them
+    were copies, because the player clicked one card.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    twins = [
+        parse_item(synthetic_item(name="Fortress of Fools", level=level)[0])
+        for level in (48, 50)
+    ]
+    write_stash_of(stash, twins)
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+
+        assert len(win.service.registry.absorbed_fingerprints()) == 2, (
+            "the two rolls were not both kept"
+        )
+        # The model's rows are the *tiles*: two items, one card between them.
+        assert win.collection_model.rowCount() == 1
+        assert win.grid.count() == 1
+        assert win.grid.rows()[0].copies == 2
+
+        win.grid.select_row(0)
+        win._restore_selected()
+
+        assert win.stash_model.rowCount() == 2, "the card put back only one copy"
+        assert "2 of Fortress of Fools" in win.status.currentMessage()
+    finally:
+        win.close()
 
 
 # --------------------------------------------------------------------------
@@ -314,53 +401,54 @@ def test_search_filters_the_collection(window, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_the_tab_column_names_the_tab_the_player_counts(game_window):
+def test_the_stash_tooltip_names_the_tab_the_player_counts(game_window):
     """The file numbers containers; the player counts tabs from one.
 
-    The internal name is the cell's tooltip: it says what the bag was built
-    for, which is not what the player is looking at.
+    The internal name is on the tooltip under it: it says what the bag was
+    built for, which is not what the player is looking at but is what a bug
+    report would quote.
     """
     assert game_window.stash_model.rowCount() == 3
     for row in range(game_window.stash_model.rowCount()):
-        assert game_window.stash_model.item(row, 2).text() == "Tab 1"
-        assert (
-            game_window.stash_model.item(row, 2).toolTip() == "SHARED_STASH_BAG_ARMS"
-        )
+        cell = game_window.stash_model.item(row, 0)
+        assert cell.toolTip() == f"Tab 1 · slot {3322 + row}\nSHARED_STASH_BAG_ARMS"
 
 
-def test_the_details_pane_describes_the_selected_item(stocked):
-    """What the pane is for: the item's own stats, not the table's summary.
+def test_the_collection_draws_the_item_rather_than_summarising_it(stocked):
+    """What the wall is for: the item's own card, not a row of columns.
 
     Rendered from the bytes the registry kept, so it is the same parse the
     game does rather than a re-reading of the columns beside it.
     """
-    assert stocked.details.toPlainText() == "Select an item to see its stats."
+    assert stocked.grid.count() == 3  # the collection is in name order
+    assert stocked.grid.tile(0).text() == "Alpha\nRequires Level 5"
+    assert stocked.grid.tile(2).text() == "Gamma\nRequires Level 5"
 
-    stocked.collection_view.selectRow(0)  # the collection is sorted by name
-    assert stocked.details.toPlainText() == "Alpha\nRequires Level 5"
 
-
-def test_the_selection_and_the_pane_survive_a_refresh(stocked):
-    """Both tables are rebuilt whenever the game saves -- every few seconds in
-    play.  Losing the selection there would empty the pane while it was being
-    read, and would quietly disarm "Put back selected"."""
-    stocked.collection_view.selectRow(1)
-    assert stocked.details.toPlainText() == "Beta\nRequires Level 5"
+def test_the_selection_survives_a_refresh(stocked):
+    """The wall is rebuilt whenever the game saves -- every few seconds in
+    play.  Losing the selection there would quietly disarm "Put back
+    selected" while the player was looking at the card they meant."""
+    stocked.grid.select_row(1)
+    assert [row.name for row in stocked.grid.selected()] == ["Beta"]
 
     stocked._sync(write=False)
 
-    assert stocked.collection_model.rowCount() == 3
-    assert stocked._current_fingerprint() is not None, "the selection was dropped"
-    assert stocked.details.toPlainText() == "Beta\nRequires Level 5"
+    assert stocked.grid.count() == 3
+    assert [row.name for row in stocked.grid.selected()] == ["Beta"], (
+        "the selection was dropped by a refresh"
+    )
+    assert stocked.grid.tile(1).is_selected()
 
 
-def test_the_poll_never_renders_anything(stocked, monkeypatch):
-    """The property the whole pane is arranged around.
+def test_the_poll_draws_no_card_again(stocked, monkeypatch):
+    """The property the whole wall is arranged around.
 
-    Drawing stats means walking the game's data files, and the table beneath
-    is redrawn on every save.  So the lines are kept by fingerprint: an item
-    is drawn when it is selected and never again, however many refreshes go by
-    while it stays selected.
+    Drawing a card means walking the game's data files and cutting a picture
+    out of a sheet, and the wall is rebuilt on every save.  So a card is built
+    once per item and looked up by fingerprint after that: a poll that changed
+    nothing must not draw anything, and neither must clicking on a card that is
+    already drawn.
     """
     calls: list[str] = []
     original = stocked._render_stats
@@ -370,29 +458,27 @@ def test_the_poll_never_renders_anything(stocked, monkeypatch):
         lambda print_: calls.append(print_) or original(print_),
     )
 
-    stocked.collection_view.selectRow(0)
-    assert stocked.details.toPlainText() == "Alpha\nRequires Level 5"
-    assert len(calls) == 1, "selecting an item did not draw it"
+    assert stocked.grid.count() == 3, "the fixture's cards were not built"
+    assert len(calls) == 0, "the cards were drawn again to build the wall"
+
+    stocked.grid.select_row(0)
+    assert stocked.grid.tile(0).text() == "Alpha\nRequires Level 5"
+    assert len(calls) == 0, "selecting a card drew it again"
 
     for _ in range(3):
         stocked._sync(write=False)
 
-    assert len(calls) == 1, "a refresh drew the stats again"
-    assert stocked.details.toPlainText() == "Alpha\nRequires Level 5"
+    assert len(calls) == 0, "a refresh drew a card again"
+    assert stocked.grid.tile(0).text() == "Alpha\nRequires Level 5"
 
 
-def test_selecting_another_item_draws_that_one(stocked):
-    stocked.collection_view.selectRow(0)
-    stocked.collection_view.selectRow(2)
-    assert stocked.details.toPlainText() == "Gamma\nRequires Level 5"
-
-
-def test_without_the_game_the_pane_says_so(qapp, tmp_path):
+def test_without_the_game_the_window_says_so_in_one_line(qapp, tmp_path):
     """A machine without Torchlight II installed is degraded, not broken.
 
     The items are stored and put back exactly the same; all that is missing is
-    the wording, so the pane says which and how to fix it rather than showing
-    nothing or, worse, guessing.
+    the wording.  The game's panel still works, and the one line over the wall
+    says what is missing -- with the whole of it, including how to point the
+    tool at the game, on the tooltip rather than in the window.
     """
     stash = tmp_path / "sharedstash_v2.bin"
     write_synthetic_stash(stash, ["Alpha"])
@@ -401,7 +487,9 @@ def test_without_the_game_the_pane_says_so(qapp, tmp_path):
     )
     try:
         assert win._game_data() is None
-        assert win.details.toPlainText() == GAME_DATA_MISSING
+        assert not win.banner.isHidden()
+        assert "not found" in win.banner.text()
+        assert win.banner.toolTip() == GAME_DATA_MISSING
         assert "no game data" in win._describe()
         assert win.stash_model.rowCount() == 1, "the game's panel still works"
     finally:
@@ -424,6 +512,7 @@ def test_a_window_that_cannot_read_the_game_still_absorbs(qapp, tmp_path, monkey
         win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.collection_model.rowCount() == 2
+        assert win.grid.count() == 2, "the cards were not drawn without the game"
         assert win.stash_model.rowCount() == 0
     finally:
         win.close()
@@ -539,12 +628,13 @@ def test_restore_puts_the_selection_back(window, monkeypatch):
     window._absorb_all()
     assert window.stash_model.rowCount() == 0
 
-    # Select the first row of the collection and put it back.
-    window.collection_view.selectRow(0)
+    # Select the first card of the collection and put it back.
+    window.grid.select_row(0)
     window._restore_selected()
 
     assert window.stash_model.rowCount() == 1
     assert window.collection_model.rowCount() == 2
+    assert window.grid.count() == 2
 
 
 def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch):
@@ -555,7 +645,7 @@ def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
     window._absorb_all()
-    window.collection_view.selectRow(0)
+    window.grid.select_row(0)
     window._restore_selected()
 
     window.auto_absorb.setChecked(True)

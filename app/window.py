@@ -1,23 +1,23 @@
 """The main window.
 
-The layout is the argument.  On the left, what the game has; in the middle,
-what the tool has; and on the right, the selected item drawn as the game draws
-it.  The player puts things in the shared stash and this empties it -- so the
-window is arranged around a single gesture rather than around a file format,
-because the file format is not what anyone wants to think about.
+The layout is the argument.  On the left, the kinds the collection holds; in
+the middle, what the game has; on the right, what the tool has -- drawn as the
+game draws it, one card per item.  The player puts things in the shared stash
+and this empties it -- so the window is arranged around a single gesture rather
+than around a file format, because the file format is not what anyone wants to
+think about.
+
+The cards are the reason there is no item pane: a tile *is* the card, so a
+second copy of the same card beside the grid would be a second answer to a
+question already answered on screen.  What one item needs a closer look at is
+what :mod:`app.compare` is for.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import (
-    QItemSelectionModel,
-    QSize,
-    QSortFilterProxyModel,
-    Qt,
-    QTimer,
-)
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -44,10 +44,13 @@ from tl2stash.service import STATUS_ABSORBED, ItemService
 from tl2stash.tooltip import build
 from tl2stash.watcher import StashWatcher
 
-from .card import IconCache, ItemPane
+from .card import IconCache
 from .catalog import ICON_SIZE, Catalog
 from .models import (
     COLLECTION_COLUMNS,
+    FINGERPRINT_ROLE,
+    FOUND_ROLE,
+    MEMBERS_ROLE,
     PLACE_ROLE,
     STASH_COLUMNS,
     TIER_ROLE,
@@ -58,6 +61,7 @@ from .models import (
     new_model,
 )
 from .sidebar import SidePanel
+from .tiles import TileGrid, TileRow
 
 #: How often to look at the save file.  The file is a few tens of kilobytes
 #: and saves are seconds apart at the fastest, so this is generous; it exists
@@ -65,7 +69,9 @@ from .sidebar import SidePanel
 POLL_MS = 2000
 
 #: Shown in place of an item's stats when the game's data files cannot be
-#: found.  Saying what to do about it is worth more than the space it takes.
+#: found.  Saying what to do about it is worth more than the space it takes --
+#: but not more than a line of it, so this is the banner's *tooltip* and the
+#: banner itself is the one sentence.
 GAME_DATA_MISSING = (
     "Torchlight II's data files were not found, so an item's stats are shown\n"
     "with the names the save file uses rather than the words the game does.\n"
@@ -76,6 +82,20 @@ GAME_DATA_MISSING = (
     "    python -m app --game=\"<the Torchlight II folder>\"\n"
     "or set TL2_INSTALL to it."
 )
+
+
+def _copies_note(rows: list[TileRow]) -> str:
+    """Say which of the cards that went back stood for more than one item.
+
+    A card is every copy of one item, so one click can put back three things.
+    Without this the status line would say "3" and the player would remember
+    clicking one card.
+    """
+    duplicates = [row for row in rows if row.copies > 1]
+    if not duplicates:
+        return ""
+    said = ", ".join(f"{row.copies} of {row.name}" for row in duplicates[:2])
+    return f" · {said}"
 
 
 class MainWindow(QMainWindow):
@@ -179,7 +199,9 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # The rail comes first because it is the first thing to reach for: a
-        # collection of any size is narrowed before it is read.
+        # collection of any size is narrowed before it is read.  It is narrow,
+        # because what it holds now is one column of kind names -- the search
+        # and the rest of the filters are in the bar above.
         self.filter_group = QGroupBox("Filter")
         filters = QVBoxLayout(self.filter_group)
         self.sidebar = SidePanel()
@@ -201,36 +223,28 @@ class MainWindow(QMainWindow):
         self.search.textChanged.connect(self._filter_changed)
         right.addWidget(self.search)
 
-        self.collection_view, self.collection_model = self._table(COLLECTION_COLUMNS)
-        self.collection_view.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
+        # One line, with the whole of it -- what is missing and how to point
+        # the tool at the game -- on its tooltip.  It used to be a pane of
+        # prose, which is a lot of window for a machine that has no game.
+        self.banner = QLabel()
+        self.banner.setObjectName("banner")
+        self.banner.setWordWrap(True)
+        self.banner.setVisible(False)
+        right.addWidget(self.banner)
+
+        self.collection_model = new_model(COLLECTION_COLUMNS)
         self.collection_proxy = CollectionFilter()
         self.collection_proxy.setSourceModel(self.collection_model)
         self.collection_proxy.setFilterKeyColumn(0)
         self.collection_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.collection_view.setModel(self.collection_proxy)
-        self.sidebar.changed.connect(self._filters_changed)
 
-        right.addWidget(self.collection_view)
+        self.grid = TileGrid(self._icons())
+        right.addWidget(self.grid, stretch=1)
         splitter.addWidget(self.collection_group)
 
-        self.item_group = QGroupBox("Item")
-        card = QVBoxLayout(self.item_group)
-        self.details = ItemPane()
-        self.details.display(self._details_hint())
-        card.addWidget(self.details)
-        splitter.addWidget(self.item_group)
+        self.sidebar.changed.connect(self._filters_changed)
 
-        # Only a change of selection redraws the card.  The table beside it is
-        # rebuilt whenever the game saves, so anything on that path has to be
-        # cheap -- and building a card is not: it walks the game's data files
-        # and cuts a picture out of a 512x512 sheet.
-        self.collection_view.selectionModel().selectionChanged.connect(
-            lambda *_: self._show_details()
-        )
-
-        splitter.setSizes([210, 360, 430, 330])
+        splitter.setSizes([170, 320, 900])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
@@ -274,22 +288,34 @@ class MainWindow(QMainWindow):
             self._game_error = str(exc)
         return self._game
 
-    def _details_hint(self) -> str:
-        """What the details pane says when it has no item to describe.
+    def _note_game(self) -> None:
+        """Say, in one line, that there is no game data -- if there is not.
 
         A game that is not installed and one whose files will not open are
         different problems with different answers, so they do not get the same
-        message -- the second one is a bug report waiting to happen, and it
-        would be invisible if it read as "not found".
+        sentence: the second is a bug report waiting to happen and would be
+        invisible if it read as "not found".  Either way the details are on the
+        tooltip rather than in the window, because the window is for the items.
         """
-        if self._game_data() is not None:
-            return "Select an item to see its stats."
+        game = self._game_data()
+        if game is not None:
+            self.banner.setVisible(False)
+            return
+
+        text = (
+            "Torchlight II's data files were not found, so items are shown by "
+            "the names the save file uses."
+        )
+        tip = GAME_DATA_MISSING
         if self._game_error:
-            return (
-                f"{GAME_DATA_MISSING}\n\n"
-                f"The data files there would not open: {self._game_error}"
+            text = (
+                "Torchlight II's data files would not open, so items are shown "
+                "by the names the save file uses."
             )
-        return GAME_DATA_MISSING
+            tip = f"{GAME_DATA_MISSING}\n\nThe data files there would not open: {self._game_error}"
+        self.banner.setText(text)
+        self.banner.setToolTip(tip)
+        self.banner.setVisible(True)
 
     # -- sources ---------------------------------------------------------
 
@@ -471,6 +497,7 @@ class MainWindow(QMainWindow):
     def _restore_selected(self) -> None:
         if self.service is None:
             return
+        rows = self.grid.selected()
         prints = self._selected_fingerprints()
         if not prints:
             QMessageBox.information(
@@ -483,17 +510,23 @@ class MainWindow(QMainWindow):
         self._refresh_views()
 
         if report.restored:
+            note = f"put back {len(report.restored)}{_copies_note(rows)}"
             self._set_status(
-                f"put back {len(report.restored)} · they return to the game on its next load"
+                f"{note} · they return to the game on its next load"
             )
         elif report.skipped:
             self._set_status(f"{len(report.skipped)} were already in the stash")
 
     def _selected_fingerprints(self) -> set[str]:
-        prints = set()
-        for index in self.collection_view.selectionModel().selectedRows():
-            row = self.collection_proxy.mapToSource(index).row()
-            prints.add(self.collection_model.item(row, 0).data(Qt.ItemDataRole.UserRole))
+        """Every fingerprint the selected cards stand for.
+
+        A card is an *item* however many copies of it the tool holds, so
+        selecting one selects all of them -- that is what the count on its
+        footer says, and putting the card back is putting back what it says.
+        """
+        prints: set[str] = set()
+        for row in self.grid.selected():
+            prints.update(row.members)
         return prints
 
     # -- display ---------------------------------------------------------
@@ -521,71 +554,74 @@ class MainWindow(QMainWindow):
             print_: f"{container_label(p['container'], data)} · slot {p['slot']}"
             for print_, p in placements.items()
         }
-
-        # Rebuilding the table drops the selection, and the table is rebuilt
-        # on every save.  Keeping it means the details pane below stays on the
-        # item being read instead of emptying itself every few seconds.
-        selected = self._selected_fingerprints()
         fill_collection(self.collection_model, rows, placed, catalog)
-        self._reselect(selected)
 
         # The rail describes what is *here*, so its shape comes from the rows
         # and not from the filters -- which is what keeps a row from vanishing
-        # out from under the pointer the moment it is ticked.
+        # out from under the pointer the moment it is ticked.  The grid is
+        # rebuilt with them, because what it draws is what the filters left.
         self.sidebar.set_shape(
             catalog.entry(row["fingerprint"], row).place for row in rows
         )
         self._filters_changed()
 
+        self._note_game()
         self.stash_group.setTitle(f"In the game ({len(items)})")
         self.collection_group.setTitle(f"In the tool ({len(rows)})")
 
-    def _reselect(self, fingerprints: set[str]) -> None:
-        """Select the rows with these fingerprints, if they are still here."""
-        if not fingerprints:
-            return
-        selection = self.collection_view.selectionModel()
+    def _rebuild_collection(self) -> None:
+        """Draw what the tool holds as the game's own cards.
+
+        The rows come through the proxy, because the proxy is what the filters
+        narrow: the grid draws what the filters left and re-implements none of
+        them.  Each card is looked up in the memo, so an item is drawn the
+        first time it is seen and never again, however many saves go by.
+        """
+        rows = []
         for row in range(self.collection_proxy.rowCount()):
             index = self.collection_proxy.index(row, 0)
-            if index.data(Qt.ItemDataRole.UserRole) in fingerprints:
-                selection.select(
-                    index,
-                    QItemSelectionModel.SelectionFlag.Select
-                    | QItemSelectionModel.SelectionFlag.Rows,
+            fingerprint = index.data(FINGERPRINT_ROLE)
+            rows.append(
+                TileRow(
+                    fingerprint=fingerprint,
+                    name=index.data(Qt.ItemDataRole.DisplayRole),
+                    members=tuple(index.data(MEMBERS_ROLE) or (fingerprint,)),
+                    found=index.data(FOUND_ROLE) or "",
+                    card=self._card_for(fingerprint),
                 )
+            )
+        self.grid.set_rows(rows, empty=self._empty_text())
 
-    # -- the card ---------------------------------------------------------
+    def _empty_text(self) -> str:
+        """What the wall says when there is nothing on it.
 
-    def _show_details(self) -> None:
-        """Draw the selected item's card.
-
-        Called when the selection changes and nowhere else, so the poll that
-        runs every two seconds never builds anything: a card is looked up by
-        fingerprint and built only if it is not already known.
+        Two different nothings: a collection with nothing in it, and a
+        collection with nothing *showing*.  A player who has just ticked a box
+        wants to know which one they are looking at.
         """
-        print_ = self._current_fingerprint()
-        if print_ is None:
-            self.details.display(self._details_hint())
-            return
+        if self.collection_model.rowCount():
+            return "Nothing in the collection matches these filters."
+        return (
+            "Nothing here yet.  Put something in the shared stash in the game "
+            "and it will move in here."
+        )
 
-        content = self._details.get(print_)
-        if content is None:
-            content = self._render_stats(print_)
-            self._details[print_] = content
+    # -- the cards --------------------------------------------------------
 
-        self.details.display(content, self._icons())
+    def _card_for(self, print_: str) -> Card | str:
+        """One item's card, built once and then kept.
 
-    def _current_fingerprint(self) -> str | None:
-        """The item to describe: the last row of the selection, or nothing.
-
-        The last rather than the first because a multiple selection is a
-        working set -- what to put back, or what to look through -- and the
-        row most recently added to it is the one that was just clicked.
+        The memo is the point of this method.  A card is built by walking the
+        game's data files and cutting a picture out of a 512x512 sheet, and the
+        wall of them is rebuilt on every save -- every couple of seconds in
+        play.  A fingerprint is a hash of the item's own bytes, so a card built
+        under one can never go stale, and nothing ever needs invalidating.
         """
-        rows = self.collection_view.selectionModel().selectedRows()
-        if not rows:
-            return None
-        return rows[-1].data(Qt.ItemDataRole.UserRole)
+        card = self._details.get(print_)
+        if card is None:
+            card = self._render_stats(print_)
+            self._details[print_] = card
+        return card
 
     def _render_stats(self, print_: str) -> Card | str:
         """The game's own card for one stored item, or why there is not one.
@@ -643,6 +679,7 @@ class MainWindow(QMainWindow):
         # ignored what the player had typed would be a count of a list they are
         # not looking at.
         self._count_sidebar()
+        self._rebuild_collection()
 
     def _filters_changed(self) -> None:
         """Apply what the sidebar has ticked, then say what each tick would leave."""
@@ -650,6 +687,7 @@ class MainWindow(QMainWindow):
         self.collection_proxy.set_tiers(self.sidebar.tiers())
         self.collection_proxy.set_level_range(*self.sidebar.level_range())
         self._count_sidebar()
+        self._rebuild_collection()
 
     def _count_sidebar(self) -> None:
         self.sidebar.set_counts(
@@ -669,10 +707,8 @@ class MainWindow(QMainWindow):
         if unreadable:
             note += f" · {unreadable} in the file could not be read"
         if self._game is None:
-            # Said here as well as in the details pane, because the pane stops
-            # saying it once an item is selected -- and a stat line that reads
-            # as a key rather than a sentence should have a reason visible
-            # somewhere.
+            # Said on the banner over the grid as well, because it explains why
+            # the cards read as keys rather than as sentences.
             note += " · no game data"
         return note
 

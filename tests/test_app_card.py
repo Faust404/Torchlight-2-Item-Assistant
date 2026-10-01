@@ -1,4 +1,4 @@
-"""Tests for the card the right-hand pane draws.
+"""Tests for the card the collection draws.
 
 :mod:`tl2stash.card` is the model and ``tests/test_card.py`` is its business --
 what an item says.  This is the drawing: which colour a tier is inked with,
@@ -11,9 +11,8 @@ width or a rendered image would be a test of this machine's font setup.  What
 is asserted instead is what the widgets say (``text()``, ``objectName()``) and
 the colours they were built with, which is the part this module decides.
 
-The lines themselves are checked against the model rather than written out
-again: ``toPlainText`` is ``lines(card)``, and the interest is that the pane
-draws a card and reads back as the same text the tooltip would have printed.
+What a card is put *in* -- the tile, its footer and the grid of them -- is
+``tests/test_app_tiles.py``.
 """
 
 from __future__ import annotations
@@ -41,11 +40,10 @@ from app.card import (  # noqa: E402
     IconCache,
     IconTile,
     ItemCard,
-    ItemPane,
     emphasis,
     mark,
 )
-from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Block, Card, lines  # noqa: E402
+from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Block, Card  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
 
@@ -320,49 +318,6 @@ def test_a_gem_is_drawn_under_the_item_that_holds_it(qapp):
     assert texts(drawn, "gem") == ["Flawless Ruby"]
     # Ruled off from the item's own stats above it, like any other section.
     assert len(drawn.findChildren(Hairline)) == 1
-
-
-# --------------------------------------------------------------------------
-# The pane
-# --------------------------------------------------------------------------
-
-
-def test_the_pane_reads_back_as_the_lines_the_model_holds(qapp):
-    """The pane is read as text by everything that is not a person, and what
-    it must read back as is the item -- not the arrangement of the widgets
-    that happens to be drawing it."""
-    held = card(
-        blocks=(
-            Block(DAMAGE, ("Physical Damage 52-74",)),
-            Block(AFFIX, ("Silence for 1 sec.",)),
-        ),
-        flavor="Drill it into their heads.",
-    )
-    pane = ItemPane()
-    pane.display(held)
-
-    assert pane.findChild(ItemCard) is not None
-    assert pane.toPlainText() == "\n".join(lines(held))
-
-
-def test_the_pane_shows_a_sentence_when_there_is_no_card_to_show(qapp):
-    """Nothing selected, no game installed, an item that will not parse: three
-    different sentences and the same treatment."""
-    pane = ItemPane()
-    pane.display("Select an item to see its stats.")
-
-    assert pane.toPlainText() == "Select an item to see its stats."
-    assert pane.findChild(ItemCard) is None
-    assert texts(pane, "hint") == ["Select an item to see its stats."]
-
-
-def test_a_second_card_replaces_the_first(qapp):
-    pane = ItemPane()
-    pane.display(card(name="Bashdrill"))
-    pane.display(card(name="Wanderlust Pants"))
-
-    assert pane.toPlainText() == "Wanderlust Pants\nRequires Level 45"
-    assert len(pane.findChildren(ItemCard)) == 1, "the first card is still there"
 
 
 # --------------------------------------------------------------------------

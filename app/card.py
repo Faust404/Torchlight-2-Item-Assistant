@@ -1,4 +1,4 @@
-"""What the right-hand pane draws: an item as the website draws one.
+"""An item drawn as the website draws one.
 
 The design is the tl2-db site's, taken from its own stylesheet rather than
 reinvented -- a dark card on a darker ground, the item's tier inked into a tile
@@ -19,8 +19,10 @@ them.  Its one piece of judgement is the site's own emphasis rule -- every
 number in a line lifts to the header colour -- which is one regular expression,
 and which is what makes a card scannable rather than merely coloured.
 
-Rebuilt on every selection change and never on the poll: a card is a hundred
-widgets, and the table beside it is redrawn every time the game saves.
+A card is built once per item and then left alone: it is a hundred widgets, and
+:mod:`app.tiles` draws one per thing the tool holds and rebuilds that wall on
+every save.  So the cost of a card is paid when the item is first seen and
+never again, which is what the memo in the window is for.
 """
 
 from __future__ import annotations
@@ -37,7 +39,6 @@ from PySide6.QtGui import (
     QImage,
     QPainter,
     QPainterPath,
-    QPalette,
     QPen,
     QPixmap,
     QRadialGradient,
@@ -46,20 +47,19 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, TIER_INK, lines
+from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, TIER_INK
 from tl2stash.icons import IconLibrary
 
 __all__ = [
+    "STYLE",
     "IconCache",
     "IconTile",
     "ItemCard",
-    "ItemPane",
     "TIER_INK",
     "emphasis",
     "paint_tile",
@@ -546,11 +546,12 @@ class ItemCard(QFrame):
         return label
 
 
-#: Everything the widgets above are drawn with.  One stylesheet on the pane
-#: rather than one per widget: Qt restyles a whole subtree whenever a
-#: stylesheet changes, and a card is a hundred widgets built fresh on every
-#: selection.
-_STYLE = f"""
+#: Everything the widgets above are drawn with.  One stylesheet on whatever
+#: holds the cards -- the grid, now -- rather than one per widget: Qt restyles
+#: a whole subtree whenever a stylesheet changes, and a card is a hundred
+#: widgets.  It is exported because the holder is what applies it, and the
+#: holder is another module.
+STYLE = f"""
 #card {{
     background-color: {PANEL};
     border: 1px solid {LINE};
@@ -569,89 +570,3 @@ _STYLE = f"""
 #flav {{ color: {FLAVOUR}; font-size: 12px; font-style: italic; }}
 #hint {{ color: {DIM}; font-size: 12.5px; }}
 """
-
-
-class ItemPane(QWidget):
-    """The right-hand pane: one item's card, or a sentence saying why none.
-
-    The ground is darker than the card, which is the site's own reason for the
-    two being different colours -- a card painted in the ground's own colour is
-    not a card, it is a panel.
-
-    A card is drawn as widgets and read back as text.  ``toPlainText`` is the
-    lines the model holds rather than the labels the pane built, so what the
-    tests read is what the item says and not how it happens to be arranged --
-    the level is a pill in the corner and a line of text here, and both are
-    true at once.
-    """
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._text = ""
-
-        column = QVBoxLayout(self)
-        column.setContentsMargins(0, 0, 0, 0)
-
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        column.addWidget(self._scroll)
-
-        self._content = QWidget()
-        self._stack = QVBoxLayout(self._content)
-        self._stack.setContentsMargins(10, 10, 10, 10)
-        self._stack.setSpacing(0)
-        self._scroll.setWidget(self._content)
-
-        # A palette rather than a stylesheet: the scroll area's ground is its
-        # viewport's, and a `background` rule on a QScrollArea does not reach
-        # it -- which is the same trap that defeats `border-radius` on one.
-        for widget in (self._scroll.viewport(), self._content):
-            widget.setAutoFillBackground(True)
-            palette = widget.palette()
-            palette.setColor(QPalette.ColorRole.Window, QColor(GROUND))
-            widget.setPalette(palette)
-
-        self.setStyleSheet(_STYLE)
-
-    def display(self, content: Card | str, icons: IconCache | None = None) -> None:
-        """Draw an item's card, or a sentence in place of one.
-
-        A sentence is what there is to show when nothing is selected, when the
-        game's files cannot be found, and when one item will not parse -- and
-        all three are cases where a card would be a lie about what is known.
-        """
-        self._clear()
-        if isinstance(content, Card):
-            self._text = "\n".join(lines(content))
-            self._stack.addWidget(ItemCard(content, icons))
-        else:
-            self._text = content
-            message = QLabel(content)
-            message.setObjectName("hint")
-            message.setWordWrap(True)
-            message.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse
-            )
-            self._stack.addWidget(message)
-        self._stack.addStretch(1)
-
-        # A new card starts at its top: the pane is the last thing read, and
-        # leaving it scrolled where the previous item was read to is the one
-        # way selecting an item can show the wrong part of it.
-        self._scroll.verticalScrollBar().setValue(0)
-
-    def toPlainText(self) -> str:
-        """The card's lines, or the sentence that stood in for it."""
-        return self._text
-
-    def _clear(self) -> None:
-        while self._stack.count():
-            item = self._stack.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()

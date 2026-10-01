@@ -52,11 +52,22 @@ def _write(path: Path, blobs: list[bytes]) -> None:
     _write_body(path, serialize_body(blobs))
 
 
+def write_stash_of(path: Path, items: list) -> list[str]:
+    """Write a stash holding exactly these parsed items; return fingerprints.
+
+    The general form of :func:`write_synthetic_stash`, for the tests that need
+    two items that differ by something other than their name -- two rolls of
+    one unique, which are one card in the collection and two items in the
+    file.
+    """
+    _write(path, [item.raw for item in items])
+    return [item.fingerprint for item in items]
+
+
 def write_synthetic_stash(path: Path, names: list[str]) -> list[str]:
     """Write a stash containing one item per name; return their fingerprints."""
     items = [parse_item(synthetic_item(name=n, slot=3322 + i)[0]) for i, n in enumerate(names)]
-    _write(path, [i.raw for i in items])
-    return [i.fingerprint for i in items]
+    return write_stash_of(path, items)
 
 
 def write_stash_with_rubbish(path: Path, names: list[str]) -> list[str]:
