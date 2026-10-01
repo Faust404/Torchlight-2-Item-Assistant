@@ -1,8 +1,8 @@
 """The main window.
 
-The layout is the argument.  On the left, what the game has; on the right,
-what the tool has; and between them the two actions that move items across.
-The player puts things in the shared stash and this empties it -- so the
+The layout is the argument.  On the left, what the game has; in the middle,
+what the tool has; and on the right, the selected item drawn as the game draws
+it.  The player puts things in the shared stash and this empties it -- so the
 window is arranged around a single gesture rather than around a file format,
 because the file format is not what anyone wants to think about.
 """
@@ -17,7 +17,6 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -29,7 +28,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QTableView,
@@ -37,13 +35,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tl2stash.card import Card
 from tl2stash.gamedata import GameData, find_install
 from tl2stash.item import parse_item
 from tl2stash.saves import SaveLocation, find_save_locations, live_location
 from tl2stash.service import STATUS_ABSORBED, ItemService
-from tl2stash.tooltip import render
+from tl2stash.tooltip import build
 from tl2stash.watcher import StashWatcher
 
+from .card import IconCache, ItemPane
 from .models import (
     COLLECTION_COLUMNS,
     STASH_COLUMNS,
@@ -105,10 +105,12 @@ class MainWindow(QMainWindow):
         self._game: GameData | None = None
         self._game_looked = False
         self._game_error: str | None = None
-        #: Rendered stats by fingerprint.  A fingerprint is a hash of the
-        #: item's own bytes, so an entry can never go stale and nothing ever
-        #: needs invalidating.
-        self._details: dict[str, list[str]] = {}
+        self._icon_cache: IconCache | None = None
+        #: Built cards by fingerprint -- or, for an item that will not parse, a
+        #: sentence saying so.  A fingerprint is a hash of the item's own
+        #: bytes, so an entry can never go stale and nothing ever needs
+        #: invalidating.
+        self._details: dict[str, Card | str] = {}
 
         self._build_ui()
         self._load_sources(source)
@@ -194,25 +196,25 @@ class MainWindow(QMainWindow):
         self.collection_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.collection_view.setModel(self.collection_proxy)
 
-        self.details = QPlainTextEdit()
-        self.details.setReadOnly(True)
-        self.details.setPlainText(self._details_hint())
+        right.addWidget(self.collection_view)
+        splitter.addWidget(self.collection_group)
 
-        held = QSplitter(Qt.Orientation.Vertical)
-        held.addWidget(self.collection_view)
-        held.addWidget(self.details)
-        held.setSizes([420, 240])
-        right.addWidget(held)
+        self.item_group = QGroupBox("Item")
+        card = QVBoxLayout(self.item_group)
+        self.details = ItemPane()
+        self.details.display(self._details_hint())
+        card.addWidget(self.details)
+        splitter.addWidget(self.item_group)
 
-        # Only a change of selection redraws the stats.  The table beneath it
-        # is rebuilt whenever the game saves, so anything on that path has to
-        # be cheap -- and rendering is not: it walks the game's data files.
+        # Only a change of selection redraws the card.  The table beside it is
+        # rebuilt whenever the game saves, so anything on that path has to be
+        # cheap -- and building a card is not: it walks the game's data files
+        # and cuts a picture out of a 512x512 sheet.
         self.collection_view.selectionModel().selectionChanged.connect(
             lambda *_: self._show_details()
         )
 
-        splitter.addWidget(self.collection_group)
-        splitter.setSizes([420, 680])
+        splitter.setSizes([400, 430, 340])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
@@ -518,27 +520,26 @@ class MainWindow(QMainWindow):
                     | QItemSelectionModel.SelectionFlag.Rows,
                 )
 
-    # -- the details pane ------------------------------------------------
+    # -- the card ---------------------------------------------------------
 
     def _show_details(self) -> None:
-        """Draw the selected item's stats.
+        """Draw the selected item's card.
 
         Called when the selection changes and nowhere else, so the poll that
-        runs every two seconds never renders anything: the lines are looked up
-        by fingerprint and drawn only if they are not already known.
+        runs every two seconds never builds anything: a card is looked up by
+        fingerprint and built only if it is not already known.
         """
         print_ = self._current_fingerprint()
         if print_ is None:
-            self.details.setPlainText(self._details_hint())
+            self.details.display(self._details_hint())
             return
 
-        lines = self._details.get(print_)
-        if lines is None:
-            lines = self._render_stats(print_)
-            self._details[print_] = lines
+        content = self._details.get(print_)
+        if content is None:
+            content = self._render_stats(print_)
+            self._details[print_] = content
 
-        self.details.setPlainText("\n".join(lines))
-        self.details.moveCursor(QTextCursor.MoveOperation.Start)
+        self.details.display(content, self._icons())
 
     def _current_fingerprint(self) -> str | None:
         """The item to describe: the last row of the selection, or nothing.
@@ -552,21 +553,37 @@ class MainWindow(QMainWindow):
             return None
         return rows[-1].data(Qt.ItemDataRole.UserRole)
 
-    def _render_stats(self, print_: str) -> list[str]:
-        """The game's own stat lines for one stored item.
+    def _render_stats(self, print_: str) -> Card | str:
+        """The game's own card for one stored item, or why there is not one.
 
-        The registry keeps each item's bytes, so the tooltip is rendered from
-        the item itself rather than from the columns summarising it -- the
-        same parse the game would do.
+        The registry keeps each item's bytes, so the card is built from the
+        item itself rather than from the columns summarising it -- the same
+        parse the game would do.  An item that has gone and an item that will
+        not parse are both sentences rather than cards: neither is something to
+        draw a tier and an icon for.
         """
         assert self.service is not None
         row = self.service.registry.get(print_)
         if row is None:
-            return ["This item is no longer in the collection."]
+            return "This item is no longer in the collection."
         try:
-            return render(parse_item(row["raw"]), self._game_data())
+            return build(parse_item(row["raw"]), self._game_data())
         except Exception as exc:  # noqa: BLE001 -- one bad item is not fatal
-            return [f"Could not read this item: {exc}"]
+            return f"Could not read this item: {exc}"
+
+    def _icons(self) -> IconCache | None:
+        """The game's icon sheets, or ``None`` when there is no game.
+
+        Built on first use and kept, and it reads nothing here: the library
+        behind it opens the archive when an icon is first asked for, so a
+        window whose items have no icons never pays for one.
+        """
+        game = self._game_data()
+        if game is None:
+            return None
+        if self._icon_cache is None:
+            self._icon_cache = IconCache(game.install)
+        return self._icon_cache
 
     def _in_game_count(self) -> int:
         assert self.service is not None
