@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tl2stash import StashWatcher  # noqa: E402
+from tl2stash import StashWatcher, read_stash_file  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.saves import SaveLocation  # noqa: E402
 from tl2stash.service import (  # noqa: E402
@@ -25,7 +25,7 @@ from tl2stash.service import (  # noqa: E402
     ItemService,
 )
 
-from test_archive import write_synthetic_stash  # noqa: E402
+from test_archive import write_stash_with_rubbish, write_synthetic_stash  # noqa: E402
 
 
 @pytest.fixture
@@ -152,6 +152,26 @@ def test_absorb_all_on_an_empty_stash_is_a_no_op(service):
     again = service.absorb_all()
     assert again.count == 0
     assert again.summary == "nothing to absorb"
+
+
+def test_absorb_all_leaves_an_item_it_could_not_read(stash_path, db_path):
+    """The player is told, and the item is still in the file.
+
+    An item the parser cannot read can be neither stored nor removed, so the
+    pass does what it can and says what it could not do -- the alternative is a
+    thing sitting in the shared stash that neither panel ever mentions.
+    """
+    write_stash_with_rubbish(stash_path, ["Alpha", "Beta"])
+    with ItemService(db_path, SaveLocation.at(stash_path)) as service:
+        result = service.absorb_all()
+
+        assert len(result.taken) == 2
+        assert result.unreadable == 1
+        assert "could not be read" in result.summary
+
+        after = read_stash_file(stash_path)
+        assert [i.base_name for i in after.items] == []
+        assert len(after.failed) == 1
 
 
 def test_absorb_dry_run_takes_nothing(service, stash_path):

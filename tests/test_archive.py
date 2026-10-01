@@ -26,15 +26,18 @@ from tl2stash.archive import (  # noqa: E402
 )
 from tl2stash.crypto import checksum  # noqa: E402
 from tl2stash.saves import find_save_locations  # noqa: E402
+from tl2stash.stash import StashEntry  # noqa: E402
 
 from test_format import synthetic_item  # noqa: E402
 from tl2stash import parse_item  # noqa: E402
 
+#: Bytes that will not parse as an item: far too short for the fields the
+#: parser reads, so it fails on the first one it runs out of.
+RUBBISH = b"\x00" * 8
 
-def write_synthetic_stash(path: Path, names: list[str]) -> list[str]:
-    """Write a stash containing one item per name; return their fingerprints."""
-    items = [parse_item(synthetic_item(name=n, slot=3322 + i)[0]) for i, n in enumerate(names)]
-    body = serialize_body(items)
+
+def _write_body(path: Path, body: bytes) -> None:
+    """Wrap this container body in a save file image and write it."""
     write_save_file(
         path,
         SaveFile(
@@ -42,7 +45,31 @@ def write_synthetic_stash(path: Path, names: list[str]) -> list[str]:
             body=body, stored_size=13 + len(body),
         ),
     )
+
+
+def _write(path: Path, blobs: list[bytes]) -> None:
+    """Write a stash file holding exactly these blobs, in this order."""
+    _write_body(path, serialize_body(blobs))
+
+
+def write_synthetic_stash(path: Path, names: list[str]) -> list[str]:
+    """Write a stash containing one item per name; return their fingerprints."""
+    items = [parse_item(synthetic_item(name=n, slot=3322 + i)[0]) for i, n in enumerate(names)]
+    _write(path, [i.raw for i in items])
     return [i.fingerprint for i in items]
+
+
+def write_stash_with_rubbish(path: Path, names: list[str]) -> list[str]:
+    """A stash of real items with one blob the parser cannot read at the end.
+
+    This is the shape the whole safety property is about: the file holds
+    something the tool does not understand, and everything the tool does to the
+    file from then on has to leave it alone.
+    """
+    prints = write_synthetic_stash(path, names)
+    blobs = [entry.blob for entry in read_stash_file(path).entries]
+    _write(path, blobs + [RUBBISH])
+    return prints
 
 
 # --------------------------------------------------------------------------
@@ -51,11 +78,18 @@ def write_synthetic_stash(path: Path, names: list[str]) -> list[str]:
 
 
 def test_serialize_body_is_a_copy_not_an_encode():
-    items = [parse_item(synthetic_item(name=n)[0]) for n in ("One", "Two")]
-    body = serialize_body(items)
+    blobs = [parse_item(synthetic_item(name=n)[0]).raw for n in ("One", "Two")]
+    body = serialize_body(blobs)
     assert int.from_bytes(body[:4], "little") == 2
-    assert body[4 : 4 + 4] == len(items[0].raw).to_bytes(4, "little")
-    assert body[8 : 8 + len(items[0].raw)] == items[0].raw
+    assert body[4 : 4 + 4] == len(blobs[0]).to_bytes(4, "little")
+    assert body[8 : 8 + len(blobs[0])] == blobs[0]
+
+
+def test_serialize_body_carries_a_blob_that_never_parsed():
+    """The property the rest of this file rests on: it takes bytes, not items."""
+    assert serialize_body([RUBBISH]) == (
+        (1).to_bytes(4, "little") + len(RUBBISH).to_bytes(4, "little") + RUBBISH
+    )
 
 
 def test_serialize_empty_stash():
@@ -71,7 +105,7 @@ def test_plan_removal_matches_by_fingerprint():
     a, b, c = (parse_item(synthetic_item(name=n)[0]) for n in ("Alpha", "Beta", "Gamma"))
     stash = _fake_stash([a, b, c])
     plan = plan_removal(stash, {b.fingerprint})
-    assert [i.base_name for i in plan.keep] == ["Alpha", "Gamma"]
+    assert [e.item.base_name for e in plan.keep] == ["Alpha", "Gamma"]
     assert [i.base_name for i in plan.remove] == ["Beta"]
 
 
@@ -83,14 +117,33 @@ def test_plan_removal_matches_a_moved_item():
     assert plan.remove == [moved]
 
 
+def test_plan_removal_keeps_an_entry_that_did_not_parse():
+    """The entry has no fingerprint, so no request can ever match it."""
+    good = parse_item(synthetic_item(name="Alpha")[0])
+    stash = _fake_stash([good], rubbish=[RUBBISH])
+
+    plan = plan_removal(stash, {good.fingerprint})
+
+    assert plan.remove == [good]
+    assert [e.blob for e in plan.keep] == [RUBBISH]
+    assert plan.keep[0].error is not None
+
+
 class _FakeStash:
-    def __init__(self, items):
-        self.items = items
-        self.failed = []
+    def __init__(self, items, rubbish=()):
+        entries = [
+            StashEntry(index=i, blob=item.raw, item=item) for i, item in enumerate(items)
+        ]
+        for blob in rubbish:
+            entries.append(
+                StashEntry(index=len(entries), blob=blob, item=None, error="not an item")
+            )
+        self.entries = entries
+        self.failed = [e for e in entries if e.item is None]
 
 
-def _fake_stash(items):
-    return _FakeStash(items)
+def _fake_stash(items, rubbish=()):
+    return _FakeStash(items, rubbish)
 
 
 # --------------------------------------------------------------------------
@@ -190,6 +243,47 @@ def test_archive_is_idempotent(tmp_path):
     assert not second.changed
 
 
+def test_archive_keeps_an_item_it_could_not_read(tmp_path):
+    """The bug this file exists to prevent: one unreadable blob in the stash.
+
+    Absorbing used to write the file back from the *parsed* items, so a blob
+    the parser had given up on was silently deleted -- and since the registry
+    only ever holds what parsed, nothing anywhere had a copy of it.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    prints = write_stash_with_rubbish(path, ["Alpha", "Beta"])
+
+    report = archive_stash(path, {prints[0]})
+
+    assert report.changed
+    assert report.unreadable == 1
+
+    after = read_stash_file(path)
+    assert [i.base_name for i in after.items] == ["Beta"]
+    assert [e.blob for e in after.failed] == [RUBBISH], "the blob was dropped"
+
+
+def test_archive_refuses_a_file_it_could_not_read_whole(tmp_path):
+    """A half-written save has an entry with no bytes at all.
+
+    Writing back what did read would produce a file with an item missing, so
+    the honest answer is to refuse -- the caller says so and tries again.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    one = parse_item(synthetic_item(name="Alpha")[0]).raw
+    # A count of two, but only one entry's bytes: the file ends mid-container,
+    # which is what a save caught half-written looks like.
+    _write_body(
+        path, (2).to_bytes(4, "little") + len(one).to_bytes(4, "little") + one
+    )
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError, match="could not be read whole"):
+        archive_stash(path, {"anything"})
+
+    assert path.read_bytes() == before, "a refused write must touch nothing"
+
+
 def test_archive_prunes_old_backups(tmp_path):
     path = tmp_path / "sharedstash_v2.bin"
     write_synthetic_stash(path, ["Alpha", "Beta", "Gamma"])
@@ -219,7 +313,7 @@ def test_real_stash_rebuilds_byte_exactly(source, tmp_path):
     byte, then removal cannot corrupt anything it does not remove.
     """
     stash = read_stash_file(source)
-    assert serialize_body(stash.items) == stash.save.body
+    assert serialize_body([entry.blob for entry in stash.entries]) == stash.save.body
 
 
 @pytest.mark.skipif(not _REAL, reason="no Torchlight 2 saves on this machine")
@@ -243,12 +337,14 @@ def test_real_stash_round_trip_through_archive(source, tmp_path):
 
     after = read_stash_file(copy)
     assert after.save.checksum_ok
-    assert not after.failed, [e.error for e in after.failed]
     assert len(after.items) == len(before.items) - 1
     assert victim.fingerprint not in {i.fingerprint for i in after.items}
     assert [i.raw for i in after.items] == [
         i.raw for i in before.items if i.fingerprint != victim.fingerprint
     ]
+    # And anything in the file the parser could not read is still in the file,
+    # byte for byte -- the one item this must never cost the player.
+    assert [e.blob for e in after.failed] == [e.blob for e in before.failed]
 
 
 # --------------------------------------------------------------------------
@@ -323,6 +419,26 @@ def read_stash_file_from(raw: bytes):
     return _read(name)
 
 
+def test_restore_keeps_an_item_it_could_not_read(tmp_path):
+    """Putting something back must not be the moment something else leaves."""
+    path = tmp_path / "sharedstash_v2.bin"
+    prints = write_stash_with_rubbish(path, ["Alpha", "Beta"])
+    beta = read_stash_file(path).items[1]
+
+    archive_stash(path, set(prints))
+    assert read_stash_file(path).items == []
+    report = restore_items(
+        path,
+        [RestoreRequest(raw=beta.raw, container=beta.location.container,
+                        slot=beta.location.slot_index, label="Beta")],
+    )
+
+    assert report.changed
+    after = read_stash_file(path)
+    assert [i.base_name for i in after.items] == ["Beta"]
+    assert [e.blob for e in after.failed] == [RUBBISH]
+
+
 def test_restore_skips_an_item_that_never_left(tmp_path):
     path = tmp_path / "sharedstash_v2.bin"
     write_synthetic_stash(path, ["Alpha", "Beta"])
@@ -390,6 +506,17 @@ def test_real_stash_full_round_trip_is_byte_identical(source, tmp_path):
     assert len(report.restored) == len(requests)
     assert report.skipped == []
 
+    if before.failed:
+        # An entry that will not parse is never removed, so it keeps its place
+        # in the middle of the file while the readable items come back at the
+        # end: every blob is back, byte for byte, but not in the order it
+        # started in.  Reproducing the *file* is a property of a stash the
+        # parser can read in full.
+        assert sorted(e.blob for e in read_stash_file(copy).entries) == sorted(
+            e.blob for e in before.entries
+        ), "round trip lost or altered a blob"
+        return
+
     assert copy.read_bytes() == original, "round trip did not reproduce the file"
 
 
@@ -406,5 +533,9 @@ def test_real_stash_remove_everything(source, tmp_path):
     after = read_stash_file(copy)
     assert after.items == []
     assert after.save.checksum_ok
-    assert after.save.body == b"\x00\x00\x00\x00"
-    assert len(copy.read_bytes()) == 13 + 4
+    # What the parser could not read is still there; only a stash it could
+    # read in full reduces to the empty container.
+    assert len(after.failed) == len(before.failed)
+    if not before.failed:
+        assert after.save.body == b"\x00\x00\x00\x00"
+        assert len(copy.read_bytes()) == 13 + 4

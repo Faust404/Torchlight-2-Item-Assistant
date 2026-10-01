@@ -89,6 +89,8 @@ def main(argv: list[str]) -> int:
         print(f"\nwould remove {len(report.removed)}, keep {report.kept} (nothing written)")
     else:
         print("\nnothing matched; file untouched")
+    if report.unreadable:
+        print(f"{report.unreadable} kept item(s) could not be read; left alone")
     return 0
 
 

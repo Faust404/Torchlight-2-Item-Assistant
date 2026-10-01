@@ -81,6 +81,14 @@ class AbsorbResult:
     #: here is normal, and a flood means something is wrong.
     retaken: list[Item] = field(default_factory=list)
     report: ArchiveReport | None = None
+    #: How many entries in the file the parser could not read.  They are left
+    #: in the file rather than removed -- see
+    #: :func:`tl2stash.archive.plan_removal` -- which is the safe outcome but
+    #: also a visible one: an item the tool cannot read is an item it cannot
+    #: store, so the player is told rather than left wondering why one thing
+    #: will not go in.  It is counted from the file rather than from the
+    #: report, so that a stash holding *only* such items still says so.
+    unreadable: int = 0
 
     @property
     def count(self) -> int:
@@ -88,14 +96,14 @@ class AbsorbResult:
 
     @property
     def summary(self) -> str:
-        if not self.count:
-            return "nothing to absorb"
         bits = []
         if self.taken:
             bits.append(f"{len(self.taken)} absorbed")
         if self.retaken:
             bits.append(f"{len(self.retaken)} taken back")
-        return ", ".join(bits)
+        if self.unreadable:
+            bits.append(f"{self.unreadable} left that could not be read")
+        return ", ".join(bits) or "nothing to absorb"
 
 
 class ItemService:
@@ -171,7 +179,7 @@ class ItemService:
         outranks the earlier one.
         """
         self.refresh()
-        result = AbsorbResult()
+        result = AbsorbResult(unreadable=len(self.stash.failed))
 
         returned = self.registry.fingerprints_with_status(STATUS_RETURNED)
         # Both statuses mean the tool has had this item before, so taking it
@@ -212,7 +220,7 @@ class ItemService:
         if not reappeared:
             return None
 
-        result = AbsorbResult(retaken=reappeared)
+        result = AbsorbResult(retaken=reappeared, unreadable=len(self.stash.failed))
         if dry_run:
             return result
 

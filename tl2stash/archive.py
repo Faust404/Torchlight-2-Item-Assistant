@@ -15,6 +15,13 @@ re-serialising from parsed fields:
   where it was.  The player just sees an empty slot -- which is exactly what a
   removed item should look like.
 
+* **Nothing unread is dropped.**  The plan is made over the stash's *entries*
+  rather than over its parsed items, so an item whose bytes defeated the
+  parser is carried through untouched instead of being written out of
+  existence.  The tool deletes only what it understood, which -- since it can
+  only store what it understood -- means it never deletes something the
+  registry is not holding a copy of.
+
 Timing is the part that is not ours to control.  Torchlight holds the stash in
 memory and rewrites the file at save points (exit to title, map transition,
 death), so a rewrite made while the game is running survives only until its
@@ -27,13 +34,14 @@ rather than the instant we write it.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from .crypto import checksum, read_save_file, scramble
 from .item import Item, parse_item
-from .stash import Stash, read_stash
+from .stash import Stash, StashEntry, read_stash
 
 __all__ = [
     "ArchiveReport",
@@ -53,23 +61,34 @@ __all__ = [
 BACKUP_SUFFIX = ".tl2ia-bak"
 
 
-def serialize_body(items: list[Item]) -> bytes:
+def serialize_body(blobs: Sequence[bytes]) -> bytes:
     """Rebuild a stash body from item blobs.
 
     The container is a u32 count followed by length-prefixed blobs.  Because
-    each item still holds its original bytes, this is a copy, not an encode.
+    each item still holds its original bytes, this is a copy, not an encode --
+    and it takes blobs rather than items so that a blob which never parsed can
+    be carried through just the same.
     """
     out = bytearray()
-    out += len(items).to_bytes(4, "little")
-    for item in items:
-        out += len(item.raw).to_bytes(4, "little")
-        out += item.raw
+    out += len(blobs).to_bytes(4, "little")
+    for blob in blobs:
+        out += len(blob).to_bytes(4, "little")
+        out += blob
     return bytes(out)
 
 
 @dataclass
 class RemovalPlan:
-    keep: list[Item]
+    """A stash split in two: what stays, and what goes.
+
+    Asymmetric on purpose.  What is kept is a list of *entries*, because an
+    entry the parser could not read is still an item in the file and still has
+    to be written back.  What is removed is a list of *items*, because only
+    something we understood has a fingerprint to match on -- so an unreadable
+    blob cannot be in this list even by mistake.
+    """
+
+    keep: list[StashEntry]
     remove: list[Item]
 
     @property
@@ -83,21 +102,57 @@ class ArchiveReport:
     backup: Path | None
     removed: list[Item] = field(default_factory=list)
     kept: int = 0
+    #: How many of the kept entries the parser could not read.  They stay in
+    #: the file untouched -- but the player should hear about them, because an
+    #: item the tool cannot read is an item it cannot store either.
+    unreadable: int = 0
     changed: bool = False
 
 
 def plan_removal(stash: Stash, fingerprints: set[str]) -> RemovalPlan:
-    """Split a stash into items to keep and items to take out.
+    """Split a stash into entries to keep and items to take out.
 
     Matching is by fingerprint, which is stable across the item being moved
     between slots -- the common case, since the player moves an item *into*
     the stash before it is taken.
+
+    Nothing without a fingerprint is ever removed.  An entry the parser could
+    not read has no fingerprint to match, so it is kept -- which is the whole
+    safety property here: the tool only deletes what it understood, and it can
+    only *have* what it understood, so nothing is dropped that the registry
+    does not hold a copy of.
     """
-    keep: list[Item] = []
+    keep: list[StashEntry] = []
     remove: list[Item] = []
-    for item in stash.items:
-        (remove if item.fingerprint in fingerprints else keep).append(item)
+    for entry in stash.entries:
+        if entry.item is not None and entry.item.fingerprint in fingerprints:
+            remove.append(entry.item)
+        else:
+            keep.append(entry)
+
+    # Every entry is accounted for exactly once.  If this ever fails to hold,
+    # the write below would drop an item nobody holds a copy of, so it is
+    # checked rather than assumed -- the failure mode is the player's stash.
+    assert len(keep) + len(remove) == len(stash.entries)
+
     return RemovalPlan(keep=keep, remove=remove)
+
+
+def _require_whole(path: Path, stash: Stash) -> None:
+    """Refuse to rewrite a file whose entries did not all read.
+
+    A container that ends mid-entry -- a save caught half-written, or a
+    damaged file -- leaves an entry holding no bytes at all.  There is nothing
+    to carry through for it, so writing the entries that *did* read would
+    produce a file with an item missing.  Refusing is the only safe answer;
+    the caller shows the reason and the next poll tries again.
+    """
+    for entry in stash.entries:
+        if not entry.blob:
+            raise ValueError(
+                f"{path.name} could not be read whole ({entry.error}); "
+                "not rewriting it"
+            )
 
 
 def backup_path(path: Path, when: datetime | None = None) -> Path:
@@ -134,14 +189,16 @@ def archive_stash(
 
     save = read_save_file(path)
     stash = read_stash(save)
+    _require_whole(path, stash)
     plan = plan_removal(stash, fingerprints)
     report.removed = plan.remove
     report.kept = len(plan.keep)
+    report.unreadable = sum(1 for entry in plan.keep if not entry.ok)
 
     if plan.is_empty:
         return report
 
-    body = serialize_body(plan.keep)
+    body = serialize_body([entry.blob for entry in plan.keep])
     if dry_run:
         return report
 
@@ -239,12 +296,15 @@ def restore_items(
 
     save = read_save_file(path)
     stash = read_stash(save)
+    _require_whole(path, stash)
     present = {item.fingerprint for item in stash.items}
     occupied: dict[int, set[int]] = {}
     for item in stash.items:
         occupied.setdefault(item.location.container, set()).add(item.location.slot_index)
 
-    items = list(stash.items)
+    # The blobs already in the file, unreadable ones included: putting an item
+    # back must not be the moment some other item quietly leaves.
+    blobs = [entry.blob for entry in stash.entries]
     for request in requests:
         item = parse_item(request.raw)
         if item.fingerprint in present:
@@ -255,15 +315,16 @@ def restore_items(
         slot = next_free_slot(slots, request.slot)
         slots.add(slot)
 
-        relocated = item.relocated(slot, request.container)
-        items.append(parse_item(relocated))
+        # ``relocated`` returns the item's bytes with only its container and
+        # slot fields patched, so there is nothing to re-parse on the way in.
+        blobs.append(item.relocated(slot, request.container))
         present.add(item.fingerprint)
         report.restored.append((request.label or item.display_name, request.container, slot))
 
     if not report.restored or dry_run:
         return report
 
-    body = serialize_body(items)
+    body = serialize_body(blobs)
     backup = backup_path(path)
     shutil.copy2(path, backup)
     report.backup = backup

@@ -662,6 +662,12 @@ class MainWindow(QMainWindow):
             return ""
         held = len(self.service.registry.absorbed_fingerprints())
         note = f"{self._in_game_count()} in the game · {held} absorbed here"
+        # An item the parser could not read is in neither count and is left in
+        # the file untouched, so without this line it would be invisible: the
+        # player sees something in the stash that neither list mentions.
+        unreadable = len(self.service.stash.failed)
+        if unreadable:
+            note += f" · {unreadable} in the file could not be read"
         if self._game is None:
             # Said here as well as in the details pane, because the pane stops
             # saying it once an item is selected -- and a stat line that reads
