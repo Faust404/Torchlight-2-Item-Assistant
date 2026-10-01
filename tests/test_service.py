@@ -17,7 +17,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash import StashWatcher  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
-from tl2stash.service import STATUS_ABSORBED, STATUS_IN_STASH, ItemService  # noqa: E402
+from tl2stash.service import (  # noqa: E402
+    STATUS_ABSORBED,
+    STATUS_IN_STASH,
+    STATUS_RETURNED,
+    ItemService,
+)
 
 from test_archive import write_synthetic_stash  # noqa: E402
 
@@ -246,7 +251,41 @@ def test_a_restored_item_is_not_snatched_straight_back(service, stash_path):
 
     assert service.enforce() is None, "enforce took back an item we had just restored"
     assert len(service.stash_items()) == 1
-    assert service.registry.get(print_)["status"] == STATUS_IN_STASH
+    assert service.registry.get(print_)["status"] == STATUS_RETURNED
+
+
+def test_the_vacuum_spares_an_item_the_player_put_back(service, stash_path):
+    """The other half of the same trap.
+
+    enforce() is not the only thing that could re-take a returned item -- the
+    automatic vacuum takes everything in the stash, and an item the player
+    deliberately put back is in the stash.  Without the exemption the Restore
+    button would work for exactly one save cycle.
+    """
+    service.absorb_all()
+    print_ = service.registry.rows()[0]["fingerprint"]
+    service.restore({print_})
+
+    result = service.absorb_all(include_returned=False)
+
+    assert result.count == 0, "the vacuum took back a returned item"
+    assert len(service.stash_items()) == 1
+
+
+def test_the_explicit_button_still_takes_returned_items(service, stash_path):
+    """Spared by the vacuum, not by the user.
+
+    Clicking Absorb is a later decision than the one that returned the item,
+    and it wins.
+    """
+    service.absorb_all()
+    print_ = service.registry.rows()[0]["fingerprint"]
+    service.restore({print_})
+
+    result = service.absorb_all()
+
+    assert len(result.retaken) == 1
+    assert service.stash_items() == []
 
 
 def test_restore_all_returns_everything(service, stash_path):

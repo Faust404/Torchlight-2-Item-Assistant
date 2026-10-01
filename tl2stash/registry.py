@@ -228,12 +228,15 @@ class Registry:
         self.conn.commit()
         return cursor.rowcount
 
-    def absorbed_fingerprints(self) -> set[str]:
-        """Every item the tool has taken, by fingerprint."""
+    def fingerprints_with_status(self, status: str) -> set[str]:
         rows = self.conn.execute(
-            "SELECT fingerprint FROM items WHERE status = 'absorbed'"
+            "SELECT fingerprint FROM items WHERE status = ?", (status,)
         ).fetchall()
         return {row["fingerprint"] for row in rows}
+
+    def absorbed_fingerprints(self) -> set[str]:
+        """Every item the tool has taken, by fingerprint."""
+        return self.fingerprints_with_status("absorbed")
 
     def get(self, fingerprint: str) -> sqlite3.Row | None:
         return self.conn.execute(
@@ -274,6 +277,17 @@ class Registry:
             "SELECT * FROM placements WHERE fingerprint = ? AND present = 1",
             (print_,),
         ).fetchall()
+
+    def placements_for(self, source: str) -> dict[str, sqlite3.Row]:
+        """Every placement in ``source``, keyed by fingerprint.
+
+        One query rather than one per item, because the window wants this for
+        the whole collection on every refresh.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM placements WHERE source = ?", (source,)
+        ).fetchall()
+        return {row["fingerprint"]: row for row in rows}
 
     def last_placement(self, print_: str, source: str) -> sqlite3.Row | None:
         """Where this item last sat in ``source``, present or not.

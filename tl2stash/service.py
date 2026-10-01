@@ -39,7 +39,13 @@ from .item import Item
 from .registry import Registry, ScanResult
 from .stash import Stash, read_stash
 
-__all__ = ["AbsorbResult", "ItemService", "STATUS_ABSORBED", "STATUS_IN_STASH"]
+__all__ = [
+    "AbsorbResult",
+    "ItemService",
+    "STATUS_ABSORBED",
+    "STATUS_IN_STASH",
+    "STATUS_RETURNED",
+]
 
 #: Status of an item the tool has taken.  The game may put it back; we take it
 #: out again.
@@ -48,6 +54,16 @@ STATUS_ABSORBED = "absorbed"
 #: Status of an item that belongs to the game right now.  Known to us, but not
 #: ours to remove.
 STATUS_IN_STASH = "in_stash"
+
+#: Status of an item the player deliberately put back.
+#:
+#: This has to be distinguishable from ``in_stash``, and not for bookkeeping
+#: reasons.  With automatic intake on, every save runs the vacuum -- so an
+#: item the player had just restored would be taken straight back out, every
+#: single time, and "put it back" would be a button that does nothing.  An
+#: item the player returned is therefore exempt from the automatic pass until
+#: they ask for it back, with the Absorb button, which means it.
+STATUS_RETURNED = "returned"
 
 #: Which container to restore into when the item was never seen in a stash
 #: (imported from elsewhere, say).  The shared stash's general tab.
@@ -125,19 +141,37 @@ class ItemService:
 
     # -- absorbing -------------------------------------------------------
 
-    def absorb_all(self, *, dry_run: bool = False) -> AbsorbResult:
+    def absorb_all(
+        self, *, dry_run: bool = False, include_returned: bool = True
+    ) -> AbsorbResult:
         """Take every item currently in the stash.
 
         This is the whole intake model: the player puts things in the shared
         stash, and this empties it.  No filter, no selection -- the stash is
         the inbox.
+
+        ``include_returned=False`` spares items the player has deliberately
+        put back, and is what the automatic pass uses.  Without it, returning
+        an item would achieve nothing: the next save would vacuum it again,
+        and the player would watch it refuse to stay.  The explicit Absorb
+        gesture keeps the default, because clicking it is a decision that
+        outranks the earlier one.
         """
         self.refresh()
         result = AbsorbResult()
 
-        already = self.registry.absorbed_fingerprints()
+        returned = self.registry.fingerprints_with_status(STATUS_RETURNED)
+        # Both statuses mean the tool has had this item before, so taking it
+        # again is a retake -- the player will recognise it as such, and a
+        # returned item being swept up is exactly the case where they would
+        # want to be told.
+        already = self.registry.absorbed_fingerprints() | returned
+        spared = set() if include_returned else returned
+
         fingerprints: set[str] = set()
         for item in self.stash.items:
+            if item.fingerprint in spared:
+                continue
             fingerprints.add(item.fingerprint)
             (result.retaken if item.fingerprint in already else result.taken).append(item)
 
@@ -180,9 +214,10 @@ class ItemService:
     def restore(self, fingerprints: set[str], *, dry_run: bool = False) -> RestoreReport:
         """Put absorbed items back into the stash, near where they were.
 
-        A restored item is marked ``in_stash``, which matters: leaving it
-        marked ``absorbed`` would make the next :meth:`enforce` pass snatch it
-        straight back out again.
+        A restored item is marked ``returned``, which does two jobs.  It keeps
+        :meth:`enforce` from snatching it straight back out, and it keeps the
+        automatic vacuum off it, so an item the player put back stays put
+        until they say otherwise.
         """
         self.refresh()
         requests = []
@@ -202,6 +237,6 @@ class ItemService:
 
         report = restore_items(self.source, requests, dry_run=dry_run)
         if not dry_run and report.restored:
-            self.registry.set_status(fingerprints, STATUS_IN_STASH)
+            self.registry.set_status(fingerprints, STATUS_RETURNED)
         self.refresh()
         return report
