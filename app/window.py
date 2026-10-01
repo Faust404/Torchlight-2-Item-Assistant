@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtCore import (
+    QItemSelectionModel,
+    QSortFilterProxyModel,
+    Qt,
+    QTimer,
+)
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -23,6 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QTableView,
@@ -30,8 +37,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tl2stash.gamedata import GameData, find_install
+from tl2stash.item import parse_item
 from tl2stash.saves import SaveLocation, find_save_locations, live_location
 from tl2stash.service import STATUS_ABSORBED, ItemService
+from tl2stash.tooltip import render
 from tl2stash.watcher import StashWatcher
 
 from .models import (
@@ -48,6 +58,19 @@ from .models import (
 #: to feel immediate, not to keep up.
 POLL_MS = 2000
 
+#: Shown in place of an item's stats when the game's data files cannot be
+#: found.  Saying what to do about it is worth more than the space it takes.
+GAME_DATA_MISSING = (
+    "Torchlight II's data files were not found, so an item's stats are shown\n"
+    "with the names the save file uses rather than the words the game does.\n"
+    "\n"
+    "Items are stored and put back exactly the same either way.\n"
+    "\n"
+    "To point the tool at the game, name the folder holding PAKS:\n"
+    "    python -m app --game=\"<the Torchlight II folder>\"\n"
+    "or set TL2_INSTALL to it."
+)
+
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -55,10 +78,11 @@ class MainWindow(QMainWindow):
         db_path: str | Path | None = None,
         source: str | Path | None = None,
         db_dir: str | Path | None = None,
+        game: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Torchlight 2 Item Assistant")
-        self.resize(1100, 640)
+        self.resize(1100, 700)
 
         # ``db_path`` given means one database for every stash, which is what
         # --db asks for.  Left out, each stash gets its own file in ``db_dir``
@@ -73,6 +97,18 @@ class MainWindow(QMainWindow):
         self.service: ItemService | None = None
         self.watcher: StashWatcher | None = None
         self._sources: list[SaveLocation] = []
+
+        # The game's own data files, which supply the wording of an item's
+        # stats.  Named rather than searched for when --game says where; see
+        # _game_data for why it is not read here.
+        self.game_path = Path(game) if game is not None else None
+        self._game: GameData | None = None
+        self._game_looked = False
+        self._game_error: str | None = None
+        #: Rendered stats by fingerprint.  A fingerprint is a hash of the
+        #: item's own bytes, so an entry can never go stale and nothing ever
+        #: needs invalidating.
+        self._details: dict[str, list[str]] = {}
 
         self._build_ui()
         self._load_sources(source)
@@ -157,7 +193,23 @@ class MainWindow(QMainWindow):
         self.collection_proxy.setFilterKeyColumn(0)
         self.collection_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.collection_view.setModel(self.collection_proxy)
-        right.addWidget(self.collection_view)
+
+        self.details = QPlainTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setPlainText(self._details_hint())
+
+        held = QSplitter(Qt.Orientation.Vertical)
+        held.addWidget(self.collection_view)
+        held.addWidget(self.details)
+        held.setSizes([420, 240])
+        right.addWidget(held)
+
+        # Only a change of selection redraws the stats.  The table beneath it
+        # is rebuilt whenever the game saves, so anything on that path has to
+        # be cheap -- and rendering is not: it walks the game's data files.
+        self.collection_view.selectionModel().selectionChanged.connect(
+            lambda *_: self._show_details()
+        )
 
         splitter.addWidget(self.collection_group)
         splitter.setSizes([420, 680])
@@ -175,6 +227,48 @@ class MainWindow(QMainWindow):
         model = new_model(columns)
         view.setModel(model)
         return view, model
+
+    # -- the game's data -------------------------------------------------
+
+    def _game_data(self) -> GameData | None:
+        """The game's data files, read once, or ``None`` if there are none.
+
+        Reading them takes about a second, and nothing needs them to *store*
+        an item -- only to describe one.  So it happens on first use, and the
+        answer is remembered either way: a machine without the game would
+        otherwise re-run a disk search on every refresh to keep failing.
+
+        ``None`` is not an error state.  Without it an item shows the names
+        the save file gives its effects instead of the sentences the game
+        writes; everything else about the tool is unaffected.
+        """
+        if self._game_looked:
+            return self._game
+        self._game_looked = True
+        try:
+            install = find_install(self.game_path)
+            if install is not None:
+                self._game = GameData.load(install)
+        except Exception as exc:  # noqa: BLE001 -- never fatal, only degraded
+            self._game_error = str(exc)
+        return self._game
+
+    def _details_hint(self) -> str:
+        """What the details pane says when it has no item to describe.
+
+        A game that is not installed and one whose files will not open are
+        different problems with different answers, so they do not get the same
+        message -- the second one is a bug report waiting to happen, and it
+        would be invisible if it read as "not found".
+        """
+        if self._game_data() is not None:
+            return "Select an item to see its stats."
+        if self._game_error:
+            return (
+                f"{GAME_DATA_MISSING}\n\n"
+                f"The data files there would not open: {self._game_error}"
+            )
+        return GAME_DATA_MISSING
 
     # -- sources ---------------------------------------------------------
 
@@ -385,7 +479,8 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             items = []
 
-        fill_stash(self.stash_model, items)
+        data = self._game_data()
+        fill_stash(self.stash_model, items, data)
 
         # Only what the tool holds.  An item that is in the game -- one that
         # never left, or one the player has just put back -- is in the left
@@ -395,13 +490,83 @@ class MainWindow(QMainWindow):
         rows = self.service.registry.rows(status=STATUS_ABSORBED)
         placements = self.service.registry.placements_for(self.service.source_key)
         placed = {
-            print_: f"{container_label(p['container'])} · slot {p['slot']}"
+            print_: f"{container_label(p['container'], data)} · slot {p['slot']}"
             for print_, p in placements.items()
         }
+
+        # Rebuilding the table drops the selection, and the table is rebuilt
+        # on every save.  Keeping it means the details pane below stays on the
+        # item being read instead of emptying itself every few seconds.
+        selected = self._selected_fingerprints()
         fill_collection(self.collection_model, rows, placed)
+        self._reselect(selected)
 
         self.stash_group.setTitle(f"In the game ({len(items)})")
         self.collection_group.setTitle(f"In the tool ({len(rows)})")
+
+    def _reselect(self, fingerprints: set[str]) -> None:
+        """Select the rows with these fingerprints, if they are still here."""
+        if not fingerprints:
+            return
+        selection = self.collection_view.selectionModel()
+        for row in range(self.collection_proxy.rowCount()):
+            index = self.collection_proxy.index(row, 0)
+            if index.data(Qt.ItemDataRole.UserRole) in fingerprints:
+                selection.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
+
+    # -- the details pane ------------------------------------------------
+
+    def _show_details(self) -> None:
+        """Draw the selected item's stats.
+
+        Called when the selection changes and nowhere else, so the poll that
+        runs every two seconds never renders anything: the lines are looked up
+        by fingerprint and drawn only if they are not already known.
+        """
+        print_ = self._current_fingerprint()
+        if print_ is None:
+            self.details.setPlainText(self._details_hint())
+            return
+
+        lines = self._details.get(print_)
+        if lines is None:
+            lines = self._render_stats(print_)
+            self._details[print_] = lines
+
+        self.details.setPlainText("\n".join(lines))
+        self.details.moveCursor(QTextCursor.MoveOperation.Start)
+
+    def _current_fingerprint(self) -> str | None:
+        """The item to describe: the last row of the selection, or nothing.
+
+        The last rather than the first because a multiple selection is a
+        working set -- what to put back, or what to look through -- and the
+        row most recently added to it is the one that was just clicked.
+        """
+        rows = self.collection_view.selectionModel().selectedRows()
+        if not rows:
+            return None
+        return rows[-1].data(Qt.ItemDataRole.UserRole)
+
+    def _render_stats(self, print_: str) -> list[str]:
+        """The game's own stat lines for one stored item.
+
+        The registry keeps each item's bytes, so the tooltip is rendered from
+        the item itself rather than from the columns summarising it -- the
+        same parse the game would do.
+        """
+        assert self.service is not None
+        row = self.service.registry.get(print_)
+        if row is None:
+            return ["This item is no longer in the collection."]
+        try:
+            return render(parse_item(row["raw"]), self._game_data())
+        except Exception as exc:  # noqa: BLE001 -- one bad item is not fatal
+            return [f"Could not read this item: {exc}"]
 
     def _in_game_count(self) -> int:
         assert self.service is not None
@@ -414,7 +579,14 @@ class MainWindow(QMainWindow):
         if self.service is None:
             return ""
         held = len(self.service.registry.absorbed_fingerprints())
-        return f"{self._in_game_count()} in the game · {held} absorbed here"
+        note = f"{self._in_game_count()} in the game · {held} absorbed here"
+        if self._game is None:
+            # Said here as well as in the details pane, because the pane stops
+            # saying it once an item is selected -- and a stat line that reads
+            # as a key rather than a sentence should have a reason visible
+            # somewhere.
+            note += " · no game data"
+        return note
 
     def _set_status(self, message: str) -> None:
         self.status.showMessage(message)

@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 from .dat import (
+    VAR_AFFIX_EFFECT,
     VAR_BADDES,
     VAR_BADDESOT,
     VAR_DISPLAYPRECISION,
@@ -82,15 +83,20 @@ CONTAINERS_DIR = "MEDIA/INVENTORY/CONTAINERS/"
 #: The three bags of the shared stash, in the order the game shows them.
 SHARED_STASH = "SHARED_STASH_"
 
-#: Which of an effect's four templates a ``description_type`` asks for.  The
-#: two "OT" variants are the ones whose text mentions ``[DURATION]``; the
-#: others describe an effect that is simply always on.
+#: Which of an effect's four templates a ``description_type`` asks for, and
+#: which to fall back on when the effect does not carry that one.  The two "OT"
+#: variants are the ones whose text mentions ``[DURATION]``; the others
+#: describe an effect that is simply always on.
+#:
+#: The fallback is because the pair is not always complete -- 208 of the 239
+#: effects carry GOODDES and 198 carry BADDESOT -- and an always-on effect
+#: with no duration in its wording is a far better thing to show than nothing.
 TEMPLATE_FOR_TYPE = {
-    0x00: VAR_GOODDES,
-    0x01: VAR_GOODDES,
-    0x02: VAR_GOODDESOT,
-    0x03: VAR_BADDES,
-    0x04: VAR_BADDESOT,
+    0x00: (VAR_GOODDES, VAR_GOODDESOT),
+    0x01: (VAR_GOODDES, VAR_GOODDESOT),
+    0x02: (VAR_GOODDESOT, VAR_GOODDES),
+    0x03: (VAR_BADDES, VAR_BADDESOT),
+    0x04: (VAR_BADDESOT, VAR_BADDES),
 }
 
 #: What to assume when an effect does not say how precise to be.  All 239
@@ -123,6 +129,7 @@ class GameData:
         "failed",
         "files_read",
         "install",
+        "_affix_effects",
         "_by_name",
         "_effects",
         "_effect_order",
@@ -135,6 +142,7 @@ class GameData:
         by_name: dict[str, DatNode],
         effects: dict[str, DatNode],
         effect_order: list[DatNode],
+        affix_effects: dict[str, set[str]],
         containers: dict[int, str],
         failed: list[tuple[str, str]],
         files_read: int,
@@ -143,6 +151,7 @@ class GameData:
         self._by_name = by_name
         self._effects = effects
         self._effect_order = effect_order
+        self._affix_effects = affix_effects
         self.containers = containers
         self.failed = failed
         self.files_read = files_read
@@ -172,6 +181,7 @@ class GameData:
         by_name: dict[str, DatNode] = {}
         effects: dict[str, DatNode] = {}
         effect_order: list[DatNode] = []
+        affix_effects: dict[str, set[str]] = {}
         containers: dict[int, str] = {}
         failed: list[tuple[str, str]] = []
         read = 0
@@ -211,9 +221,27 @@ class GameData:
                         # effect's name being taken from somewhere other than
                         # EFFECTSLIST is prevented in by_name.
                         by_name.setdefault(name.upper(), node)
+                        if path != EFFECTSLIST:
+                            # An affix's effect node, naming the effect it
+                            # grants.  EFFECTSLIST's own effect nodes carry
+                            # this variable too, holding 'Value' or 'Percent'
+                            # -- the label of the number, not an effect -- so
+                            # they are left out.
+                            granted = node.text(VAR_AFFIX_EFFECT)
+                            if granted:
+                                affix_effects.setdefault(name.upper(), set()).add(
+                                    granted.upper()
+                                )
 
         return cls(
-            install, by_name, effects, effect_order, containers, failed, read
+            install,
+            by_name,
+            effects,
+            effect_order,
+            affix_effects,
+            containers,
+            failed,
+            read,
         )
 
     # -- looking things up ------------------------------------------------
@@ -230,6 +258,41 @@ class GameData:
             return None
         key = name.upper()
         return self._effects.get(key) or self._by_name.get(key)
+
+    def effect_for(self, name: str) -> DatNode | None:
+        """The effect an item's effect record is talking about.
+
+        The record in the save file names an *affix*, not an effect.  That
+        name is not unique -- 107 different affixes are called ``OFFLAME
+        DAMAGE BONUS``, granting everything from fire damage to dodge chance
+        -- so the name alone cannot say which effect is meant.
+
+        What each of those affixes does carry is a node naming the effect it
+        grants, which is unique and which EFFECTSLIST has wording for.  When
+        an affix name still leaves several, the item's own name settles it:
+        ``OFTHEVAMPIRE LIFE STEAL`` is LIFE STEAL, not LIFE STEAL MASTER or
+        PERCENT LIFE STOLEN, because that is the one it ends with.
+
+        ``None`` when nothing settles it, which is the caller's cue to show
+        the raw name rather than guess at wording.
+        """
+        if not name:
+            return None
+        key = name.upper()
+        if key in self._effects:
+            return self._effects[key]
+
+        candidates = {
+            granted
+            for granted in self._affix_effects.get(key, ())
+            if granted in self._effects
+        }
+        if len(candidates) == 1:
+            return self._effects[next(iter(candidates))]
+        for candidate in sorted(candidates, key=len, reverse=True):
+            if key.endswith(candidate):
+                return self._effects[candidate]
+        return None
 
     def effect(self, index: int) -> DatNode | None:
         """The ``index``-th effect in ``MEDIA/EFFECTSLIST.DAT``.
@@ -252,10 +315,10 @@ class GameData:
         ordinary: 31 of the game's 239 effects carry no positive description
         at all.
         """
-        var = TEMPLATE_FOR_TYPE.get(description_type)
-        if var is None:
+        pair = TEMPLATE_FOR_TYPE.get(description_type)
+        if pair is None:
             return None
-        return node.text(var)
+        return node.text(pair[0]) or node.text(pair[1])
 
     def display_precision(self, node: DatNode) -> int:
         """How many decimals this effect's value is shown to."""

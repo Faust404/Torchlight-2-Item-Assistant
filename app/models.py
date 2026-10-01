@@ -8,10 +8,15 @@ better explanation of what this tool does than any amount of prose.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 
 from tl2stash.item import Item
+
+if TYPE_CHECKING:  # pragma: no cover
+    from tl2stash.gamedata import GameData
 
 __all__ = [
     "COLLECTION_COLUMNS",
@@ -26,14 +31,25 @@ STASH_COLUMNS = ["Item", "Lvl", "Tab", "Slot"]
 COLLECTION_COLUMNS = ["Item", "Lvl", "Sockets", "Found in"]
 
 
-def container_label(container: int) -> str:
+def container_label(container: int, data: "GameData | None" = None) -> str:
     """A display name for one of the shared stash's tabs.
 
-    These are the game's own container ids.  Their *names* live in the
-    INVENTORY data inside DATA.PAK, which this tool does not read yet, so the
-    id is the honest label -- better than inventing names that would be wrong
-    the moment a mod added a tab.
+    With the game's data to hand this is the tab's *position*: the player
+    counts tabs from one, and the internal names -- ``SHARED_STASH_BAG_ARMS``
+    and so on -- describe what each bag was originally built for while any
+    item goes in any tab.  The name is still worth having, which is why it is
+    the cell's tooltip rather than its text.
+
+    Without the data, the container id is the honest label -- better than
+    inventing names that would be wrong the moment a mod added a tab.
     """
+    if data is not None:
+        tab = data.stash_tab(container)
+        if tab is not None:
+            return f"Tab {tab}"
+        name = data.container_name(container)
+        if name:
+            return name
     return f"Tab {container}"
 
 
@@ -57,8 +73,15 @@ def _cell(text: str = "", *, sort: object | None = None) -> QStandardItem:
     return item
 
 
-def fill_stash(model: QStandardItemModel, items: list[Item]) -> None:
-    """Show what is in the save file right now."""
+def fill_stash(
+    model: QStandardItemModel,
+    items: list[Item],
+    data: "GameData | None" = None,
+) -> None:
+    """Show what is in the save file right now.
+
+    ``data`` names the tabs; without it they fall back to the container id.
+    """
     model.removeRows(0, model.rowCount())
     for item in sorted(items, key=lambda i: (i.location.container, i.location.slot_index)):
         name = _cell(item.display_name)
@@ -66,11 +89,23 @@ def fill_stash(model: QStandardItemModel, items: list[Item]) -> None:
         if item.num_sockets:
             name.setToolTip(f"{item.num_sockets} socket(s)")
 
+        # No sort override on the tab, unlike level and slot: this column
+        # sorts by the label the player can see.  That is the same order as
+        # the container ids would give -- the tabs are "Tab 1" to "Tab 3", or
+        # "Tab 24" upwards when the game's data is missing -- and sorting by
+        # anything else would be sorting by something not on screen.
+        container = item.location.container
+        tab = _cell(container_label(container, data))
+        if data is not None:
+            internal = data.container_name(container)
+            if internal:
+                tab.setToolTip(internal)
+
         model.appendRow(
             [
                 name,
                 _cell(str(item.level), sort=item.level),
-                _cell(container_label(item.location.container), sort=item.location.container),
+                tab,
                 _cell(str(item.location.slot_index), sort=item.location.slot_index),
             ]
         )

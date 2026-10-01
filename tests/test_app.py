@@ -25,9 +25,14 @@ pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from app.window import MainWindow  # noqa: E402
+import app.window as window_module  # noqa: E402
+from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
+
+#: The real search, kept before any fixture can stand in front of it.
+_REAL_FIND_INSTALL = window_module.find_install
 
 from test_archive import write_synthetic_stash  # noqa: E402
+from test_gamedata import install as synthetic_install  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -49,6 +54,25 @@ def no_real_saves(monkeypatch):
     import app.window as window_module
 
     monkeypatch.setattr(window_module, "find_save_locations", lambda: [])
+
+
+@pytest.fixture(autouse=True)
+def no_real_game(monkeypatch):
+    """Stop window tests *searching* for the game's data files.
+
+    The search is a walk of the registry and every Steam library, and reading
+    ten thousand files takes a second; either would make these tests depend on
+    what happens to be installed on the machine running them.  Only the search
+    is turned off -- an install the test names with ``game=`` is still used,
+    which is how the tests that care about stats get one.
+    """
+    import app.window as window_module
+
+    monkeypatch.setattr(
+        window_module,
+        "find_install",
+        lambda explicit=None: _REAL_FIND_INSTALL(explicit) if explicit else None,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +108,45 @@ def window(qapp, tmp_path):
 
     yield win
     win.close()
+
+
+@pytest.fixture
+def game_install(tmp_path):
+    """A stand-in for the game's own data files.
+
+    The synthetic install the game-data tests already use, so the two agree on
+    what a name means.
+    """
+    return synthetic_install(tmp_path / "game")
+
+
+@pytest.fixture
+def game_window(qapp, tmp_path, game_install):
+    """A window with the game's data, and three items it has not taken."""
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(stash, ["Alpha", "Beta", "Gamma"])
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        assert win._game_data() is not None, "the fixture's install did not load"
+        yield win
+    finally:
+        win.close()
+
+
+@pytest.fixture
+def stocked(game_window, monkeypatch):
+    """The same window, with all three absorbed."""
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    game_window.auto_absorb.setChecked(False)
+    game_window._absorb_all()
+    assert game_window.collection_model.rowCount() == 3, (
+        "the fixture did not stock the tool"
+    )
+    return game_window
 
 
 # --------------------------------------------------------------------------
@@ -244,6 +307,126 @@ def test_search_filters_the_collection(window, monkeypatch):
 
     window.search.setText("")
     assert window.collection_proxy.rowCount() == 3
+
+
+# --------------------------------------------------------------------------
+# The stats
+# --------------------------------------------------------------------------
+
+
+def test_the_tab_column_names_the_tab_the_player_counts(game_window):
+    """The file numbers containers; the player counts tabs from one.
+
+    The internal name is the cell's tooltip: it says what the bag was built
+    for, which is not what the player is looking at.
+    """
+    assert game_window.stash_model.rowCount() == 3
+    for row in range(game_window.stash_model.rowCount()):
+        assert game_window.stash_model.item(row, 2).text() == "Tab 1"
+        assert (
+            game_window.stash_model.item(row, 2).toolTip() == "SHARED_STASH_BAG_ARMS"
+        )
+
+
+def test_the_details_pane_describes_the_selected_item(stocked):
+    """What the pane is for: the item's own stats, not the table's summary.
+
+    Rendered from the bytes the registry kept, so it is the same parse the
+    game does rather than a re-reading of the columns beside it.
+    """
+    assert stocked.details.toPlainText() == "Select an item to see its stats."
+
+    stocked.collection_view.selectRow(0)  # the collection is sorted by name
+    assert stocked.details.toPlainText() == "Alpha\nRequires Level 5"
+
+
+def test_the_selection_and_the_pane_survive_a_refresh(stocked):
+    """Both tables are rebuilt whenever the game saves -- every few seconds in
+    play.  Losing the selection there would empty the pane while it was being
+    read, and would quietly disarm "Put back selected"."""
+    stocked.collection_view.selectRow(1)
+    assert stocked.details.toPlainText() == "Beta\nRequires Level 5"
+
+    stocked._sync(write=False)
+
+    assert stocked.collection_model.rowCount() == 3
+    assert stocked._current_fingerprint() is not None, "the selection was dropped"
+    assert stocked.details.toPlainText() == "Beta\nRequires Level 5"
+
+
+def test_the_poll_never_renders_anything(stocked, monkeypatch):
+    """The property the whole pane is arranged around.
+
+    Drawing stats means walking the game's data files, and the table beneath
+    is redrawn on every save.  So the lines are kept by fingerprint: an item
+    is drawn when it is selected and never again, however many refreshes go by
+    while it stays selected.
+    """
+    calls: list[str] = []
+    original = stocked._render_stats
+    monkeypatch.setattr(
+        stocked,
+        "_render_stats",
+        lambda print_: calls.append(print_) or original(print_),
+    )
+
+    stocked.collection_view.selectRow(0)
+    assert stocked.details.toPlainText() == "Alpha\nRequires Level 5"
+    assert len(calls) == 1, "selecting an item did not draw it"
+
+    for _ in range(3):
+        stocked._sync(write=False)
+
+    assert len(calls) == 1, "a refresh drew the stats again"
+    assert stocked.details.toPlainText() == "Alpha\nRequires Level 5"
+
+
+def test_selecting_another_item_draws_that_one(stocked):
+    stocked.collection_view.selectRow(0)
+    stocked.collection_view.selectRow(2)
+    assert stocked.details.toPlainText() == "Gamma\nRequires Level 5"
+
+
+def test_without_the_game_the_pane_says_so(qapp, tmp_path):
+    """A machine without Torchlight II installed is degraded, not broken.
+
+    The items are stored and put back exactly the same; all that is missing is
+    the wording, so the pane says which and how to fix it rather than showing
+    nothing or, worse, guessing.
+    """
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(stash, ["Alpha"])
+    win = MainWindow(
+        db_path=tmp_path / "items.db", source=stash, game=tmp_path / "nowhere"
+    )
+    try:
+        assert win._game_data() is None
+        assert win.details.toPlainText() == GAME_DATA_MISSING
+        assert "no game data" in win._describe()
+        assert win.stash_model.rowCount() == 1, "the game's panel still works"
+    finally:
+        win.close()
+
+
+def test_a_window_that_cannot_read_the_game_still_absorbs(qapp, tmp_path, monkeypatch):
+    """The one thing that must not depend on the game being installed."""
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(stash, ["Alpha", "Beta"])
+    win = MainWindow(
+        db_path=tmp_path / "items.db", source=stash, game=tmp_path / "nowhere"
+    )
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.collection_model.rowCount() == 2
+        assert win.stash_model.rowCount() == 0
+    finally:
+        win.close()
 
 
 # --------------------------------------------------------------------------

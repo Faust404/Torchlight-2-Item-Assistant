@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash.dat import (  # noqa: E402
+    VAR_AFFIX_EFFECT,
     VAR_BADDES,
     VAR_BADDESOT,
     VAR_DISPLAYPRECISION,
@@ -97,6 +98,38 @@ def install(tmp_path: Path) -> Path:
         {0: "BAG"}, [{"vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 0)}}]
     )
 
+    # Affixes.  An item's effect record names one of these rather than naming
+    # an effect, and the name is shared: two of the affixes below are called
+    # OFFLAME MELEEDAMAGEBONUS and grant different effects, which is the whole
+    # reason effect_for exists.  Each node is named like the affix it belongs
+    # to and carries the effect it actually grants.
+    def affix(name: str, grants: str) -> dict:
+        return {
+            "vars": {
+                VAR_NAME: (TEXT, string(name)),
+                VAR_AFFIX_EFFECT: (TEXT, string(grants)),
+            }
+        }
+
+    files["MEDIA/AFFIXES/ITEMS/AFFIXES.DAT"] = write_dat(
+        strings,
+        [
+            {
+                "kids": [
+                    affix("OFTHEELEPHANT MAX MANA", "MAX MANA"),
+                    affix("OFFLAME MELEEDAMAGEBONUS", "MAX MANA"),
+                    affix("OFFLAME MELEEDAMAGEBONUS", "MELEEDAMAGEBONUS"),
+                    affix("OFNOTHING", "MAX MANA"),
+                    affix("OFNOTHING", "MELEEDAMAGEBONUS"),
+                    affix("OFGHOST", "MELEEDAMAGEBONUS"),
+                    affix("OFGHOST", "NO SUCH EFFECT"),
+                    # An affix wearing an effect's name, which EFFECTSLIST wins.
+                    affix("MAX MANA", "MELEEDAMAGEBONUS"),
+                ]
+            }
+        ],
+    )
+
     files["MEDIA/UNITS/ITEMS/SWORDS/DJINN FIRE SWORD.DAT"] = write_dat(
         {0: "Djinn Fire Sword"}, [{"vars": {VAR_NAME: (TEXT, 0)}}]
     )
@@ -161,9 +194,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Five parse; the sixth is a DAT that will not, and a seventh is not a
+    """Six parse; the seventh is a DAT that will not, and the eighth is not a
     DAT at all."""
-    assert game.files_read == 5
+    assert game.files_read == 6
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -263,6 +296,65 @@ def test_a_type_with_no_wording_gives_nothing_rather_than_a_wrong_line(game):
 
     bare = game.by_name("MAX MANA")
     assert game.effect_template(bare, 0x03) is None, "there is no penalty wording"
+
+
+# --------------------------------------------------------------------------
+# From an affix to the effect it grants
+# --------------------------------------------------------------------------
+
+
+def test_an_affix_names_the_effect_it_grants(game):
+    """What the save file calls the effect is an affix.
+
+    ``OFTHEELEPHANT MAX MANA`` is the affix; the wording belongs to ``MAX
+    MANA``, and the two are joined by the effect node inside the affix rather
+    than by anything in the name.
+    """
+    assert game.effect_for("OFTHEELEPHANT MAX MANA") is game.by_name("MAX MANA")
+
+
+def test_an_affix_name_shared_by_several_is_settled_by_the_one_it_ends_with(game):
+    """The name alone cannot say which.
+
+    Two affixes are called ``OFFLAME MELEEDAMAGEBONUS`` and grant different
+    effects -- in the shipped game 107 share one name -- so a second rule is
+    needed.  An affix is named for the item it suits plus the effect it
+    grants, so the granted effect is the one the name *ends* with.
+    """
+    assert game.effect_for("OFFLAME MELEEDAMAGEBONUS") is game.by_name(
+        "MELEEDAMAGEBONUS"
+    )
+
+
+def test_an_effect_named_outright_is_its_own_answer(game):
+    """EFFECTSLIST is consulted first, which is why ``MAX MANA`` renders as
+    the effect even though an affix below wears the same name."""
+    assert game.effect_for("MAX MANA") is game.effect(1)
+    assert game.effect_for("MELEEDAMAGEBONUS") is game.effect(0)
+
+
+def test_an_affix_nothing_settles_gives_nothing(game):
+    """Two candidates, neither of them a suffix of the name.
+
+    There is no honest answer, so there is no answer: the caller shows the
+    name the save file gave rather than a sentence that might be about
+    something else.
+    """
+    assert game.effect_for("OFNOTHING") is None
+
+
+def test_a_granted_name_the_game_has_no_effect_for_is_not_a_candidate(game):
+    """One affix below grants an effect that is not in EFFECTSLIST.
+
+    Counting it would turn a settled case into an ambiguous one -- and, worse,
+    leave a name with no node to return.
+    """
+    assert game.effect_for("OFGHOST") is game.by_name("MELEEDAMAGEBONUS")
+
+
+def test_a_name_that_is_nowhere_gives_nothing(game):
+    assert game.effect_for("NOTHING AT ALL") is None
+    assert game.effect_for("") is None
 
 
 def test_precision_is_read_and_defaulted(game):

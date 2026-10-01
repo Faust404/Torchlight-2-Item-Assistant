@@ -40,11 +40,14 @@ from typing import Iterator
 from .binary import ParseError, Reader
 
 __all__ = [
+    "VAR_AFFIX_EFFECT",
     "VAR_BADDES",
     "VAR_BADDESOT",
     "VAR_BASEFILE",
     "VAR_DISPLAYPRECISION",
+    "VAR_DISPLAY_NAME",
     "VAR_EFFECT_TYPE",
+    "VAR_FLAVOR",
     "VAR_GOODDES",
     "VAR_GOODDESOT",
     "VAR_ICON",
@@ -117,6 +120,24 @@ VAR_DISPLAYPRECISION = 0xE5A5EDCC
 #: declares 3322, and the save file's container 24 holds items in slots 3322
 #: upwards; the two were matched on exactly that.
 VAR_SLOT_BASE = 0x173B97DF
+
+#: The name of the *effect* an affix grants.
+#:
+#: An item's effect record names an affix, not an effect -- ``OFTHEELEPHANT MAX
+#: HP`` is the affix, and it is not unique: 107 different affixes are called
+#: ``OFFLAME DAMAGE BONUS``, granting everything from fire damage to dodge
+#: chance.  Each of them carries an effect node, and *that* node's VAR_AFFIX_
+#: EFFECT is the effect proper (``MAX HP``, ``DAMAGE BONUS``) -- a name that is
+#: unique and that EFFECTSLIST holds description wording for.
+VAR_AFFIX_EFFECT = 0x006B6E45
+
+#: The name to show for a skill or a monster.  Distinct from VAR_NAME, which
+#: on a skill is its internal id: a spell node called ``Fireball III`` reads
+#: ``spell_fireball`` under VAR_NAME and ``Fireball III`` under this.
+VAR_DISPLAY_NAME = 0x832F7C76
+
+#: Flavour text: the italic line under a unique item's name.
+VAR_FLAVOR = 0x13B3DCA2
 
 
 class DatNode:
