@@ -682,6 +682,26 @@ def test_a_unique_is_read_as_a_unique_with_its_kind_and_its_icon(real_game):
 
 
 @needs_game
+def test_an_ember_reads_as_the_socketable_it_is(real_game):
+    """``CHAOS EMBER`` is the game's kind for one; the reference's is Socketable.
+
+    The four ember kinds are the game's own spelling and the reference database
+    has none of them: it files all 178 ember and gem files under Socketable,
+    which is where the rail puts them and what the card's type line says.  An
+    ember keeps its name -- ``Chaos Ember`` -- and its kind is the one word.
+
+    Read out of the item's own file, walked from the archive the way
+    :func:`_an_item_of_tier` is, so the expectation is the game's.
+    """
+    guid, stated = _an_ember(real_game)
+
+    appearance = real_game.appearance_for(item(guid=guid))
+
+    assert stated in ("BLOOD EMBER", "CHAOS EMBER", "IRON EMBER", "VOID EMBER")
+    assert appearance.type_name == "Socketable"
+
+
+@needs_game
 def test_a_set_piece_is_shown_as_the_rarity_its_own_file_states(real_game):
     """The file calls a set piece magic or unique, and that is what is shown.
 
@@ -783,6 +803,32 @@ def _an_item_of_tier(game, tier_word: str) -> tuple[int, str]:
             return int(guid) & 0xFFFFFFFFFFFFFFFF, read_unit_type(unit_type)[1]
 
     raise AssertionError(f"the archive has no {tier_word} item any more")
+
+
+def _an_ember(game) -> tuple[int, str]:
+    """``(guid, UNITTYPE)`` for a real ember, walked out of the archive.
+
+    The kind is read with :func:`read_unit_type` because matching the raw token
+    is the point -- what the tool *shows* is what the test asserts, and taking
+    the expectation from the tool would make it no test at all.
+    """
+    from tl2stash.pak import PakIndex
+
+    embers = ("BLOOD EMBER", "CHAOS EMBER", "IRON EMBER", "VOID EMBER")
+    for entry in PakIndex.read(archive_path(game.install)).entries:
+        if not entry.startswith("MEDIA/UNITS/ITEMS/") or not entry.endswith(".DAT"):
+            continue
+        stated = game._item_files.get(entry.upper())
+        if stated is None:
+            continue
+        unit_type = _inherited_text(game, stated.root, VAR_UNITTYPE)
+        guid = _inherited_text(game, stated.root, VAR_UNIT_GUID)
+        if not (guid and unit_type):
+            continue
+        if read_unit_type(unit_type)[1].upper() in embers:
+            return int(guid) & 0xFFFFFFFFFFFFFFFF, unit_type
+
+    raise AssertionError("the archive has no ember any more")
 
 
 def _a_set_item(game, tier_word: str) -> tuple[int, str, str, str]:

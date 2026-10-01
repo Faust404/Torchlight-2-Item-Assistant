@@ -68,6 +68,7 @@ from .dat import (
     DatNode,
 )
 from .pak import PakFile, PakIndex
+from .taxonomy import canonical_kind
 
 __all__ = [
     "ARCHIVE_NAME",
@@ -258,11 +259,17 @@ class Appearance:
 
 
 def _appearance(stated: dict[int, DatNode]) -> Appearance:
-    """Read the appearance fields off an item's inherited variables."""
+    """Read the appearance fields off an item's inherited variables.
+
+    The kind goes through :func:`~tl2stash.taxonomy.canonical_kind`, so the
+    four words the game spells its own way -- ``CHAOS EMBER`` and its three
+    siblings -- read as the ``Socketable`` they are, which is what the item's
+    card says and what the rail files them under.
+    """
     tier, type_name = read_unit_type(_text(stated, VAR_UNITTYPE) or "")
     return Appearance(
         tier=tier,
-        type_name=type_name,
+        type_name=canonical_kind(type_name),
         icon=_text(stated, VAR_ICON),
         set_name=_text(stated, VAR_SET),
         item_level=int(_number(stated, VAR_LEVEL) or 0),

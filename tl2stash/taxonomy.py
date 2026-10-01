@@ -20,13 +20,27 @@ separately because the game really does write them both: a one-handed sword is
 Anything that reads these lists has to treat them as the same kind of thing,
 which is what the group/subgroup split is for.
 
+The embers are a third case, one step further along: the game writes
+``CHAOS EMBER`` where a gem's file writes ``SOCKETABLE``, and the two are one
+thing to anyone browsing.  The reference database files all four embers under
+Socketable, and measured over the archive the two spellings come to 178 files
+-- exactly its count -- so they are one kind, and :data:`KIND_ALIASES` is where
+they are made one.
+
 Qt-free, like the rest of ``tl2stash``: this says how the game's kinds group,
 and ``app.sidebar`` says what that looks like.
 """
 
 from __future__ import annotations
 
-__all__ = ["OTHER", "TYPE_GROUPS", "Place", "group_of"]
+__all__ = [
+    "KIND_ALIASES",
+    "OTHER",
+    "TYPE_GROUPS",
+    "Place",
+    "canonical_kind",
+    "group_of",
+]
 
 #: One item's place in the rail: ``(group, subgroup, kind)``, with ``None`` for
 #: the subgroup of a group that is not split.
@@ -49,6 +63,24 @@ Place = tuple[str, str | None, str]
 #: under a category that claims the tool knows what it is.
 OTHER = "Other"
 
+#: Kinds the game names separately that are one thing to a browser.
+#:
+#: The archive's item files write ``BLOOD EMBER``, ``CHAOS EMBER``,
+#: ``IRON EMBER`` and ``VOID EMBER`` -- eight files each -- where a gem's file
+#: writes ``SOCKETABLE`` in 146.  The reference database does not know the
+#: four words at all: it files all 178 as Socketable, which is the same count
+#: the two spellings come to here.  So an ember is a socketable, and the alias
+#: is written down once rather than spelled out four times in the lists below.
+#:
+#: Upper-cased like the rest of the lookup, so a spelling difference in case
+#: cannot split the leaf in two.
+KIND_ALIASES: dict[str, str] = {
+    "BLOOD EMBER": "Socketable",
+    "CHAOS EMBER": "Socketable",
+    "IRON EMBER": "Socketable",
+    "VOID EMBER": "Socketable",
+}
+
 #: Every kind of thing the game has, by the group it belongs to.
 #:
 #: ``(group, subgroup, kinds)``, in the order the rail draws them -- which is
@@ -60,6 +92,11 @@ OTHER = "Other"
 #:
 #: ``Shield`` is under ``Weapons`` where the reference puts it, not under
 #: ``Armor`` where it feels like it belongs.
+#:
+#: The four ember kinds are deliberately absent: they are one kind with
+#: ``Socketable``, and :data:`KIND_ALIASES` is where they are made one.  Listed
+#: here they would be four leaves of eight items each, beside the one leaf
+#: holding the 146 they belong with.
 #:
 #: The empty kind is deliberately absent: see :func:`group_of`.
 TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
@@ -139,10 +176,6 @@ TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "Identify Scroll",
             "Item",
             "Dynamite",
-            "Blood Ember",
-            "Chaos Ember",
-            "Iron Ember",
-            "Void Ember",
         ),
     ),
 )
@@ -157,6 +190,18 @@ _BY_KIND: dict[str, tuple[str, str | None]] = {
 }
 
 
+def canonical_kind(kind: str) -> str:
+    """The one word for a kind the game spells more than one way.
+
+    ``canonical_kind('Chaos Ember')`` is ``'Socketable'`` and every other kind
+    comes back untouched.  It is applied where a kind is *read* -- see
+    :func:`tl2stash.gamedata._appearance` -- as well as by :func:`group_of`, so
+    the rail, the filter and the card's type line all say the same word; the
+    item's own name, ``Chaos Ember``, is where the ember stays named.
+    """
+    return KIND_ALIASES.get(kind.upper(), kind)
+
+
 def group_of(kind: str) -> tuple[str, str | None]:
     """Where a kind belongs: ``('Weapons', 'One-Handed')`` for ``'1H Sword'``.
 
@@ -168,7 +213,11 @@ def group_of(kind: str) -> tuple[str, str | None]:
     say *what* it is.  There is no group for quest objects and there should not
     be one, so they are ``Misc`` -- which is also what keeps ``Other`` meaning
     only one thing, an item whose kind nothing here recognises.
+
+    A kind is canonicalised first, so a word the game spells its own way --
+    ``Blood Ember`` -- lands with the kind it is, and a caller that reads kinds
+    without going through :func:`canonical_kind` still gets the right group.
     """
     if not kind:
         return "Misc", None
-    return _BY_KIND.get(kind.upper(), (OTHER, None))
+    return _BY_KIND.get(canonical_kind(kind).upper(), (OTHER, None))

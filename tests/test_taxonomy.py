@@ -22,7 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tl2stash.dat import VAR_UNITTYPE  # noqa: E402
 from tl2stash.gamedata import archive_path, read_unit_type  # noqa: E402
 from tl2stash.pak import PakIndex  # noqa: E402
-from tl2stash.taxonomy import OTHER, TYPE_GROUPS, group_of  # noqa: E402
+from tl2stash.taxonomy import (  # noqa: E402
+    OTHER,
+    TYPE_GROUPS,
+    canonical_kind,
+    group_of,
+)
 
 from test_dat import needs_game, real_game  # noqa: E402
 from test_gamedata import _inherited_text  # noqa: E402
@@ -70,6 +75,17 @@ def test_every_kind_the_game_has_is_in_one_of_the_named_groups(real_game):
     assert len(kinds) > 40, "the sweep stopped finding kinds"
     unplaced = sorted(k for k in kinds if group_of(k)[0] == OTHER)
     assert not unplaced, f"the game has kinds nothing here knows: {unplaced}"
+
+    # The four embers are real kinds in the archive and they are one kind here:
+    # the reference database files all of them, embers and gems together, under
+    # Socketable, and the two spellings come to the same 178 files it counts.
+    embers = ("Blood Ember", "Chaos Ember", "Iron Ember", "Void Ember")
+    for ember in embers:
+        assert ember in kinds, f"{ember} is no longer written by any item file"
+        assert group_of(ember) == group_of("Socketable") == ("Misc", None)
+        assert canonical_kind(ember) == "Socketable"
+    socketables = kinds.get("Socketable", 0) + sum(kinds[e] for e in embers)
+    assert socketables == 178, "the socketable files no longer number what they did"
 
     # And the sweep is reading the same tree the tool does: if it were not,
     # UNIQUECANNON would still be split into a tier and no kind.
@@ -119,6 +135,34 @@ def test_an_item_with_no_kind_word_is_misc_and_not_other():
 def test_a_kind_is_matched_whatever_case_it_is_written_in():
     """A mod writes its own ``UNITTYPE`` and may not shout like the game."""
     assert group_of("boots") == group_of("BOOTS") == group_of("Boots")
+    assert canonical_kind("chaos ember") == canonical_kind("CHAOS EMBER")
+
+
+def test_the_embers_are_socketables():
+    """The archive writes four kinds the reference database has never heard of.
+
+    ``BLOOD/CHAOS/IRON/VOID EMBER`` are how the game spells an ember's kind;
+    a gem's file says ``SOCKETABLE``, and the reference files all 178 of them
+    -- embers and gems alike -- as Socketable.  An ember that kept its own
+    kind would be four leaves in the rail holding eight items each, beside the
+    one leaf holding the 146 it belongs with.
+
+    The ember's *name* still says which ember it is; this is its kind, which is
+    the word the card's type line and the rail both read.
+    """
+    for ember in ("Blood Ember", "Chaos Ember", "Iron Ember", "Void Ember"):
+        assert canonical_kind(ember) == "Socketable"
+        assert group_of(ember) == ("Misc", None)
+
+
+def test_canonical_kind_leaves_every_other_kind_alone():
+    """It renames four words, and the guard is that it renames nothing else."""
+    assert canonical_kind("Socketable") == "Socketable"
+    assert canonical_kind("1H Sword") == "1H Sword"
+    assert canonical_kind("Shoulder Armor") == "Shoulder Armor"
+    assert canonical_kind("") == ""
+    assert canonical_kind("Ember") == "Ember", "only the four spelled-out words"
+    assert canonical_kind("Chaos Emberish") == "Chaos Emberish"
 
 
 def test_no_kind_is_in_two_groups_at_once():
