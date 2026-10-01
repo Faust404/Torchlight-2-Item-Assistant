@@ -1,0 +1,23 @@
+# Reference material: FNIStash and IAGD are other people's codebases, kept
+# locally to read.  They are not part of the build and not ours to version.
+test/
+
+# Runtime state.  var/ holds the registry database -- which is the player's
+# items, and in the vacuum model sometimes the only copy of them.  It is data
+# to be backed up, not source to be committed.
+var/
+
+# Pre-write copies of the save file, and half-written staging files.
+*.tl2ia-bak
+*.tl2ia-tmp
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+*.spec

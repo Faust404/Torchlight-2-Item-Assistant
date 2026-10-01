@@ -1,0 +1,5 @@
+# Runtime
+PySide6>=6.6          # desktop GUI
+
+# Development
+pytest>=7.0
