@@ -48,12 +48,16 @@ from .card import IconCache, ItemPane
 from .catalog import ICON_SIZE, Catalog
 from .models import (
     COLLECTION_COLUMNS,
+    PLACE_ROLE,
     STASH_COLUMNS,
+    TIER_ROLE,
+    CollectionFilter,
     container_label,
     fill_collection,
     fill_stash,
     new_model,
 )
+from .sidebar import SidePanel
 
 #: How often to look at the save file.  The file is a few tens of kilobytes
 #: and saves are seconds apart at the fastest, so this is generous; it exists
@@ -174,6 +178,14 @@ class MainWindow(QMainWindow):
     def _build_splitter(self) -> QSplitter:
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
+        # The rail comes first because it is the first thing to reach for: a
+        # collection of any size is narrowed before it is read.
+        self.filter_group = QGroupBox("Filter")
+        filters = QVBoxLayout(self.filter_group)
+        self.sidebar = SidePanel()
+        filters.addWidget(self.sidebar)
+        splitter.addWidget(self.filter_group)
+
         self.stash_group = QGroupBox("In the game")
         left = QVBoxLayout(self.stash_group)
         self.stash_view, self.stash_model = self._table(STASH_COLUMNS)
@@ -193,11 +205,12 @@ class MainWindow(QMainWindow):
         self.collection_view.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self.collection_proxy = QSortFilterProxyModel()
+        self.collection_proxy = CollectionFilter()
         self.collection_proxy.setSourceModel(self.collection_model)
         self.collection_proxy.setFilterKeyColumn(0)
         self.collection_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.collection_view.setModel(self.collection_proxy)
+        self.sidebar.changed.connect(self._filters_changed)
 
         right.addWidget(self.collection_view)
         splitter.addWidget(self.collection_group)
@@ -217,7 +230,7 @@ class MainWindow(QMainWindow):
             lambda *_: self._show_details()
         )
 
-        splitter.setSizes([400, 430, 340])
+        splitter.setSizes([210, 360, 430, 330])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
@@ -326,6 +339,12 @@ class MainWindow(QMainWindow):
         if index < 0 or index >= len(self._sources):
             return
         location = self._sources[index]
+
+        # A different stash is a different collection, and ticks left over from
+        # the last one would silently hide most of it -- a narrowing nobody
+        # asked for and, because the shape changes with it, one that can be
+        # hard to see.  Cleared before the first read, not after.
+        self.sidebar.reset()
 
         if self.service is not None:
             self.service.close()
@@ -510,6 +529,14 @@ class MainWindow(QMainWindow):
         fill_collection(self.collection_model, rows, placed, catalog)
         self._reselect(selected)
 
+        # The rail describes what is *here*, so its shape comes from the rows
+        # and not from the filters -- which is what keeps a row from vanishing
+        # out from under the pointer the moment it is ticked.
+        self.sidebar.set_shape(
+            catalog.entry(row["fingerprint"], row).place for row in rows
+        )
+        self._filters_changed()
+
         self.stash_group.setTitle(f"In the game ({len(items)})")
         self.collection_group.setTitle(f"In the tool ({len(rows)})")
 
@@ -612,6 +639,23 @@ class MainWindow(QMainWindow):
 
     def _filter_changed(self, text: str) -> None:
         self.collection_proxy.setFilterFixedString(text)
+        # The counts follow the search box as well as the facets: a number that
+        # ignored what the player had typed would be a count of a list they are
+        # not looking at.
+        self._count_sidebar()
+
+    def _filters_changed(self) -> None:
+        """Apply what the sidebar has ticked, then say what each tick would leave."""
+        self.collection_proxy.set_places(self.sidebar.places())
+        self.collection_proxy.set_tiers(self.sidebar.tiers())
+        self.collection_proxy.set_level_range(*self.sidebar.level_range())
+        self._count_sidebar()
+
+    def _count_sidebar(self) -> None:
+        self.sidebar.set_counts(
+            self.collection_proxy.counts(PLACE_ROLE),
+            self.collection_proxy.counts(TIER_ROLE),
+        )
 
     def _describe(self) -> str:
         if self.service is None:

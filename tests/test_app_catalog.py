@@ -44,8 +44,8 @@ from app.catalog import ICON_SIZE, Catalog, Facts  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
-    KIND_ROLE,
     LEVEL_ROLE,
+    PLACE_ROLE,
     TIER_ROLE,
     fill_collection,
     new_model,
@@ -276,6 +276,6 @@ def test_a_filled_row_shows_its_tier_without_changing_its_text(qapp):
     assert cell.text() == "Demolishing War Mallet"
     assert cell.data(FINGERPRINT_ROLE) == "0" * 40
     assert cell.data(TIER_ROLE) == ""
-    assert cell.data(KIND_ROLE) == ""
+    assert cell.data(PLACE_ROLE) == (OTHER, None, "")
     assert cell.data(LEVEL_ROLE) == 12
     assert cell.foreground().color().name() == "#8a8a8a"

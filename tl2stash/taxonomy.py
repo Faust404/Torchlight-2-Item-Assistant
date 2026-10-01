@@ -26,7 +26,19 @@ and ``app.sidebar`` says what that looks like.
 
 from __future__ import annotations
 
-__all__ = ["OTHER", "TYPE_GROUPS", "group_of"]
+__all__ = ["OTHER", "TYPE_GROUPS", "Place", "group_of"]
+
+#: One item's place in the rail: ``(group, subgroup, kind)``, with ``None`` for
+#: the subgroup of a group that is not split.
+#:
+#: This is what the sidebar draws a leaf from and what the filter matches on,
+#: and the three are kept together rather than as a bare kind word because the
+#: *empty* kind is a real kind in two different groups.  A quest object is a
+#: ``QUESTITEM``, which is a tier and no kind at all, and it is Misc; an item
+#: whose data file is not there -- a mod's, or one from a game that has been
+#: uninstalled -- is also no kind at all, and it is Other.  A filter keyed on
+#: the word alone would tick both at once.
+Place = tuple[str, str | None, str]
 
 #: The group an item lands in when its kind is not one of the game's.
 #:

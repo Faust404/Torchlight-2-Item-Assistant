@@ -37,7 +37,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 
 from tl2stash.card import TIER_INK, TIER_KEYS, TIER_NONE, display_tier
-from tl2stash.taxonomy import OTHER, group_of
+from tl2stash.taxonomy import OTHER, Place, group_of
 
 from .card import IconCache, paint_tile
 
@@ -118,6 +118,12 @@ class Entry:
     group: str
     subgroup: str | None
     icon: QIcon | None
+
+    @property
+    def place(self) -> Place:
+        """Where this item sits in the rail, as :mod:`tl2stash.taxonomy` names
+        it -- the one value the kind filter and the sidebar both speak in."""
+        return (self.group, self.subgroup, self.kind)
 
 
 class Catalog:
