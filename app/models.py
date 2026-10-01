@@ -11,16 +11,23 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtGui import QBrush, QColor, QStandardItem, QStandardItemModel
 
+from tl2stash.card import TIER_INK
 from tl2stash.item import Item
+
+from .catalog import Catalog, Entry
 
 if TYPE_CHECKING:  # pragma: no cover
     from tl2stash.gamedata import GameData
 
 __all__ = [
     "COLLECTION_COLUMNS",
+    "FINGERPRINT_ROLE",
+    "KIND_ROLE",
+    "LEVEL_ROLE",
     "STASH_COLUMNS",
+    "TIER_ROLE",
     "container_label",
     "fill_collection",
     "fill_stash",
@@ -29,6 +36,24 @@ __all__ = [
 
 STASH_COLUMNS = ["Item", "Lvl", "Tab", "Slot"]
 COLLECTION_COLUMNS = ["Item", "Lvl", "Sockets", "Found in"]
+
+#: What a row carries besides what it shows.
+#:
+#: The fingerprint is what a row *is* -- it is how a selection is turned back
+#: into an item, and it has always been ``UserRole``.  The rest are what the
+#: filters read, and they ride on the row's first cell because a row is one
+#: thing: a proxy asked about row 12 is asking about the item in it.
+#:
+#: ``TIER_ROLE`` holds the tier *word* (``Magic``, ``Unique``) rather than the
+#: colour key, so that a rarity chip and the card's kind line name the same
+#: thing by the same name, and there is no translation between them to get
+#: wrong.  An item with no rarity has the empty string, which no chip carries
+#: -- such an item is shown when no chip is ticked, and is simply not one of
+#: the rarities when one is.
+FINGERPRINT_ROLE = Qt.ItemDataRole.UserRole
+TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
+KIND_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
+LEVEL_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 3)
 
 
 def container_label(container: int, data: "GameData | None" = None) -> str:
@@ -73,19 +98,40 @@ def _cell(text: str = "", *, sort: object | None = None) -> QStandardItem:
     return item
 
 
+def _describe(cell: QStandardItem, entry: Entry, level: int) -> None:
+    """Put what the row knows onto its name cell, and leave the text alone.
+
+    The picture rides in ``DecorationRole`` and the colour in
+    ``ForegroundRole``, and the filters read their own roles -- so
+    ``DisplayRole`` stays exactly what it was, and the search box that matches
+    on it keeps working unchanged.
+    """
+    cell.setData(entry.tier_word, TIER_ROLE)
+    cell.setData(entry.kind, KIND_ROLE)
+    cell.setData(level, LEVEL_ROLE)
+    cell.setForeground(QBrush(QColor(TIER_INK[entry.tier])))
+    if entry.icon is not None:
+        cell.setIcon(entry.icon)
+
+
 def fill_stash(
     model: QStandardItemModel,
     items: list[Item],
     data: "GameData | None" = None,
+    catalog: Catalog | None = None,
 ) -> None:
     """Show what is in the save file right now.
 
     ``data`` names the tabs; without it they fall back to the container id.
+    ``catalog`` supplies the tier, the kind and the picture, and without it the
+    rows are the plain names they were before there was one.
     """
     model.removeRows(0, model.rowCount())
     for item in sorted(items, key=lambda i: (i.location.container, i.location.slot_index)):
         name = _cell(item.display_name)
-        name.setData(item.fingerprint, Qt.ItemDataRole.UserRole)
+        name.setData(item.fingerprint, FINGERPRINT_ROLE)
+        if catalog is not None:
+            _describe(name, catalog.entry(item.fingerprint, item), item.level)
         if item.num_sockets:
             name.setToolTip(f"{item.num_sockets} socket(s)")
 
@@ -115,6 +161,7 @@ def fill_collection(
     model: QStandardItemModel,
     rows: list,
     placed: dict[str, str],
+    catalog: Catalog | None = None,
 ) -> None:
     """Show what the tool holds.
 
@@ -129,12 +176,16 @@ def fill_collection(
     membership is the answer and the columns are free to describe the item.
 
     ``placed`` maps a fingerprint to where the item was last seen, so an item
-    taken out of the game still says which tab it came from.
+    taken out of the game still says which tab it came from.  ``catalog``
+    supplies the tier, the kind and the picture, and reading it is what turns a
+    row of text into a row of the game's own items.
     """
     model.removeRows(0, model.rowCount())
     for row in rows:
         name = _cell(row["name"])
-        name.setData(row["fingerprint"], Qt.ItemDataRole.UserRole)
+        name.setData(row["fingerprint"], FINGERPRINT_ROLE)
+        if catalog is not None:
+            _describe(name, catalog.entry(row["fingerprint"], row), row["level"])
         model.appendRow(
             [
                 name,

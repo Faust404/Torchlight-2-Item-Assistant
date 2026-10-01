@@ -55,7 +55,15 @@ from PySide6.QtWidgets import (
 from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, TIER_INK, lines
 from tl2stash.icons import IconLibrary
 
-__all__ = ["IconCache", "IconTile", "ItemCard", "ItemPane", "TIER_INK", "emphasis"]
+__all__ = [
+    "IconCache",
+    "IconTile",
+    "ItemCard",
+    "ItemPane",
+    "TIER_INK",
+    "emphasis",
+    "paint_tile",
+]
 
 # -- the site's palette (``web/app.css``), by the name it gives each colour --
 
@@ -214,13 +222,121 @@ class IconCache:
         return QPixmap.fromImage(cropped)
 
 
+def paint_tile(
+    painter: QPainter,
+    width: int,
+    height: int,
+    ink: QColor,
+    icon: QPixmap | None,
+    letter: str,
+) -> None:
+    """The rarity tile, drawn into whatever painter is handed one.
+
+    The card's tile is 58 pixels and a list row's is 40, and they are the same
+    picture: the item's icon on the tier's own colour, or the type's initial
+    when there is no icon to draw.  One account of it, so that the two sizes
+    cannot drift into looking like two different things -- which is why this is
+    a function taking a painter rather than a widget's ``paintEvent``.
+
+    ``ink`` is the tier colour, and both of the things that make the tile read
+    as one are a function of it: the border is that colour at
+    :data:`BORDER_MIX`, and the glow is a radial gradient of it at
+    :data:`GLOW_ALPHA`.  Neither is expressible in Qt's stylesheet language,
+    which is why this is painted at all.
+    """
+    # Half a pixel in, so a one-pixel pen lands on a pixel rather than across
+    # two of them.
+    box = QRectF(0.5, 0.5, width - 1, height - 1)
+    shape = QPainterPath()
+    shape.addRoundedRect(box, 4, 4)
+
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(TILE_BG))
+    painter.drawPath(shape)
+
+    painter.setBrush(_glow(box, ink))
+    painter.drawPath(shape)
+
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    border = QColor(ink)
+    border.setAlphaF(BORDER_MIX)
+    painter.setPen(QPen(border, 1))
+    painter.drawPath(shape)
+
+    # Clipped to the tile's rounded box whatever size it comes out -- a tile is
+    # a tile and its corners are round, and the site's own crop does the same
+    # to the art it draws.  The fit is what keeps the art whole inside it.
+    painter.setClipPath(shape)
+    if icon is not None:
+        picture = _fit(icon, width, height)
+        painter.drawPixmap(
+            (width - picture.width()) // 2,
+            (height - picture.height()) // 2,
+            picture,
+        )
+        return
+
+    painter.setPen(QColor(PLACEHOLDER))
+    font = QFont(painter.font())
+    # The card's 15 pixels at its own 58, and proportionally less in a list
+    # row.  The site sets no size at all and lets the letter fill the tile.
+    font.setPixelSize(max(9, round(height * 15 / TILE)))
+    font.setWeight(QFont.Weight.DemiBold)
+    painter.setFont(font)
+    painter.drawText(QRect(0, 0, width, height), Qt.AlignmentFlag.AlignCenter, letter)
+
+
+def _fit(icon: QPixmap, width: int, height: int) -> QPixmap:
+    """The icon at a size the tile can hold, whole.
+
+    The game's art is 62 pixels square whatever tile it lands in -- measured
+    over the archive, every crop is 62x62 and the art reaches every edge of it.
+    So at the card's 58 it is a shade too big, and at a list row's 40 it is
+    half again too big, and the difference between scaling it and centring it
+    is the difference between a smaller picture and most of a picture: a
+    40-pixel window onto a 62-pixel sword loses its tip and its pommel.
+
+    An icon that already fits is handed straight back, so a small one is never
+    resampled for nothing.
+    """
+    if icon.width() <= width and icon.height() <= height:
+        return icon
+    return icon.scaled(
+        width,
+        height,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+def _glow(box: QRectF, ink: QColor) -> QRadialGradient:
+    """The tier colour, brightest under the middle of the icon."""
+    centre = QPointF(box.width() * GLOW_AT[0], box.height() * GLOW_AT[1])
+    reach = max(
+        math.hypot(corner.x() - centre.x(), corner.y() - centre.y())
+        for corner in (
+            QPointF(x, y)
+            for x in (box.left(), box.right())
+            for y in (box.top(), box.bottom())
+        )
+    )
+
+    glow = QRadialGradient(centre, reach * GLOW_STOP)
+    near = QColor(ink)
+    near.setAlphaF(GLOW_ALPHA)
+    far = QColor(ink)
+    far.setAlphaF(0.0)
+    glow.setColorAt(0.0, near)
+    glow.setColorAt(1.0, far)
+    return glow
+
+
 class IconTile(QWidget):
     """The 58x58 rarity tile: the item's icon on the tier's own colour.
 
-    Painted rather than styled, because both of the things that make it read as
-    a tile are a function of one colour -- the border is that colour at 48% and
-    the glow is a radial gradient of it at 22% -- and Qt's stylesheet language
-    can compute neither.
+    A widget over :func:`paint_tile`, which is where the drawing is: the card
+    puts one beside the item's name and the list puts the same picture, smaller
+    and as a pixmap, at the head of every row.
     """
 
     def __init__(
@@ -237,66 +353,7 @@ class IconTile(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802 -- Qt naming
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Half a pixel in, so a one-pixel pen lands on a pixel rather than
-        # across two of them.
-        box = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
-        shape = QPainterPath()
-        shape.addRoundedRect(box, 4, 4)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(TILE_BG))
-        painter.drawPath(shape)
-
-        painter.setBrush(self._glow(box))
-        painter.drawPath(shape)
-
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        border = QColor(self.ink)
-        border.setAlphaF(BORDER_MIX)
-        painter.setPen(QPen(border, 1))
-        painter.drawPath(shape)
-
-        # The site clips the icon to the tile's rounded box, so an icon a few
-        # pixels larger than the tile loses the same corners here that it loses
-        # there -- it is centred rather than scaled, which is the site's own
-        # `align-items:center` over a fixed-size icon.
-        painter.setClipPath(shape)
-        if self.icon is not None:
-            painter.drawPixmap(
-                (self.width() - self.icon.width()) // 2,
-                (self.height() - self.icon.height()) // 2,
-                self.icon,
-            )
-            return
-
-        painter.setPen(QColor(PLACEHOLDER))
-        font = QFont(self.font())
-        font.setPixelSize(15)
-        font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.letter)
-
-    def _glow(self, box: QRectF) -> QRadialGradient:
-        """The tier colour, brightest under the middle of the icon."""
-        centre = QPointF(box.width() * GLOW_AT[0], box.height() * GLOW_AT[1])
-        reach = max(
-            math.hypot(corner.x() - centre.x(), corner.y() - centre.y())
-            for corner in (
-                QPointF(x, y)
-                for x in (box.left(), box.right())
-                for y in (box.top(), box.bottom())
-            )
-        )
-
-        glow = QRadialGradient(centre, reach * GLOW_STOP)
-        near = QColor(self.ink)
-        near.setAlphaF(GLOW_ALPHA)
-        far = QColor(self.ink)
-        far.setAlphaF(0.0)
-        glow.setColorAt(0.0, near)
-        glow.setColorAt(1.0, far)
-        return glow
+        paint_tile(painter, self.width(), self.height(), self.ink, self.icon, self.letter)
 
 
 class Hairline(QFrame):

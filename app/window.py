@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QItemSelectionModel,
+    QSize,
     QSortFilterProxyModel,
     Qt,
     QTimer,
@@ -44,6 +45,7 @@ from tl2stash.tooltip import build
 from tl2stash.watcher import StashWatcher
 
 from .card import IconCache, ItemPane
+from .catalog import ICON_SIZE, Catalog
 from .models import (
     COLLECTION_COLUMNS,
     STASH_COLUMNS,
@@ -106,6 +108,7 @@ class MainWindow(QMainWindow):
         self._game_looked = False
         self._game_error: str | None = None
         self._icon_cache: IconCache | None = None
+        self._catalog: Catalog | None = None
         #: Built cards by fingerprint -- or, for an item that will not parse, a
         #: sentence saying so.  A fingerprint is a hash of the item's own
         #: bytes, so an entry can never go stale and nothing ever needs
@@ -225,6 +228,9 @@ class MainWindow(QMainWindow):
         view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         view.verticalHeader().setVisible(False)
         view.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # The tier tile beside every name, at the size the catalogue paints it,
+        # so the view is not asked to scale a picture per cell per redraw.
+        view.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
 
         model = new_model(columns)
         view.setModel(model)
@@ -482,7 +488,8 @@ class MainWindow(QMainWindow):
             items = []
 
         data = self._game_data()
-        fill_stash(self.stash_model, items, data)
+        catalog = self._catalog_for(data)
+        fill_stash(self.stash_model, items, data, catalog)
 
         # Only what the tool holds.  An item that is in the game -- one that
         # never left, or one the player has just put back -- is in the left
@@ -500,7 +507,7 @@ class MainWindow(QMainWindow):
         # on every save.  Keeping it means the details pane below stays on the
         # item being read instead of emptying itself every few seconds.
         selected = self._selected_fingerprints()
-        fill_collection(self.collection_model, rows, placed)
+        fill_collection(self.collection_model, rows, placed, catalog)
         self._reselect(selected)
 
         self.stash_group.setTitle(f"In the game ({len(items)})")
@@ -584,6 +591,20 @@ class MainWindow(QMainWindow):
         if self._icon_cache is None:
             self._icon_cache = IconCache(game.install)
         return self._icon_cache
+
+    def _catalog_for(self, data: GameData | None) -> Catalog:
+        """The per-item answers both lists are drawn from, built once.
+
+        It shares the card's icon cache rather than opening a second one: a
+        sheet is 512x512 and decodes once, and two caches would decode every
+        sheet twice and hold two copies of it.  Which game's data is in use is
+        settled on first use and never changes, so a catalogue built once stays
+        right for the window's life -- and it is the memo *inside* it that
+        matters, because this is on the poll's path.
+        """
+        if self._catalog is None:
+            self._catalog = Catalog(data, self._icons())
+        return self._catalog
 
     def _in_game_count(self) -> int:
         assert self.service is not None
