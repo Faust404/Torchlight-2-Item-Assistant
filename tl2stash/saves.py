@@ -37,6 +37,11 @@ class SaveLocation:
     steam_id: str
 
     @property
+    def label(self) -> str:
+        """Short name for a picker: which tree, and whose."""
+        return f"{self.kind} · {self.steam_id}"
+
+    @property
     def exists(self) -> bool:
         return self.path.is_file()
 
