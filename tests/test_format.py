@@ -7,6 +7,7 @@ are absent -- the saves are the player's data, not fixtures to check in.
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -24,13 +25,40 @@ from tl2stash import (  # noqa: E402
 )
 from tl2stash.binary import ParseError, Reader  # noqa: E402
 from tl2stash.crypto import SaveFile, checksum  # noqa: E402
-from tl2stash.item import strip_markup  # noqa: E402
+from tl2stash.item import _read_item, strip_markup  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.saves import find_save_locations  # noqa: E402
 
 # --------------------------------------------------------------------------
 # Synthetic blob construction
 # --------------------------------------------------------------------------
+
+
+def synthetic_tail(
+    *,
+    records: int = 0,
+    trailer: bytes = b"",
+    stats: tuple[int, ...] = (),
+    junk: bytes = b"",
+) -> bytes:
+    """Build an item's tail: the part whose shape has to be worked out.
+
+    ``records`` added-damage records of three u32s each, then an optional
+    ``trailer`` word, then the four lists -- all empty but for ``stats`` --
+    and ``junk`` past the end, which nothing should read.
+    """
+    out = bytearray()
+    out.extend(records.to_bytes(2, "little"))
+    out.extend(b"\x00" * (12 * records))
+    out.extend(trailer)
+    for _ in range(3):  # effects, effects2, triggerables
+        out.extend((0).to_bytes(4, "little"))
+    out.extend(len(stats).to_bytes(4, "little"))
+    for guid in stats:
+        out.extend(guid.to_bytes(8, "little"))
+        out.extend(b"\x00" * 4)
+    out.extend(junk)
+    return bytes(out)
 
 
 def synthetic_item(
@@ -42,12 +70,14 @@ def synthetic_item(
     container: int = 24,
     level: int = 5,
     extra_records: bytes = b"",
+    tail: bytes | None = None,
 ) -> tuple[bytes, int]:
     """Build an item blob that parses, and its location offset.
 
     ``extra_records`` is spliced in *after* the count field, so the count is
     derived from it rather than passed separately -- which is the property
-    under test.
+    under test.  ``tail`` replaces the whole variable-length tail; the default
+    is the plainest one there is -- no damage types and four empty lists.
     """
     assert len(extra_records) % 8 == 0
     out = bytearray()
@@ -96,11 +126,7 @@ def synthetic_item(
     u32(0)                                     # armor
     out.extend(bytes(4))
     out.extend(b"\xff" * 12)
-    u16(0)                                     # damage types
-    u32(0)                                     # effects
-    u32(0)                                     # effects2
-    u32(0)                                     # triggerables
-    u32(0)                                     # stats
+    out.extend(synthetic_tail() if tail is None else tail)
     return bytes(out), location_offset
 
 
@@ -221,6 +247,120 @@ def test_truncated_item_raises():
     blob, _ = synthetic_item()
     with pytest.raises(ParseError):
         parse_item(blob[:40])
+
+
+# --------------------------------------------------------------------------
+# The tail, which has to be worked out from the bytes
+# --------------------------------------------------------------------------
+
+
+def test_a_plain_tail_reads_to_the_end_of_the_item():
+    blob, _ = synthetic_item(tail=synthetic_tail(records=3, stats=(0xAB,)))
+    item = parse_item(blob)
+
+    assert len(item.added_damages) == 3
+    assert [stat.guid for stat in item.stats] == [0xAB]
+
+
+def test_a_trailer_after_the_records_is_read_as_a_trailer():
+    """The shape the player's own stored spells and tomes have.
+
+    Read as records alone, the parse stops four bytes short and takes the
+    trailer for the first list's count -- so the stat list is read from the
+    wrong place.  That parses; it is simply wrong, which is the failure this
+    scoring exists to catch.
+    """
+    tail = synthetic_tail(records=2, trailer=b"\x00" * 4, stats=(0xCD,))
+    item = parse_item(synthetic_item(tail=tail)[0])
+
+    assert len(item.added_damages) == 2
+    assert [stat.guid for stat in item.stats] == [0xCD]
+
+
+def test_a_trailer_with_no_records_is_read_the_same_way():
+    """Which is the case a lone-stray-u32 rule used to cover badly."""
+    tail = synthetic_tail(trailer=b"\x00" * 4, stats=(0xEF,))
+    item = parse_item(synthetic_item(tail=tail)[0])
+
+    assert item.added_damages == []
+    assert [stat.guid for stat in item.stats] == [0xEF]
+
+
+def test_the_stackable_trailer_past_the_lists_is_tolerated():
+    """Four Potions of Respec in the player's registry end 16 bytes short.
+
+    Nothing here reads those bytes, so an item that ends within the slack is
+    still the item -- but the bound is tight, because nothing else in any
+    measured stash ends short at all.
+    """
+    tail = synthetic_tail(records=1, junk=b"\x00" * 16)
+    item = parse_item(synthetic_item(tail=tail)[0])
+
+    assert len(item.added_damages) == 1
+
+
+def test_a_tail_that_is_not_read_to_the_end_is_refused():
+    """The safety property: a misparse must fail, not land somewhere.
+
+    FNIStash keeps the first encoding that does not raise, so an item whose
+    tail it guesses wrong is returned half-read -- right up to the point where
+    something downstream acts on it.  There is no encoding that accounts for
+    this blob, so the item is reported unreadable instead, and an item that
+    cannot be read is one the archive will not touch.
+    """
+    tail = synthetic_tail(records=2, stats=(0xAB,), junk=b"\x00" * 64)
+    with pytest.raises(ParseError, match="reaches the end"):
+        parse_item(synthetic_item(tail=tail)[0])
+
+
+def _stored_blobs() -> list[bytes]:
+    """Every item blob this machine has: the demo stash and the registries.
+
+    Read only, and by URI, so a test can never write to one of them.
+    """
+    root = Path(__file__).resolve().parent.parent
+    blobs: list[bytes] = []
+    demo = root / "var" / "demo" / "sharedstash_v2.bin"
+    if demo.is_file():
+        blobs.extend(entry.blob for entry in read_stash_file(demo).entries)
+    for db in sorted((root / "var").glob("items*.db")):
+        connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            if connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='items'"
+            ).fetchone():
+                blobs.extend(row[0] for row in connection.execute("SELECT raw FROM items"))
+        finally:
+            connection.close()
+    return blobs
+
+
+def test_every_stored_item_consumes_its_own_blob():
+    """The measurement this scoring was built from, as a test.
+
+    Every item in the demo stash and in the player's own registries, re-read:
+    each parse must reach the end of its blob, or stop at its 16-byte
+    stackable trailer.  Anything else means the tail was guessed rather than
+    read -- and it is read from 72 of the player's registry rows and 154 of
+    the modded ones, so a change here is felt on real items, not on a
+    synthetic blob.
+    """
+    blobs = _stored_blobs()
+    if not blobs:
+        pytest.skip("nothing stored on this machine to re-read")
+
+    leftovers: dict[int, int] = {}
+    for blob in blobs:
+        reader = Reader(blob)
+        _read_item(reader, blob_start=0, blob_end=len(blob))
+        left = len(blob) - reader.pos
+        leftovers[left] = leftovers.get(left, 0) + 1
+
+    assert set(leftovers) <= {0, 16}, leftovers
+    # The only shortfall there is, is the stackable trailer: ten potions
+    # across everything this machine stores, at the last count.  A regression
+    # that put ordinary equipment on the slack would sail past that.
+    assert leftovers.get(16, 0) <= 16, leftovers
 
 
 def test_relocation_changes_only_the_location_bytes():

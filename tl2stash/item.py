@@ -216,27 +216,51 @@ class Item:
         )
 
 
-# -- tail strategies -----------------------------------------------------
+# -- the tail ------------------------------------------------------------
 #
-# FNIStash tries three encodings for the variable-length damage list at the
-# end of an item and keeps the first that parses through to the stats list.
-# The three are byte-incompatible, so a wrong guess corrupts everything after
-# it -- this is the single most fragile part of the format.
+# Which of these encodings an item's damage list uses is not stated anywhere in
+# the file, so it has to be worked out from the bytes -- and the candidates are
+# byte-incompatible, so a wrong guess corrupts everything after it.  This is
+# the single most fragile part of the format.
+#
+# FNIStash tries its candidates in order and keeps the first that does not
+# raise.  That is a guess that can *land* -- a misparse that happens to parse
+# is exactly the case that has no error to report -- and it is how a socketed
+# item whose tail this code got wrong became an item the tool could not take.
+#
+# An item in the stash is length-prefixed, so its blob is exactly its own
+# bytes: the encoding that reads to the end of the blob is the one that was
+# written.  So the candidates are scored by how much of the blob they consume
+# rather than by whether they survived, and one that stops short of the end by
+# more than the stackable trailer's length is not a reading of this item.
+#
+# The measurements behind the two candidates (every item in the demo stash and
+# every item in the player's vanilla registry, re-read under each):
+#
+#   * 12-byte records alone read **exactly** to the end of every piece of
+#     equipment -- 25 of 25 and 55 of 55 -- and of four Potions of Respec,
+#     which end 16 bytes short.
+#   * 12-byte records plus one u32 read exactly to the end of every spell and
+#     tome -- 13 of the player's own 72 items, 18% of the collection.
+#   * A 16-byte record reads nothing those two do not: at zero damage types it
+#     consumes the same bytes as the 12-byte one, and above zero it fails on
+#     everything.
+#   * A lone u32 with no records at all is the second candidate at zero
+#     damage types.
+
+#: How far short of the end a candidate may stop and still be believed.  The
+#: only shortfall in the measured data is the stackable trailer: four potions
+#: end exactly 16 bytes short.  Nothing else is near it, so the bound can be
+#: this tight.
+TAIL_SLACK = 16
 
 
-def _damage_innate(reader: Reader, n_types: int) -> list[AddedDamage]:
-    return [
-        AddedDamage(
-            from_effect=reader.u32(),
-            from_socket=reader.u32(),
-            from_enchant=reader.u32(),
-            damage_type=reader.u32(),
-        )
-        for _ in range(n_types)
-    ]
+def _damage_records(reader: Reader, n_types: int) -> list[AddedDamage]:
+    """The measured layout: ``n_types`` records of three u32s each.
 
-
-def _damage_nothing(reader: Reader, n_types: int) -> list[AddedDamage]:
+    FNIStash reads a fourth word per record and is wrong about it; the record
+    is three words long, and this is what fits the file.
+    """
     return [
         AddedDamage(
             from_effect=0,
@@ -248,13 +272,33 @@ def _damage_nothing(reader: Reader, n_types: int) -> list[AddedDamage]:
     ]
 
 
-def _damage_4bytes_zero(reader: Reader, n_types: int) -> list[AddedDamage]:
-    """No damage list at all; a single stray u32 instead."""
+def _records_then_u32(reader: Reader, n_types: int) -> list[AddedDamage]:
+    """The same records, then one further u32 -- the stackable trailer.
+
+    Measured on spells, tomes and potions: they carry one trailing word after
+    the damage records, present even when there are no records at all.
+    """
+    added = _damage_records(reader, n_types)
     reader.u32()
-    return []
+    return added
 
 
-_TAIL_STRATEGIES = (_damage_innate, _damage_nothing, _damage_4bytes_zero)
+#: The candidates, in the order they win a tie -- which is the order a blob
+#: that both of them read is read in.
+_TAIL_STRATEGIES = (
+    ("12-byte records", _damage_records),
+    ("12-byte records + one u32", _records_then_u32),
+)
+
+
+def _read_tail(reader: Reader, n_types: int, strategy) -> tuple:
+    """Read a whole tail with one candidate: damages, then the four lists."""
+    added = strategy(reader, n_types)
+    effects = _read_effect_lists(reader)
+    effects2 = _read_effect_lists(reader)
+    triggerables = reader.list_of(lambda: Triggerable(reader.torch_text()))
+    stats = reader.list_of(lambda: _read_stat(reader))
+    return added, effects, effects2, triggerables, stats
 
 
 def _read_effect(reader: Reader) -> Effect:
@@ -326,12 +370,16 @@ def _read_stat(reader: Reader) -> Stat:
     return Stat(guid=reader.u64(), data=reader.take(4))
 
 
-def _read_item(reader: Reader, blob_start: int, blob_end: int) -> Item:
+def _read_item(
+    reader: Reader, blob_start: int, blob_end: int, *, nested: bool = False
+) -> Item:
     """Read one item, recursing into socketed gems.
 
     ``blob_start``/``blob_end`` bound the *top level* blob so the raw bytes
-    can be reconstructed whole.  Gems are nested inline, so their extent is
-    wherever their own parse finishes.
+    can be reconstructed whole and so the tail can be checked against the
+    item's own length.  Gems are nested inline with no length of their own,
+    so ``nested`` says which of the two this is -- their extent is wherever
+    their own parse finishes.
     """
     start = reader.pos
 
@@ -373,7 +421,10 @@ def _read_item(reader: Reader, blob_start: int, blob_end: int) -> Item:
     quantity = reader.u32()
     num_sockets = reader.u32()
 
-    gems = [_read_item(reader, reader.pos, blob_end) for _ in range(reader.count())]
+    gems = [
+        _read_item(reader, reader.pos, blob_end, nested=True)
+        for _ in range(reader.count())
+    ]
 
     reader.take(4)                 # always zero
     max_damage = reader.u32()
@@ -383,56 +434,90 @@ def _read_item(reader: Reader, blob_start: int, blob_end: int) -> Item:
     num_damage_types = reader.u16()
 
     tail_start = reader.pos
-    last_error: ParseError | None = None
-    for strategy in _TAIL_STRATEGIES:
-        reader.pos = tail_start
-        try:
-            added = strategy(reader, num_damage_types)
-            effects = _read_effect_lists(reader)
-            effects2 = _read_effect_lists(reader)
-            triggerables = reader.list_of(lambda: Triggerable(reader.torch_text()))
-            stats = reader.list_of(lambda: _read_stat(reader))
-        except ParseError as exc:
-            last_error = exc
-            continue
+    if nested:
+        # A gem is the one case this cannot score: it is written inline with no
+        # length of its own, so there is no end for a candidate to reach --
+        # only the parent's structure after it says where it stopped.  The
+        # first candidate that parses is therefore kept, and the parent is what
+        # validates it: a gem read wrong ends in the wrong place, and the
+        # parent's own tail then cannot consume the parent's blob, so the item
+        # is reported unreadable instead of misread.
+        last_error: ParseError | None = None
+        for _, strategy in _TAIL_STRATEGIES:
+            reader.pos = tail_start
+            try:
+                tail = _read_tail(reader, num_damage_types, strategy)
+            except ParseError as exc:
+                last_error = exc
+                continue
+            break
+        else:
+            raise ParseError(
+                f"no tail encoding parsed for the gem in {name!r} at offset "
+                f"{start}: {last_error}"
+            )
+    else:
+        # Each candidate is read to its own end, so where the reader stands
+        # afterwards belongs to whichever one ran last -- the winner's end is
+        # remembered and restored before anything else is read.
+        attempts: list[tuple[int, int, tuple]] = []
+        problems: list[str] = []
+        for label, strategy in _TAIL_STRATEGIES:
+            reader.pos = tail_start
+            try:
+                tail = _read_tail(reader, num_damage_types, strategy)
+            except ParseError as exc:
+                problems.append(f"{label}: {exc}")
+                continue
+            attempts.append((blob_end - reader.pos, reader.pos, tail))
 
-        is_top_level = start == blob_start
-        raw = (
-            reader.data[blob_start:blob_end] if is_top_level
-            else reader.data[start : reader.pos]
-        )
-        rel_offset = location_offset - (blob_start if is_top_level else start)
-        if not is_top_level:
-            # A gem's location field is still absolute within the buffer.
-            rel_offset = location_offset - start
+        best = min(attempts, key=lambda attempt: attempt[0], default=None)
+        if best is None or best[0] > TAIL_SLACK:
+            detail = ", ".join(
+                [f"{left} bytes unread" for left, _, _ in attempts] + problems
+            )
+            raise ParseError(
+                f"no tail encoding reaches the end of item {name!r} at offset "
+                f"{start}: {detail or 'nothing parsed'}"
+            )
+        reader.pos = best[1]
+        tail = best[2]
 
-        return Item(
-            raw=raw,
-            location_offset=rel_offset,
-            guid=guid,
-            name=name,
-            prefix=prefix,
-            suffix=suffix,
-            random_id=random_id,
-            extra_records=extra_records,
-            num_enchants=num_enchants,
-            location=Location(slot_index=slot_index, container=container),
-            identified=identified,
-            level=level,
-            quantity=quantity,
-            num_sockets=num_sockets,
-            gems=gems,
-            max_damage=max_damage,
-            armor=armor,
-            added_damages=added,
-            effects=effects,
-            effects2=effects2,
-            triggerables=triggerables,
-            stats=stats,
-        )
+    added, effects, effects2, triggerables, stats = tail
 
-    raise ParseError(
-        f"no tail encoding parsed for item {name!r} at offset {start}: {last_error}"
+    # A gem's raw bytes are its own, ending where its parse stopped; a
+    # top-level item's are the whole blob, which is what the container
+    # length-prefixed.  Both carry their location field absolutely within the
+    # buffer, so the offset is measured from wherever they start.
+    raw = (
+        reader.data[blob_start:blob_end] if not nested
+        else reader.data[start : reader.pos]
+    )
+    rel_offset = location_offset - (blob_start if not nested else start)
+
+    return Item(
+        raw=raw,
+        location_offset=rel_offset,
+        guid=guid,
+        name=name,
+        prefix=prefix,
+        suffix=suffix,
+        random_id=random_id,
+        extra_records=extra_records,
+        num_enchants=num_enchants,
+        location=Location(slot_index=slot_index, container=container),
+        identified=identified,
+        level=level,
+        quantity=quantity,
+        num_sockets=num_sockets,
+        gems=gems,
+        max_damage=max_damage,
+        armor=armor,
+        added_damages=added,
+        effects=effects,
+        effects2=effects2,
+        triggerables=triggerables,
+        stats=stats,
     )
 
 
