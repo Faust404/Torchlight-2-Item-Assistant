@@ -46,6 +46,7 @@ from tl2stash.watcher import StashWatcher
 
 from .card import IconCache
 from .catalog import ICON_SIZE, Catalog
+from .compare import CompareOverlay
 from .filters import FilterBar
 from .models import (
     COLLECTION_COLUMNS,
@@ -139,6 +140,11 @@ class MainWindow(QMainWindow):
         #: bytes, so an entry can never go stale and nothing ever needs
         #: invalidating.
         self._details: dict[str, Card | str] = {}
+        #: Where each absorbed item was last seen in the game, by fingerprint.
+        #: Kept beside the memo because the comparison overlay draws one card
+        #: per *copy*, and a copy's place is its own -- the tile's footer is
+        #: the first copy's.
+        self._placed: dict[str, str] = {}
 
         self._build_ui()
         self._load_sources(source)
@@ -159,6 +165,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_filters())
         layout.addWidget(self._build_splitter(), stretch=1)
         self.setCentralWidget(central)
+
+        # The copies of one item, over everything -- built here rather than on
+        # demand so that it is a child of the window it covers and follows it
+        # in size.  Hidden until a card's button asks for it.
+        self.compare = CompareOverlay(self._icons(), central)
+        self.compare.put_back.connect(self._put_back_one)
+
         self.status = self.statusBar()
         self.status.showMessage("starting up")
 
@@ -244,6 +257,7 @@ class MainWindow(QMainWindow):
         self.collection_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
         self.grid = TileGrid(self._icons())
+        self.grid.compare.connect(self._compare_copies)
         right.addWidget(self.grid, stretch=1)
         splitter.addWidget(self.collection_group)
 
@@ -540,6 +554,52 @@ class MainWindow(QMainWindow):
             prints.update(row.members)
         return prints
 
+    # -- the copies ------------------------------------------------------
+
+    def _compare_copies(self, row: TileRow) -> None:
+        """Show every copy of one item side by side.
+
+        The tile draws one card for all of them -- that is what makes the
+        collection readable -- so this is the one place the copies are told
+        apart.  Each is built from its own bytes, which is where its own
+        numbers and its own fingerprint come from, and each is placed where it
+        was last seen rather than where the tile's first copy was.
+        """
+        prints = row.members or (row.fingerprint,)
+        self.compare.open_for(
+            [
+                TileRow(
+                    fingerprint=print_,
+                    name=row.name,
+                    members=(print_,),
+                    found=self._placed.get(print_, ""),
+                    card=self._card_for(print_),
+                )
+                for print_ in prints
+            ]
+        )
+
+    def _put_back_one(self, print_: str) -> None:
+        """Return exactly one copy to the game, from the comparison.
+
+        One fingerprint, not a group: the whole point of the overlay is that
+        the copies can be told apart, and a button that put back all of them
+        would be the collection's button again.
+        """
+        if self.service is None:
+            return
+        report = self.service.restore({print_})
+        self.watcher.accept()
+        self._refresh_views()
+
+        if report.restored:
+            # The card comes down whether or not the overlay stays: what it
+            # drew is a thing the tool no longer holds.
+            self.compare.drop(print_)
+            self._set_status("put back 1 · it returns to the game on its next load")
+        elif report.skipped:
+            self._set_status("that copy was already in the stash")
+
     # -- display ---------------------------------------------------------
 
     def _refresh_views(self) -> None:
@@ -561,11 +621,11 @@ class MainWindow(QMainWindow):
         # reader to work out which entries they were actually responsible for.
         rows = self.service.registry.rows(status=STATUS_ABSORBED)
         placements = self.service.registry.placements_for(self.service.source_key)
-        placed = {
+        self._placed = {
             print_: f"{container_label(p['container'], data)} · slot {p['slot']}"
             for print_, p in placements.items()
         }
-        fill_collection(self.collection_model, rows, placed, catalog)
+        fill_collection(self.collection_model, rows, self._placed, catalog)
 
         # The rail describes what is *here*, so its shape comes from the rows
         # and not from the filters -- which is what keeps a row from vanishing

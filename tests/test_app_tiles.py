@@ -27,7 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from app.card import ItemCard  # noqa: E402
 from app.tiles import (  # noqa: E402
@@ -125,13 +125,27 @@ def test_the_footer_says_where_the_item_was_found(qapp):
     assert texts(tile, "found") == ["Tab 1 · slot 5"]
 
 
-def test_the_footer_counts_the_copies_only_when_there_is_more_than_one(qapp):
-    """One copy is the ordinary case and says nothing; two is the case the
-    player has to be told about, because the card is both of them at once."""
-    assert texts(ItemTile(row(card())), "copies") == []
+def compare_label(tile) -> str:
+    """What a tile's button says, with Qt's escape for an ampersand undone.
+
+    One ``&`` in a button's text marks the letter after it as a keyboard
+    shortcut and is not drawn, so a literal one is written twice -- and the
+    doubled form is what ``text()`` reports.
+    """
+    button = tile.findChild(QPushButton, "compare")
+    assert button is not None, "the tile has no compare button"
+    return button.text().replace("&&", "&")
+
+
+def test_the_compare_button_counts_the_copies_only_when_there_is_more_than_one(qapp):
+    """One copy is the ordinary case and says nothing about how many; two is
+    the case the player has to be told about, because the card is both of them
+    at once and the overlay is where they come apart."""
+    one = ItemTile(row(card()))
+    assert compare_label(one) == "Compare & Transfer"
 
     two = ItemTile(row(card(), members=("fp-1", "fp-2")))
-    assert texts(two, "copies") == ["2 copies"]
+    assert compare_label(two) == "Compare & Transfer (2)"
     assert two.row.copies == 2
 
 
@@ -156,7 +170,7 @@ def test_a_row_that_changed_is_redrawn_in_place(qapp):
     tile.set_row(replace(held, found="Tab 2 · slot 9", members=("fp-1", "fp-2")))
 
     assert texts(tile, "found") == ["Tab 2 · slot 9"]
-    assert texts(tile, "copies") == ["2 copies"]
+    assert compare_label(tile) == "Compare & Transfer (2)"
     assert tile.is_selected()
 
 
@@ -338,4 +352,17 @@ def test_a_card_stands_for_every_copy_of_its_item(qapp):
     (chosen,) = grid.selected()
     assert chosen.members == ("fp0", "fp0b")
     assert chosen.copies == 2
-    assert texts(grid.tile(0), "copies") == ["2 copies"]
+    assert compare_label(grid.tile(0)) == "Compare & Transfer (2)"
+
+
+def test_the_tile_s_compare_button_hands_the_row_up(qapp):
+    """The tile does not open anything itself: it says which row was asked
+    for, and the grid passes that on the way it passes a click."""
+    grid = TileGrid()
+    wall(grid, [row(card(), members=("fp0", "fp0b"))])
+
+    asked = []
+    grid.compare.connect(asked.append)
+    grid.tile(0).compare.emit(grid.tile(0).row)
+
+    assert [r.members for r in asked] == [("fp0", "fp0b")]

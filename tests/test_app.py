@@ -396,6 +396,66 @@ def test_one_card_stands_for_every_copy_of_its_item(qapp, tmp_path, monkeypatch)
         win.close()
 
 
+def test_the_compare_button_shows_each_copy_and_puts_one_back(
+    qapp, tmp_path, monkeypatch
+):
+    """The copies, told apart, and one of them sent back on its own.
+
+    The tile draws both rolls of the unique as one card -- that is what makes
+    the collection readable -- so the overlay is the one place they come
+    apart, and putting back exactly one of them is the only reason the screen
+    exists.  The other copy stays in the tool and stays on the screen.
+    """
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    twins = [
+        parse_item(synthetic_item(name="Fortress of Fools", level=level)[0])
+        for level in (48, 50)
+    ]
+    write_stash_of(stash, twins)
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.count() == 1, "the two rolls were not one card"
+        assert win.grid.rows()[0].copies == 2
+
+        # The player's gesture: the button on the card.
+        win.grid.tile(0).findChild(QPushButton, "compare").click()
+
+        assert not win.compare.isHidden(), "the button did not open the overlay"
+        shown = win.compare.cards()
+        assert [copy.row.copies for copy in shown] == [1, 1], (
+            "a copy's card is the copy, not the group"
+        )
+        assert len({copy.row.fingerprint for copy in shown}) == 2
+        # Each is drawn from its own bytes: the two rolls have two levels.
+        assert len({copy.text() for copy in shown}) == 2, (
+            "both copies were drawn with the same card"
+        )
+
+        sent_back, kept = shown
+        sent_back.findChild(QPushButton, "putback").click()
+
+        assert win.stash_model.rowCount() == 1, "no copy went back to the game"
+        assert win.service.registry.absorbed_fingerprints() == {
+            kept.row.fingerprint
+        }, "the wrong copy left the tool"
+        assert win.grid.rows()[0].copies == 1, "the tile still counts the copy"
+        assert [copy.row.fingerprint for copy in win.compare.cards()] == [
+            kept.row.fingerprint
+        ]
+        assert not win.compare.isHidden(), "the overlay closed with a copy left"
+        assert "put back 1" in win.status.currentMessage()
+    finally:
+        win.close()
+
+
 # --------------------------------------------------------------------------
 # The stats
 # --------------------------------------------------------------------------
