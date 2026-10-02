@@ -456,6 +456,76 @@ def test_the_compare_button_shows_each_copy_and_puts_one_back(
         win.close()
 
 
+def test_the_one_copy_card_sends_its_item_back_without_the_overlay(
+    qapp, tmp_path, monkeypatch
+):
+    """One copy has nothing to be compared with, so its card offers the act
+    the overlay would have taken two clicks for: the button is the transfer.
+    """
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(stash, [parse_item(synthetic_item(name="Bashdrill")[0])])
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.rows()[0].copies == 1
+        assert win.grid.tile(0).findChild(QPushButton, "compare") is None
+        assert win.grid.tile(0).findChild(QPushButton, "transferall") is None
+
+        win.grid.tile(0).findChild(QPushButton, "transfer").click()
+
+        assert win.compare.isHidden(), "one copy opened the comparison"
+        assert win.stash_model.rowCount() == 1, "the item did not go back"
+        assert win.service.registry.absorbed_fingerprints() == set()
+        assert win.grid.count() == 0
+        assert "put back 1" in win.status.currentMessage()
+    finally:
+        win.close()
+
+
+def test_the_transfer_all_button_sends_every_copy_at_once(
+    qapp, tmp_path, monkeypatch
+):
+    """The card is the group, so the button that names the group puts back
+    what the card says it is -- both rolls, in one click, leaving nothing
+    behind on the wall."""
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            parse_item(synthetic_item(name="Fortress of Fools", level=level)[0])
+            for level in (48, 50)
+        ],
+    )
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.rows()[0].copies == 2
+
+        win.grid.tile(0).findChild(QPushButton, "transferall").click()
+
+        assert win.stash_model.rowCount() == 2, "not every copy went back"
+        assert win.service.registry.absorbed_fingerprints() == set()
+        assert win.grid.count() == 0
+        assert "put back 2" in win.status.currentMessage()
+        assert "2 of Fortress of Fools" in win.status.currentMessage()
+    finally:
+        win.close()
+
+
 # --------------------------------------------------------------------------
 # The stats
 # --------------------------------------------------------------------------

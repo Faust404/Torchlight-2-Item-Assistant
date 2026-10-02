@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
 
         self.grid = TileGrid(self._icons())
         self.grid.compare.connect(self._compare_copies)
+        self.grid.transfer.connect(self._transfer_row)
         right.addWidget(self.grid, stretch=1)
         splitter.addWidget(self.collection_group)
 
@@ -578,6 +579,33 @@ class MainWindow(QMainWindow):
                 for print_ in prints
             ]
         )
+
+    def _transfer_row(self, row: TileRow) -> None:
+        """Send a card's copies back, from a button on the card itself.
+
+        One copy is the button that says so and several are ``Transfer all
+        (N)``, and both land here because both are the same act: a card stands
+        for its fingerprints, and this puts back the ones it says it has.  The
+        comparison overlay is where they come apart -- there a card *is* one
+        copy -- and this is the collection's own way through, for a player who
+        already knows they want the lot gone.
+        """
+        if self.service is None:
+            return
+        prints = set(row.members or (row.fingerprint,))
+        if not prints:
+            return
+
+        report = self.service.restore(prints)
+        self.watcher.accept()
+        self._refresh_views()
+
+        if report.restored:
+            note = f"put back {len(report.restored)}{_copies_note([row])}"
+            tail = "it returns" if len(report.restored) == 1 else "they return"
+            self._set_status(f"{note} · {tail} to the game on its next load")
+        elif report.skipped:
+            self._set_status(f"{len(report.skipped)} were already in the stash")
 
     def _put_back_one(self, print_: str) -> None:
         """Return exactly one copy to the game, from the comparison.

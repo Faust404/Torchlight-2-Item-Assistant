@@ -19,7 +19,8 @@ gathers the copies before they reach here (see
 :func:`app.models.fill_collection`), and a row's ``members`` are every
 fingerprint it stands for.  That is what turns a selection of a tile back into
 the items it is made of -- the window restores exactly those -- and what the
-footer's ``Compare & Transfer`` button opens the copies with, one card apiece
+footer's buttons are drawn from: one copy sends itself back, and several
+offer the whole group and the way in to tell them apart
 (see :mod:`app.compare`).
 
 The wall and the card frame are shared with that overlay, which is why they
@@ -89,7 +90,7 @@ _STYLE = STYLE + f"""
 #tile[selected="true"] {{ border-color: {HEAD}; }}
 #tile #card {{ background: transparent; border: 0; border-radius: 0; }}
 #found {{ color: {DIM}; font-size: 11px; }}
-#compare {{
+#compare, #transfer, #transferall {{
     color: {LABEL};
     background: transparent;
     border: 1px solid {DIV};
@@ -97,7 +98,10 @@ _STYLE = STYLE + f"""
     padding: 2px 8px;
     font-size: 11px;
 }}
-#compare:hover {{ color: {HEAD}; border-color: {HEAD}; }}
+#compare:hover, #transfer:hover, #transferall:hover {{
+    color: {HEAD};
+    border-color: {HEAD};
+}}
 #empty {{ color: {DIM}; font-size: 13px; padding: 6px; }}
 """
 
@@ -331,6 +335,10 @@ class ItemTile(CardFrame):
     #: The ``Compare & Transfer`` button, with the row it stands for.  The
     #: grid passes it on; the window opens the overlay.
     compare = Signal(object)
+    #: A transfer button -- either of them -- with the row it stands for.  Both
+    #: buttons mean the same thing and differ only in what they say they are
+    #: sending: one copy, or every copy the card stands for.
+    transfer = Signal(object)
 
     def __init__(
         self, row: TileRow, icons: IconCache | None = None, parent=None
@@ -372,44 +380,86 @@ class ItemTile(CardFrame):
     # -- the pieces ------------------------------------------------------
 
     def _footer(self) -> QWidget:
+        """The card's own line: what it cannot say, and what can be done to it.
+
+        The left of the footer holds whatever the card above cannot say about
+        itself.  One copy of an item is the ordinary case, and what is worth
+        saying is where the game had it -- the tab and the slot, which the
+        collection table used to carry in a column.  More than one copy is the
+        case that needs acting on, and the count takes that corner instead:
+        putting all of them back is one decision about the group, and the
+        group is the thing the card is.
+
+        The right is the way into the copies, or -- when there is only one --
+        the plain way back to the game, because a comparison of one copy with
+        itself is not worth a screen.
+        """
         foot = QWidget()
         row = QHBoxLayout(foot)
         row.setContentsMargins(13, 6, 13, 7)
         row.setSpacing(8)
 
-        found = QLabel(self.row.found)
-        found.setObjectName("found")
-        row.addWidget(found)
+        if self.row.copies > 1:
+            row.addWidget(self._transfer_all_button())
+        else:
+            found = QLabel(self.row.found)
+            found.setObjectName("found")
+            row.addWidget(found)
         row.addStretch(1)
 
-        row.addWidget(self._compare_button())
+        row.addWidget(
+            self._compare_button() if self.row.copies > 1 else self._transfer_button()
+        )
         return foot
 
     def _compare_button(self) -> QPushButton:
-        """The way into the copies, which is where a count is worth having.
+        """The way into the copies: one card apiece, side by side.
 
-        The number is on the button and not beside it because it is what the
-        button *does*: one copy opens one card, two open two side by side and
-        the difference between the rolls is the whole reason to look.  A
-        single copy says no number at all, which is the reference tool's own
-        rule -- its ``Transfer all (5)`` counts and its ``Compare &
-        Transfer`` does not.
+        Only drawn when there is more than one copy, because that is the only
+        time there is anything to compare -- one copy is
+        :meth:`_transfer_button` instead.  The count is on the button across
+        from it rather than on this one, so the two cannot disagree.
 
         ``&&`` is Qt's escape for a literal ampersand: one ``&`` in a button's
         text marks the next letter as a keyboard shortcut, and would draw this
         as "Compare Transfer" with a T underlined.
         """
-        label = "Compare && Transfer"
-        if self.row.copies > 1:
-            label += f" ({self.row.copies})"
-
-        button = QPushButton(label)
+        button = QPushButton("Compare && Transfer")
         button.setObjectName("compare")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setToolTip(
             "Show every copy of this item side by side, and put one back."
         )
         button.clicked.connect(lambda: self.compare.emit(self.row))
+        return button
+
+    def _transfer_button(self) -> QPushButton:
+        """One copy, so the card's whole action is to send it back."""
+        button = QPushButton("Transfer to Stash")
+        button.setObjectName("transfer")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(
+            "Return this item to the shared stash, where the game will pick it\n"
+            "up on its next load."
+        )
+        button.clicked.connect(lambda: self.transfer.emit(self.row))
+        return button
+
+    def _transfer_all_button(self) -> QPushButton:
+        """Every copy at once, which is what a card with several of them is.
+
+        The number is the whole point of the button: the card looks like one
+        item and is two or more of them, so putting it back is putting back
+        that many things.
+        """
+        button = QPushButton(f"Transfer all ({self.row.copies})")
+        button.setObjectName("transferall")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(
+            f"Return all {self.row.copies} copies to the shared stash, where\n"
+            "the game will pick them up on its next load."
+        )
+        button.clicked.connect(lambda: self.transfer.emit(self.row))
         return button
 
     # -- the mouse -------------------------------------------------------
@@ -440,6 +490,9 @@ class TileGrid(CardWall):
 
     #: A tile's ``Compare & Transfer``, passed on with the tile's row.
     compare = Signal(object)
+    #: A tile's transfer button, passed on with the tile's row -- one copy or
+    #: all of them, the button says which and the row says what they are.
+    transfer = Signal(object)
 
     def __init__(self, icons: IconCache | None = None, parent=None) -> None:
         super().__init__(parent)
@@ -482,6 +535,7 @@ class TileGrid(CardWall):
                     lambda modifiers, t=tile: self._clicked(t, modifiers)
                 )
                 tile.compare.connect(self.compare)
+                tile.transfer.connect(self.transfer)
                 self._pool[row.fingerprint] = tile
             else:
                 tile.set_row(row)
