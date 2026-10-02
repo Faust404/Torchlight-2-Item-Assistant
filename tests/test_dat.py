@@ -337,11 +337,11 @@ needs_game = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def game():
-    # The game's own files and nothing else.  The augment table is the
-    # reference database's, which may or may not be on the machine running
-    # this -- and a test whose expected lines depend on that is a test that
-    # passes here and fails somewhere else.
-    return GameData.load(_INSTALL, augments={})
+    # The game's own files and nothing else.  The augment table and the
+    # class restrictions are the reference database's, which may or may not
+    # be on the machine running this -- and a test whose expected lines
+    # depend on that is a test that passes here and fails somewhere else.
+    return GameData.load(_INSTALL, augments={}, classes={})
 
 
 #: The same fixture under the name the other test modules import it by.

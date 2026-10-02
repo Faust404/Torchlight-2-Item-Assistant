@@ -562,10 +562,11 @@ def install(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def game(tmp_path):
-    # No reference database: the augment table is not game data and the tests
-    # here are about the game's, so a machine that happens to have a checkout
-    # of the reference beside this one must not change what they see.
-    return GameData.load(install(tmp_path), augments={})
+    # No reference database: neither the augment table nor the class
+    # restrictions are game data and the tests here are about the game's, so
+    # a machine that happens to have a checkout of the reference beside this
+    # one must not change what they see.
+    return GameData.load(install(tmp_path), augments={}, classes={})
 
 
 # --------------------------------------------------------------------------
@@ -1609,6 +1610,48 @@ def test_an_item_of_no_set_says_so_with_nothing(game):
 def test_an_item_the_data_does_not_know_has_no_requirements(game):
     assert game.requirements_for(item(guid=0xDEADBEEF)) is None
     assert game.requirements_for(item(guid=0)) is None
+
+
+# --------------------------------------------------------------------------
+# The class restriction, which is the reference database's and not the game's
+# --------------------------------------------------------------------------
+#
+# The DAT has no field for it at all -- the reference's own build script says
+# so -- which is why it is read out of the reference's file instead, beside the
+# augment tasks and keyed the same way: on the item file's own NAME, which the
+# guid in the save file is the way to.  Two different questions get asked of
+# it, and they are the two tests here: what class this item is restricted to,
+# and whether there are restrictions to filter by at all.
+
+
+def test_a_class_restriction_is_the_reference_s_word_for_the_item(tmp_path):
+    """``Test Plain`` is ``test plain`` in the table, whatever case either is
+    written in -- the archive does not fix its own spelling and neither does
+    the reference."""
+    game = GameData.load(
+        install(tmp_path), augments={}, classes={"test plain": "Embermage"}
+    )
+
+    assert game.has_classes is True
+    assert game.class_for(item(guid=0x7001)) == "Embermage"
+    # An item the table does not name is one no class is restricted to, which
+    # is not the same answer as the one below.
+    assert game.class_for(item(guid=0x7002)) is None
+    # And an item the *files* do not know cannot be looked up at all.
+    assert game.class_for(item(guid=0xDEAD)) is None
+
+
+def test_a_machine_with_no_reference_table_has_no_class_to_filter_by(game):
+    """``has_classes`` is a different question from what one item answers.
+
+    Every item answers ``None`` on a machine without the reference database,
+    and the advanced search's panel has to be able to tell "this item is for
+    every class" from "nothing here can say" -- because one of those is a
+    section with nothing ticked in it and the other is a section that could not
+    match anything whatever was ticked.
+    """
+    assert game.has_classes is False
+    assert game.class_for(item(guid=0x7001)) is None
 
 
 @needs_game

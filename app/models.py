@@ -8,6 +8,7 @@ better explanation of what this tool does than any amount of prose.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt
@@ -23,15 +24,24 @@ if TYPE_CHECKING:  # pragma: no cover
     from tl2stash.gamedata import GameData
 
 __all__ = [
+    "CLASSES",
+    "CLASS_ROLE",
     "COLLECTION_COLUMNS",
     "FINGERPRINT_ROLE",
     "GATE_ROLE",
     "LEVEL_ROLE",
     "MEMBERS_ROLE",
     "PLACE_ROLE",
+    "REQS_ROLE",
+    "REQ_MAX",
+    "REQ_REST",
+    "REQ_WORDS",
     "SET_ROLE",
+    "SOCKETS_ROLE",
+    "SOCKET_COUNTS",
     "STASH_COLUMNS",
     "TIER_ROLE",
+    "Advanced",
     "CollectionFilter",
     "container_label",
     "fill_collection",
@@ -115,6 +125,88 @@ SORT_KEYS = ("Tier", "Name", "Level", "Type")
 #: this ceiling costs.
 LEVEL_MAX = 110
 
+#: The top of a *stat* requirement, and so of the box that ends one of the
+#: four ranges in the advanced search.  Measured the same way: of the archive's
+#: 6,061 item files that trace back to a requirement table at all, the highest
+#: Strength, Dexterity or Focus any of them asks for is 486 and the highest
+#: Vitality is 242 -- so, as with :data:`LEVEL_MAX`, this is the round number
+#: above the game's own top, and a mod's item asking for more falls outside the
+#: default range.
+REQ_MAX = 500
+
+#: The four attributes an item can ask of a character, in the order the game
+#: lists them and the order the panel's four ranges are in.  The words are
+#: :data:`tl2stash.gamedata.REQUIREMENT_FIELDS`'s: Torchlight 2 renamed the
+#: first game's Magic to Focus and its Defense to Vitality, and these are the
+#: two names the tooltip shows and the two fields it reads.
+REQ_WORDS = ("Strength", "Dexterity", "Focus", "Vitality")
+
+#: A range that asks nothing: the pair every requirement range starts at, and
+#: so the four the facet rests in.  Spelled once because three places compare
+#: against it -- the default, the setter's "has it moved" test and the panel's
+#: reading of what is active -- and three spellings of one range is three
+#: ranges that can come apart.
+REQ_REST = ((0, REQ_MAX),) * len(REQ_WORDS)
+
+#: The socket counts the panel offers a chip for.  The reference's own five,
+#: and it says why: its corpus runs 1 to 5, so five chips cover every item that
+#: can hold a socket at all.  A set of exact counts rather than a range, which
+#: is what the game's own number is -- and zero is deliberately not among them,
+#: so a socket-less item cannot be asked for *by count* and is found by every
+#: search that says nothing about sockets.
+SOCKET_COUNTS = (1, 2, 3, 4, 5)
+
+#: The four classes, in the game's own order.  The words come from the
+#: reference database, which is the only place they exist: the game's data says
+#: a thing is armour, not that only an Embermage may wear it.  They are its
+#: whole vocabulary for the 767 records that name one, so a fifth would be a
+#: word nothing in the collection could match.
+CLASSES = ("Embermage", "Outlander", "Berserker", "Engineer")
+
+
+@dataclass(frozen=True)
+class Advanced:
+    """One narrowing, whole: everything the advanced search can set.
+
+    The panel edits a *draft* and commits it with Search, and this is what a
+    draft is -- one value rather than a dozen widgets read one at a time, so
+    that opening the panel is one copy in and pressing Search is one copy out,
+    and a half-applied search is not a thing that can happen on the way.
+
+    It carries the bar's own three facets as well as the panel's five, because
+    the panel *shows* them: a player who opens it with a word in the search box
+    and a rarity ticked must find both where they left them, and a control that
+    silently dropped them would be a search that shows something nobody asked
+    for.  The fields are all at rest in an ``Advanced()`` -- no word, no tick, a
+    range that covers everything -- so the resting state is this type's default
+    and not a second thing to write down.
+
+    ``places`` is the odd one in that it belongs to neither: the kinds are
+    ticked in the rail and the panel's Type grid is a second view of the same
+    ticks, so whoever assembles a draft fills it from the rail -- see
+    :meth:`app.filters.FilterBar.current`, which leaves it empty for exactly
+    that reason.
+    """
+
+    #: The search box's word.
+    text: str = ""
+    #: The rarity words ticked, which is what the chips carry.
+    tiers: frozenset[str] = frozenset()
+    #: The *player* level range: the level an item asks of the character.
+    low: int = 0
+    high: int = LEVEL_MAX
+    #: The *item* level range: how good the item itself is.
+    item_low: int = 0
+    item_high: int = LEVEL_MAX
+    #: Exact socket counts, empty for any number of them.
+    sockets: frozenset[int] = frozenset()
+    #: The four attribute ranges, in :data:`REQ_WORDS` order.
+    reqs: tuple[tuple[int, int], ...] = REQ_REST
+    #: The class words ticked, empty for every class.
+    classes: frozenset[str] = frozenset()
+    #: The kinds ticked in the rail, which the Type grid mirrors.
+    places: frozenset[Place] = frozenset()
+
 #: What a row carries besides what it shows.
 #:
 #: The fingerprint is what a row *is* -- it is how a selection is turned back
@@ -159,6 +251,15 @@ LEVEL_MAX = 110
 #: control: it is what a click on a card's set name puts there, and the name
 #: is the same string the card draws because both come from the item's own
 #: appearance -- see :meth:`CollectionFilter.show_set`.
+#:
+#: The last three are the advanced search's.  ``REQS_ROLE`` holds the item's
+#: four attribute requirements as ``(name, value)`` pairs -- only the ones the
+#: item states, so an item that asks for nothing carries an empty tuple and the
+#: filter reads a missing attribute as the zero it is.  ``SOCKETS_ROLE`` holds
+#: the socket count the item has, and ``CLASS_ROLE`` the one class that may use
+#: it or the empty string for the many that restrict nothing.  None of the
+#: three is drawn: they are on the row because a facet has to read something,
+#: and they are read off the entry rather than worked out here.
 FINGERPRINT_ROLE = Qt.ItemDataRole.UserRole
 TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
 PLACE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
@@ -166,6 +267,9 @@ LEVEL_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 3)
 MEMBERS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 4)
 SET_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 5)
 GATE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 6)
+REQS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 7)
+SOCKETS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 8)
+CLASS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 9)
 
 
 def container_label(container: int, data: "GameData | None" = None) -> str:
@@ -220,6 +324,9 @@ def _describe(cell: QStandardItem, entry: Entry, level: int) -> None:
     cell.setData(level, LEVEL_ROLE)
     cell.setData(level if entry.gate is None else entry.gate, GATE_ROLE)
     cell.setData(entry.set_name or "", SET_ROLE)
+    cell.setData(tuple(entry.stats), REQS_ROLE)
+    cell.setData(entry.sockets, SOCKETS_ROLE)
+    cell.setData(entry.cls or "", CLASS_ROLE)
     cell.setForeground(QBrush(QColor(TIER_INK[entry.tier])))
     if entry.icon is not None:
         cell.setIcon(entry.icon)
@@ -359,9 +466,15 @@ def fill_collection(
 class CollectionFilter(QSortFilterProxyModel):
     """The collection, narrowed by what the controls above it have ticked.
 
-    Five things narrow it and they AND: the search box, the kinds ticked in
-    the rail, the rarity chips, a range of player levels, and one set -- which
-    is the odd one of the five, because it is arrived at by clicking a *name on
+    Nine things narrow it and they AND, in two families.  Four are ones the
+    window has a control for within reach -- the search box, the kinds ticked
+    in the rail, the rarity chips, a range of player levels.  Four more have
+    controls only in the advanced search's panel, and are set from it in one
+    go: a range of *item* levels, a set of socket counts, four attribute
+    ranges, and the classes an item may be restricted to.  The two level
+    ranges are different numbers and the reason they are two controls: what an
+    item asks of the character is not what it is.  The ninth is one set, and it
+    is the odd one of the lot, because it is arrived at by clicking a *name on
     a card* rather than by a control, and because it is a name rather than a
     tick: a set is not a property an item may have several of.  A facet with
     nothing ticked is not a filter at all, so a window whose controls have just
@@ -395,6 +508,17 @@ class CollectionFilter(QSortFilterProxyModel):
         #: whole of it, so the default is a range and not a special case.
         self._low: int = 0
         self._high: int = LEVEL_MAX
+        #: The panel's four, all resting: an item level range, the socket
+        #: counts ticked, the four attribute ranges in :data:`REQ_WORDS`
+        #: order, and the class words.  Resting means the whole range for the
+        #: first and the fourth, nothing ticked for the second, and
+        #: :data:`REQ_REST` for the third -- every one of which is a range or a
+        #: set that lets everything through rather than a flag saying "off".
+        self._item_low: int = 0
+        self._item_high: int = LEVEL_MAX
+        self._sockets: set[int] = set()
+        self._reqs: tuple[tuple[int, int], ...] = REQ_REST
+        self._classes: set[str] = set()
         #: The one set being shown, by the name the cards draw, or empty for
         #: all of them.
         self._set: str = ""
@@ -451,6 +575,66 @@ class CollectionFilter(QSortFilterProxyModel):
             self._low, self._high = low, high
             self._refilter()
 
+    # -- the panel's four -------------------------------------------------
+
+    def set_item_levels(self, low: int, high: int) -> None:
+        """Both bounds included, and both of them *item* levels.
+
+        The other half of the pair above and a different question: a level 45
+        unique that asks a character to be 51 is level 45, and a player sorting
+        out what to keep is asking about the item rather than about the
+        character.  Both ranges exist because both questions are asked, and
+        neither number can answer the other.
+        """
+        if (low, high) != (self._item_low, self._item_high):
+            self._item_low, self._item_high = low, high
+            self._refilter()
+
+    def set_sockets(self, counts) -> None:
+        """Keep only the items with exactly one of these socket counts.
+
+        Exact counts rather than a range, because that is what the number on an
+        item is -- a thing either has three sockets or does not.  Nothing
+        ticked is every count, and one is deliberately not a member of the set
+        a chip can put here: a socket-less item is asked for by saying nothing
+        about sockets, and there is no chip that would hide it by accident.
+        """
+        wanted = {int(count) for count in counts}
+        if wanted != self._sockets:
+            self._sockets = wanted
+            self._refilter()
+
+    def set_requirements(self, ranges) -> None:
+        """Keep only the items whose own attribute numbers fall in these ranges.
+
+        ``ranges`` is four ``(low, high)`` pairs in :data:`REQ_WORDS` order, and
+        the item's number has to sit *inside* one to pass it.  An item that
+        asks for no strength requires none of it -- the zero the reference's
+        own reader gives it -- so a floor excludes such an item and a ceiling
+        does not: an item that requires nothing requires nothing *of* level 20
+        either, so it is not one of the items a floor of 20 is looking for.
+        Both bounds being zero and :data:`REQ_MAX` is the range that asks for
+        nothing, which is where these rest.
+        """
+        wanted = tuple((int(low), int(high)) for low, high in ranges)
+        if wanted != self._reqs:
+            self._reqs = wanted
+            self._refilter()
+
+    def set_classes(self, words) -> None:
+        """Keep only the items one of these classes may use.
+
+        An item that names no class passes whatever is ticked, because it is
+        one every class may use -- the reference's own rule, and the only one
+        that does not turn a filter over 767 of its 6,173 records into a filter
+        over the whole collection.  Nothing ticked is every class, as with the
+        other sets.
+        """
+        wanted = set(words)
+        if wanted != self._classes:
+            self._classes = wanted
+            self._refilter()
+
     def set_sort(self, key: str, backwards: bool = False) -> None:
         """Order the rows by one of :data:`SORT_KEYS`, or read it the other way.
 
@@ -502,6 +686,13 @@ class CollectionFilter(QSortFilterProxyModel):
         set, and the numbers beside the rail are about the list in front of
         the player.  The three ticked facets *are* ignored, because they are
         the ones a count is meant to talk someone out of ticking.
+
+        The advanced search's four are ignored by nothing, and the reason is
+        the same one seen from the other side: there is no number anywhere that
+        is a count of them, so there is nothing for a count to talk anyone out
+        of ticking.  They are applied to every row this walks, which is what
+        makes the numbers beside the rail the numbers of the list in front of
+        the player even while a panel nobody can see is narrowing it.
         """
         tally: dict = {}
         for row in range(self.sourceModel().rowCount()):
@@ -550,6 +741,40 @@ class CollectionFilter(QSortFilterProxyModel):
             # item nobody has to grow into is one every range includes.
             gate = self._value(parent, row, GATE_ROLE)
             if gate and (gate < self._low or gate > self._high):
+                return False
+
+        if ignoring != LEVEL_ROLE:
+            # The item's own level, where the gate above is the player's.  No
+            # ``or 0`` here either, and for the same reason seen from the other
+            # side: a level is a level, so the zero a socketable carries is a
+            # number inside any range that starts at zero.
+            level = self._value(parent, row, LEVEL_ROLE)
+            if level is not None and (level < self._item_low or level > self._item_high):
+                return False
+
+        if self._sockets:
+            # Exact counts, so a socket-less item falls out of every setting --
+            # which is the point of the chips starting at one.
+            if self._value(parent, row, SOCKETS_ROLE) not in self._sockets:
+                return False
+
+        if self._classes:
+            # An item naming no class is one every class may use, so it passes
+            # whatever is ticked; only a *different* restriction turns it away.
+            word = self._value(parent, row, CLASS_ROLE)
+            if word and word not in self._classes:
+                return False
+
+        # The whole of the range at rest is still the range, as with the two
+        # level pairs: nothing here is skipped when it has not been moved, and
+        # the price is :data:`REQ_MAX`'s -- a mod's item asking for more than
+        # 500 is outside a range nobody narrowed.
+        stated = dict(self._value(parent, row, REQS_ROLE) or ())
+        for word, (low, high) in zip(REQ_WORDS, self._reqs):
+            # A missing attribute is the zero it is, so a floor of 20 excludes
+            # an item requiring nothing and a ceiling of 20 does not -- the
+            # reference's own reading of the same four numbers.
+            if not low <= stated.get(word, 0) <= high:
                 return False
 
         return True

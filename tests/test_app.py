@@ -26,6 +26,7 @@ pytest.importorskip("PySide6", reason="PySide6 is not installed")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QCheckBox,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -526,6 +527,90 @@ def test_a_search_that_matches_nothing_says_so(window, monkeypatch):
     empty = window.grid.findChild(QLabel, "empty")
     assert not empty.isHidden()
     assert "matches these filters" in empty.text()
+
+
+def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
+    qapp, tmp_path, game_install, monkeypatch
+):
+    """The wiring, at the window.
+
+    The panel hands over one value; the window is what writes it onto the two
+    places a search lives.  Three of the nine facets have controls in the row --
+    the name, the rarity, the player level -- and the rest are the panel's: the
+    item level range and the sockets behind the button, and the *kinds*, which
+    are ticked in the rail.  So this walks one of each: a chip the row also has,
+    a facet with no control in the window at all, and the grid that is the
+    rail's second view.
+
+    Two swords of the fixture's at two levels and two rarities, so that both the
+    item level range and the rarity chip have something to separate, and both
+    kinds the collection holds are ticked in the grid -- which is what says the
+    rail's ticks came from the panel rather than from a click on the rail.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            parse_item(synthetic_item(name="Longblade", guid=0x7001, level=40)[0]),
+            parse_item(synthetic_item(name="Emberblade", guid=0x7002, level=20)[0]),
+        ],
+    )
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.count() == 2, "the fixture did not stock the tool"
+        assert win.sidebar.places() == set(), "something was ticked to start with"
+
+        win.filters.advanced.click()
+        assert not win.advanced.isHidden(), "the button did not open the panel"
+
+        panel = win.advanced
+        panel.name.setText("blade")
+        panel.rarity_chips["Unique"].setChecked(True)
+        panel.item_low.setValue(10)
+        for box in panel.types.findChildren(QCheckBox):
+            box.setChecked(True)
+        kinds = panel.types.ticks()
+        assert kinds, "the grid drew no kind to tick"
+
+        panel.search_button.click()
+
+        assert panel.isHidden(), "Search left the panel up"
+        assert win.filters.search_text() == "blade"
+        assert win.filters.tiers() == {"Unique"}
+        assert win.filters.item_level_range() == (10, LEVEL_MAX)
+        assert win.sidebar.places() == kinds, "the kinds did not reach the rail"
+        assert [row.name for row in win.grid.rows()] == ["Emberblade"]
+
+        # The second pass, on a facet with no control anywhere in the window:
+        # the panel opens on what is in force, and a socket count neither sword
+        # has empties the wall.
+        win.filters.advanced.click()
+        win.advanced.socket_chips[2].setChecked(True)
+        win.advanced.search_button.click()
+
+        assert win.filters.sockets() == {2}
+        assert win.filters.advanced_active() is True
+        assert win.grid.count() == 0, "the socket count did not reach the proxy"
+        assert "advanced search is narrowing" in win.status.currentMessage()
+
+        # And `Clear filters` is the whole of it: the bar's controls, the four
+        # behind the button, and the kinds, which are the rail's.
+        win.filters.clear_button.click()
+
+        assert win.filters.advanced_active() is False
+        assert win.filters.search_text() == ""
+        assert win.filters.item_level_range() == (0, LEVEL_MAX)
+        assert win.sidebar.places() == set(), "the rail kept a kind ticked"
+        assert win.grid.count() == 2
+    finally:
+        win.close()
 
 
 def test_the_wall_says_what_to_do_when_the_tool_is_empty(window):

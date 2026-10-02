@@ -59,7 +59,7 @@ ICON_SIZE = 24
 
 @dataclass(frozen=True)
 class Facts:
-    """An item's instance side: the four fields anything here reads.
+    """An item's instance side: the five fields anything here reads.
 
     Two different things in this tool can answer for an item, and they do not
     share an interface.  A freshly selected item is a parsed
@@ -75,17 +75,25 @@ class Facts:
     integer; the save file's own field is the integer, and that is what the
     data files are indexed by -- and it is all
     :meth:`~tl2stash.gamedata.GameData.requirements_for` needs, which is why
-    that one is asked of these four fields rather than of a whole item.
+    that one is asked of these fields rather than of a whole item.
+
+    ``num_sockets`` is as much an instance's fact as the prefix is: how many
+    sockets an item *can* hold is in its data file, and how many the one in
+    hand has is on the item.  Zero for everything that takes none, which is
+    most of the collection -- and unlike the four above it is read for the
+    *filter* rather than for the row, since the game's list has a column for it
+    and the collection's cards have no line at all.
     """
 
     guid: int
     prefix: str
     suffix: str
     num_enchants: int
+    num_sockets: int = 0
 
     @classmethod
     def of(cls, item: object) -> "Facts":
-        """Read the four fields off a parsed item, or off a registry row."""
+        """Read the five fields off a parsed item, or off a registry row."""
 
         def read(name: str):
             try:
@@ -100,6 +108,7 @@ class Facts:
             prefix=read("prefix") or "",
             suffix=read("suffix") or "",
             num_enchants=read("num_enchants") or 0,
+            num_sockets=read("num_sockets") or 0,
         )
 
 
@@ -133,6 +142,22 @@ class Entry:
     card's set ladder names the set in the same words and the click on that
     name has to reach a row: the one string is what makes the two the same
     question, see :data:`app.models.SET_ROLE`.
+
+    ``sockets``, ``stats`` and ``cls`` are what the advanced search reads, and
+    none of them is drawn anywhere: the number of sockets the item has, the
+    attributes it asks of a character as ``(name, value)`` pairs in the game's
+    own order, and the one class that may use it.  They are on the entry rather
+    than worked out at the row because they all come down the same two lookups
+    the tier and the kind already come down -- the item's file, and the
+    reference database's -- and doing them twice per row per poll is exactly
+    what this class exists to stop.
+
+    ``cls`` is ``None`` for an item no class is restricted to, which is most of
+    them, *and* for every item on a machine with no reference database: an item
+    naming no class is one every class may use, so the filter that reads it
+    passes such an item whatever is ticked.  See
+    :meth:`~tl2stash.gamedata.GameData.has_classes` for the other question --
+    whether there are restrictions to filter *by* at all.
     """
 
     tier: str
@@ -143,6 +168,9 @@ class Entry:
     icon: QIcon | None
     gate: int | None
     set_name: str | None
+    sockets: int
+    stats: tuple[tuple[str, int], ...]
+    cls: str | None
 
     @property
     def place(self) -> Place:
@@ -191,6 +219,9 @@ class Catalog:
                 icon=None,
                 gate=None,
                 set_name=None,
+                sockets=facts.num_sockets,
+                stats=(),
+                cls=None,
             )
 
         # What the item gates on, which the level filter needs and the row
@@ -214,6 +245,9 @@ class Catalog:
                 icon=self._tile(TIER_NONE, None, ""),
                 gate=None if requires is None else requires.level,
                 set_name=None,
+                sockets=facts.num_sockets,
+                stats=() if requires is None else requires.stats,
+                cls=self.game.class_for(facts),
             )
 
         word = display_tier(appearance.tier, facts)
@@ -227,6 +261,9 @@ class Catalog:
             icon=self._tile(word, appearance.icon, appearance.type_name),
             gate=None if requires is None else requires.level,
             set_name=appearance.set_name,
+            sockets=facts.num_sockets,
+            stats=() if requires is None else requires.stats,
+            cls=self.game.class_for(facts),
         )
 
     def _tile(self, tier_word: str, icon_name: str | None, kind: str) -> QIcon:

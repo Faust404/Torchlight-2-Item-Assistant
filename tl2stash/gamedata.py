@@ -789,6 +789,7 @@ class GameData:
         "_armor_curve",
         "_augments",
         "_by_name",
+        "_classes",
         "_display_names",
         "_effects",
         "_effect_curves",
@@ -823,6 +824,7 @@ class GameData:
         socket_targets: dict[str, str],
         require_curves: dict[str, dict[int, float]] | None = None,
         augments: dict[str, tuple[Augment, ...]] | None = None,
+        classes: dict[str, str] | None = None,
     ) -> None:
         self.install = install
         self._by_name = by_name
@@ -843,6 +845,7 @@ class GameData:
         self._socket_targets = socket_targets
         self._require_curves = require_curves or {}
         self._augments = augments or {}
+        self._classes = classes or {}
         self._stash_tabs: list[int] | None = None
 
     def __repr__(self) -> str:
@@ -858,6 +861,7 @@ class GameData:
         cls,
         install: str | Path,
         augments: dict[str, tuple[Augment, ...]] | None = None,
+        classes: dict[str, str] | None = None,
     ) -> "GameData":
         """Read every file in :data:`WANTED` out of the archive.
 
@@ -866,6 +870,12 @@ class GameData:
         the archive -- see :mod:`tl2stash.augments`.  ``None`` looks for it in
         the usual places; ``{}`` says there is none, which is what a caller
         that wants a card drawn from the game's own files alone passes.
+
+        ``classes`` is the second thing its file holds that the archive does
+        not: the one class that may use an item, on the 767 items that have
+        one.  The same bargain -- ``None`` looks, ``{}`` says there is none --
+        and the same consequence when there is none: the tool is smaller and
+        nothing else changes.
 
         Raises whatever :class:`~tl2stash.pak.PakError` the archive gives if
         it cannot be opened at all; individual files that will not parse are
@@ -1115,6 +1125,7 @@ class GameData:
             socket_targets,
             require_curves,
             _augments.load(install) if augments is None else augments,
+            _augments.load_classes(install) if classes is None else classes,
         )
 
     # -- looking things up ------------------------------------------------
@@ -1567,6 +1578,37 @@ class GameData:
         if data is None:
             return ()
         return self._augments.get((data.root.text(VAR_NAME) or "").lower(), ())
+
+    def class_for(self, item) -> str | None:
+        """The one class that may use the item, or ``None`` for the rest.
+
+        Keyed the way :meth:`augment_for` is, and for the same reason: the
+        table is the reference database's and files an item under its unit
+        name, which the file reached through the item's guid states.
+
+        ``None`` is the ordinary answer and not a failure -- 5,406 of the
+        reference's 6,173 records name no class, and a machine with no
+        reference database names none at all.  An item with no class is one
+        every class may use, so ``None`` never means "no one may".
+        """
+        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
+        if data is None:
+            return None
+        return self._classes.get((data.root.text(VAR_NAME) or "").lower())
+
+    @property
+    def has_classes(self) -> bool:
+        """Whether there is a class table at all, which is a different question.
+
+        :meth:`class_for` answers ``None`` for two different things -- an item
+        no class is restricted to, and a machine with no reference database --
+        and a caller that offers a *class filter* has to tell them apart: the
+        first is most of the collection, and the second means the filter would
+        match nothing whatever was ticked.  So this says whether the file was
+        found and read, and the panel that offers the four classes disables
+        itself and says why when it was not.
+        """
+        return bool(self._classes)
 
     def appearance_for(self, item) -> Appearance | None:
         """What an item is, and what it looks like: its tier, kind and icon.

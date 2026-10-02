@@ -59,7 +59,7 @@ needs_game = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def game():
     # The game's own files and nothing else; see ``tests/test_dat.py``.
-    return GameData.load(_INSTALL, augments={})
+    return GameData.load(_INSTALL, augments={}, classes={})
 
 
 def word(value: float) -> int:

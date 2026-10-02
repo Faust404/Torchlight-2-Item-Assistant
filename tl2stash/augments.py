@@ -15,14 +15,20 @@ outside it, and this reads that place.
 
 **Where the data comes from.**  ``items.json`` is the published dataset of
 `torchlight2-db <https://github.com/majorpain/torchlight2_db>`_, which is
-GPL-3.0.  Nothing of its code or its art is used here -- only two fields of its
+GPL-3.0.  Nothing of its code or its art is used here -- only three fields of its
 data file, read at runtime and never copied into this repository:
 
 * ``id``    -- the item's unit name, which is the item file's own ``NAME``
                field lower-cased (``hammer_u02`` is
                ``MEDIA/UNITS/ITEMS/HAMMERS/HAMMER_U02.DAT``);
 * ``aug``   -- a list of blocks, each a ``task`` string and the ``fx`` lines
-               that finishing it grants.
+               that finishing it grants;
+* ``cls``   -- the one class that may use the item, on the 767 records that
+               have one.  The game's own files have no field for it at all --
+               its data says a thing is armour, not that only an Embermage may
+               wear it -- so this is a fact about the item that exists in
+               exactly one place, and the tool reads it there or not at all
+               (:func:`read_classes`).
 
 Its own note on where *that* came from is worth keeping: the block was scraped
 out of the game's tooltip, whose boundary is the ``Augmented Weapon:`` header
@@ -45,7 +51,13 @@ from pathlib import Path
 
 from .card import Augment
 
-__all__ = ["find_items_json", "load", "read"]
+__all__ = [
+    "find_items_json",
+    "load",
+    "load_classes",
+    "read",
+    "read_classes",
+]
 
 #: The environment variable that says where the reference's item file is, for
 #: a copy that is not where this module would look.  The same bargain
@@ -130,5 +142,57 @@ def load(install: str | Path | None = None) -> dict[str, tuple[Augment, ...]]:
         return {}
     try:
         return read(path)
+    except (OSError, ValueError):
+        return {}
+
+
+def read_classes(path: str | Path) -> dict[str, str]:
+    """The class restrictions in a reference ``items.json``, by unit name.
+
+    The other field this tool takes from the reference's file, and the one fact
+    in it that the game's own data does not have: no item file states which
+    class may use the item, so a class filter that did not read this would be a
+    filter over nothing.  The reference's note on its own 767 records is that
+    they come from TIDBI, and the four words they are written in are the game's
+    own four classes.
+
+    Records without one are passed over, and that is most of them: a
+    restriction is the exception, and an item with none is one every class may
+    use.  Keys are lower-cased like :func:`read`'s, because the field they are
+    matched against is a unit name and the archive's own spelling of one is not
+    fixed.
+
+    Raises :class:`OSError` or :class:`ValueError` for a file that is not
+    readable as the reference's -- :func:`load_classes` is the caller that does
+    not care, and this is the one that says so.
+    """
+    path = Path(path)
+    records = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(records, list):
+        raise ValueError(f"{path}: expected a list of items")
+
+    out: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = str(record.get("id") or "").lower()
+        word = str(record.get("cls") or "").strip()
+        if name and word:
+            out[name] = word
+    return out
+
+
+def load_classes(install: str | Path | None = None) -> dict[str, str]:
+    """The restrictions, from wherever the file is; empty if it is nowhere.
+
+    Empty rather than a failure, for the reason :func:`load` is: a machine
+    without the reference database gets the tool without a class filter, which
+    is a smaller tool and not a broken one.
+    """
+    path = find_items_json(install)
+    if path is None:
+        return {}
+    try:
+        return read_classes(path)
     except (OSError, ValueError):
         return {}

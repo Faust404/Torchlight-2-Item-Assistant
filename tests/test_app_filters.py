@@ -53,17 +53,23 @@ from app.filters import INSET, WASH, FilterBar  # noqa: E402
 from app.sidebar import COUNT_PX  # noqa: E402
 from app.theme import BODY_PX, CHALK, FIELD, RAIL_PX, SHELL, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
+    CLASS_ROLE,
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
     GATE_ROLE,
     LEVEL_MAX,
     LEVEL_ROLE,
     PLACE_ROLE,
+    REQS_ROLE,
+    REQ_MAX,
+    REQ_REST,
     SET_ROLE,
+    SOCKETS_ROLE,
     SORT_KEYS,
     TIER_ROLE,
     TIER_CHIPS,
     TIER_LADDER,
+    Advanced,
     CollectionFilter,
     fill_collection,
     new_model,
@@ -526,6 +532,178 @@ def test_the_search_box_narrows_the_counts(qapp):
 
 
 # --------------------------------------------------------------------------
+# The four the advanced search sets, which have no control in the row
+# --------------------------------------------------------------------------
+
+#: Four items and the six things the panel's facets read about them: the item's
+#: own level, the player level the game gates it on, its sockets, what it asks
+#: of a character, the one class that may use it, and its rarity.
+#:
+#: Between them they are every case the four rules have to tell apart -- a
+#: socketed item and a socket-less one, a requirement and none, a class
+#: restriction and none -- and one more the rules read from an odd side, which
+#: is Fish: a socketable at level 0 that asks for nothing at all.
+#:
+#: Built here rather than by :func:`_fill`, because these six have to be
+#: *stated*: the collection that function builds carries a kind, a rarity, a
+#: set and a level and nothing else, which is exactly the shape a filter that
+#: read none of the four would also agree with.
+FACETED = [
+    # name, level, gate, sockets, stats, class, tier
+    ("Sword", 45, 51, 2, (("Strength", 60), ("Dexterity", 10)), "Embermage", "Unique"),
+    ("Boots", 12, 12, 0, (), "", "Rare"),
+    ("Axe", 60, 55, 1, (("Focus", 200),), "Outlander", "Unique"),
+    ("Fish", 0, 0, 0, (("Strength", 5),), "", ""),
+]
+
+
+def _faceted() -> CollectionFilter:
+    """A proxy over those four, wired the way the window wires it."""
+    model = new_model(COLLECTION_COLUMNS)
+    for name, level, gate, sockets, stats, cls, tier in FACETED:
+        cell = QStandardItem(name)
+        cell.setData(name, FINGERPRINT_ROLE)
+        cell.setData(tier, TIER_ROLE)
+        cell.setData(level, LEVEL_ROLE)
+        cell.setData(gate, GATE_ROLE)
+        cell.setData(sockets, SOCKETS_ROLE)
+        cell.setData(stats, REQS_ROLE)
+        cell.setData(cls, CLASS_ROLE)
+        model.appendRow(
+            [cell, QStandardItem(str(gate)), QStandardItem("0"), QStandardItem("")]
+        )
+
+    proxy = CollectionFilter()
+    proxy.setSourceModel(model)
+    return proxy
+
+
+def _strength(pair) -> tuple[tuple[int, int], ...]:
+    """The four attribute ranges with the first one moved and the rest at rest."""
+    return (pair, *REQ_REST[1:])
+
+
+def test_the_item_level_range_is_the_item_s_own_level(qapp):
+    """Two ranges over two numbers, one row apart in the same section.
+
+    The item level is how good the thing itself is; the player level is what
+    the game makes a character grow into before it may be used.  A level 60 axe
+    that asks for 55 is the pair that tells them apart -- and the same numbers
+    set on the *other* range leave nothing at all, because no item here is
+    gated on 60.
+    """
+    proxy = _faceted()
+
+    proxy.set_item_levels(60, 60)
+    assert _listed(proxy) == ["Axe"]
+
+    proxy.set_level_range(60, 60)
+    assert _listed(proxy) == []
+
+
+def test_a_level_of_zero_is_a_number_inside_the_range(qapp):
+    """The socketables carry it, which is why the range starts at nothing.
+
+    So a resting range is the whole of itself rather than a question nobody
+    asked, and the item at zero is one a range starting at zero shows -- the
+    same reading the gate is given, seen from the other side.
+    """
+    proxy = _faceted()
+
+    proxy.set_item_levels(0, LEVEL_MAX)
+    assert _listed(proxy) == ["Axe", "Boots", "Fish", "Sword"]
+
+
+def test_a_socket_count_is_exact_and_not_a_floor(qapp):
+    """The chips are one to five and each means that many.
+
+    A two-socket sword is not shown by a tick on one, and the item with no
+    sockets at all is shown by none of them -- which is what starting the chips
+    at one leaves out on purpose, and the reason no chip reading "any" is
+    needed beside them.
+    """
+    proxy = _faceted()
+
+    proxy.set_sockets({2})
+    assert _listed(proxy) == ["Sword"]
+
+    proxy.set_sockets({1, 2})
+    assert _listed(proxy) == ["Axe", "Sword"]
+
+    proxy.set_sockets(set())
+    assert _listed(proxy) == ["Axe", "Boots", "Fish", "Sword"], "no tick is any number"
+
+
+def test_a_requirement_is_a_number_that_has_to_fit_inside_the_range(qapp):
+    """An item that requires nothing requires zero, and that is the whole rule.
+
+    Which is why a floor and a ceiling do opposite things to the boots: they
+    ask a character for nothing at all, so a floor of 20 leaves them out and a
+    ceiling of 20 keeps them in.  The reference database reads its own four
+    numbers the same way, and it is why an empty range is not the same thing as
+    a range nobody moved.
+    """
+    proxy = _faceted()
+
+    proxy.set_requirements(_strength((20, REQ_MAX)))
+    assert _listed(proxy) == ["Sword"], "60 Strength, where nobody else asks for 20"
+
+    proxy.set_requirements(_strength((0, 20)))
+    assert _listed(proxy) == ["Axe", "Boots", "Fish"], "nothing at all is under 20"
+
+
+def test_each_of_the_four_attributes_is_read_on_its_own(qapp):
+    """Four ranges in one value, told apart by where they stand rather than by
+    a name, so moving one of them narrows by that attribute only.
+
+    The two weapons here are what says so: the axe is the only item asking for
+    any Focus, and the sword the only one asking for any Dexterity -- ten of it,
+    which is the floor set below, so the bound is inclusive at the edge it
+    lands on.
+    """
+    proxy = _faceted()
+    focus = (REQ_REST[0], REQ_REST[1], (100, REQ_MAX), REQ_REST[3])
+    dexterity = (REQ_REST[0], (10, REQ_MAX), REQ_REST[2], REQ_REST[3])
+
+    proxy.set_requirements(focus)
+    assert _listed(proxy) == ["Axe"]
+
+    proxy.set_requirements(dexterity)
+    assert _listed(proxy) == ["Sword"]
+
+
+def test_an_item_that_names_no_class_is_for_every_class(qapp):
+    """The one rule that reads backwards, and the reference's own.
+
+    A restriction is the exception rather than the rule -- most of the game's
+    items are for everyone -- so an item naming no class passes every tick, and
+    it is a class that is *somebody else's* that turns an item away.
+    """
+    proxy = _faceted()
+
+    proxy.set_classes({"Embermage"})
+    assert _listed(proxy) == ["Boots", "Fish", "Sword"], "the axe is the Outlander's"
+
+    proxy.set_classes({"Berserker"})
+    assert _listed(proxy) == ["Boots", "Fish"], "and nobody here is a Berserker's"
+
+
+def test_the_four_narrow_the_counts_as_well_as_the_list(qapp):
+    """The numbers beside the rail are the numbers of the list in front of the
+    player, and a panel nobody can see is still narrowing that list.
+
+    So a count that ignored the four would be a number about a collection that
+    is not on screen -- which is the one lie a count must not tell.
+    """
+    proxy = _faceted()
+    assert proxy.counts(TIER_ROLE) == {"Unique": 2, "Rare": 1, "": 1}
+
+    proxy.set_sockets({2})
+
+    assert proxy.counts(TIER_ROLE) == {"Unique": 1}
+
+
+# --------------------------------------------------------------------------
 # The order, which is not a facet
 # --------------------------------------------------------------------------
 
@@ -852,6 +1030,21 @@ def test_clearing_the_rail_puts_back_what_was_ticked(qapp):
     panel.reset()
 
     assert panel.places() == set()
+
+
+def test_clearing_a_rail_with_nothing_ticked_says_nothing(qapp):
+    """The window redraws the wall for every signal it hears, and it clears the
+    rail on paths that have already cleared it -- a different save file opens
+    on an empty rail, and `Clear filters` is the bar's own reset.  A rail with
+    nothing ticked has nothing to say about either."""
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    heard = []
+    panel.changed.connect(lambda: heard.append(1))
+
+    panel.reset()
+
+    assert heard == [], "an empty rail said something"
 
 
 def test_the_rail_says_so_when_a_kind_moves(qapp):
@@ -1230,6 +1423,149 @@ def test_clearing_the_bar_is_one_change_rather_than_four(qapp):
     bar.reset()
 
     assert len(heard) == 1
+
+
+def test_the_bar_says_when_it_was_cleared_rather_than_narrowed(qapp):
+    """`Clear filters` is the whole window's starting state, and the kinds are
+    ticked in the rail -- a widget this bar has no way to reach.  So the one
+    button that shows everything again has to say *that it cleared*, which a
+    signal about a control having moved cannot say."""
+    bar = _bar()
+    heard = []
+    bar.cleared.connect(lambda: heard.append(1))
+
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+
+    assert heard == [], "a narrowing is not a clearing"
+
+    bar.reset()
+
+    assert len(heard) == 1
+
+
+def test_the_bar_keeps_the_four_facets_the_panel_sets(qapp):
+    """They are held rather than drawn, and the bar is where they are held.
+
+    There is no room in the row for a second level range, five socket chips,
+    four attribute pairs and four classes -- and no need of it, because the
+    panel is where they are set.  What the bar is for is remembering them, so
+    that the window can ask for the whole search and the panel can open on what
+    is in force (below).
+    """
+    bar = _bar()
+
+    assert bar.item_level_range() == (0, LEVEL_MAX)
+    assert bar.sockets() == set()
+    assert bar.requirement_ranges() == REQ_REST
+    assert bar.classes() == set()
+    assert bar.advanced_active() is False
+
+    bar.adopt(
+        Advanced(
+            item_low=10,
+            item_high=20,
+            sockets=frozenset({2}),
+            reqs=_strength((30, REQ_MAX)),
+            classes=frozenset({"Embermage"}),
+        )
+    )
+
+    assert bar.item_level_range() == (10, 20)
+    assert bar.sockets() == {2}
+    assert bar.requirement_ranges() == _strength((30, REQ_MAX))
+    assert bar.classes() == {"Embermage"}
+    assert bar.advanced_active() is True
+
+
+def test_clearing_the_bar_puts_the_four_back_too(qapp):
+    """The button is on the row, so what it stands for is a facet of this bar.
+
+    A ``Clear filters`` that left a class ticked behind a control the player
+    has to open to see would be the one control here that does not do what it
+    says.
+    """
+    bar = _bar()
+    bar.adopt(
+        Advanced(item_low=10, sockets=frozenset({1}), classes=frozenset({"Outlander"}))
+    )
+    assert bar.advanced_active() is True
+
+    bar.reset()
+
+    assert bar.item_level_range() == (0, LEVEL_MAX)
+    assert bar.sockets() == set()
+    assert bar.requirement_ranges() == REQ_REST
+    assert bar.classes() == set()
+    assert bar.advanced_active() is False
+
+
+def test_writing_a_search_onto_the_bar_is_not_a_change_it_says(qapp):
+    """`Search` is one move the window makes, not five the player did.
+
+    So the controls are written silently and the window emits once, after it
+    has moved the rail as well -- see :meth:`app.window.MainWindow.
+    _advanced_search`.  A bar that emitted here would have the window apply
+    half a search four times over before it reached the finished one.
+    """
+    bar = _bar()
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.adopt(Advanced(text="drill", item_low=10, sockets=frozenset({2})))
+
+    assert heard == []
+    assert bar.search_text() == "drill"
+    assert bar.item_level_range() == (10, LEVEL_MAX)
+
+
+def test_the_bar_says_what_the_panel_would_open_on(qapp):
+    """A draft starts from what is in force, so that ticking the one thing a
+    player came for does not throw away what they set a moment ago.
+
+    Which is why this reads the bar rather than the panel: the four are one
+    panel's old draft and the three controls are what the player has done
+    since, and :meth:`app.filters.FilterBar.current` has to be the two of them
+    together.  The kinds are the odd one out and the window is what fills them:
+    they are ticked in the rail, which is not part of the bar.
+    """
+    bar = _bar()
+    bar.adopt(Advanced(item_low=5, item_high=15, sockets=frozenset({3})))
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+    bar.low.setValue(20)
+    bar.high.setValue(30)
+
+    state = bar.current()
+
+    assert state.text == "drill"
+    assert state.tiers == {"Unique"}
+    assert (state.low, state.high) == (20, 30)
+    assert (state.item_low, state.item_high) == (5, 15)
+    assert state.sockets == {3}
+    assert state.places == frozenset(), "the kinds are the rail's to fill in"
+
+
+def test_the_button_says_when_one_of_the_four_is_narrowing(qapp):
+    """A facet with no control in the row must not be an invisible one.
+
+    The four have no widget here, so without the ink a collection narrowed by a
+    panel nobody is looking at would read exactly like one narrowed by nothing
+    -- which is why the button turns the rail's gold (see
+    :func:`app.filters._advanced_style`).  Read off the sheet it was given
+    rather than off the pixels, because what is being asked is what the button
+    was told to wear; the gold itself is drawn like every other word in the
+    window, and the rail's own ink test is where that is measured.
+    """
+    bar = _bar()
+
+    assert GOLD not in bar.advanced.styleSheet()
+    assert CHALK in bar.advanced.styleSheet()
+
+    bar.adopt(Advanced(sockets=frozenset({1})))
+
+    assert GOLD in bar.advanced.styleSheet()
+    assert CHALK not in bar.advanced.styleSheet(), "the ink is one or the other"
 
 
 # --------------------------------------------------------------------------

@@ -71,10 +71,11 @@ def synthetic_game(tmp_path):
     """The install ``tests/test_gamedata.py`` builds, loaded.
 
     No reference database, for the reason that file's own fixture gives: the
-    augment table is not game data, and a machine with a checkout of the
-    reference beside this one must not change what a test sees.
+    augment table and the class restrictions are not game data, and a machine
+    with a checkout of the reference beside this one must not change what a
+    test sees.
     """
-    return GameData.load(synthetic_install(tmp_path), augments={})
+    return GameData.load(synthetic_install(tmp_path), augments={}, classes={})
 
 
 # --------------------------------------------------------------------------
@@ -101,17 +102,27 @@ def _a_row(**columns) -> sqlite3.Row:
 class _AnItem:
     """The attribute shape: a parsed item, as far as this module reads one."""
 
-    def __init__(self, guid: int, prefix: str = "", suffix: str = "", num_enchants: int = 0):
+    def __init__(
+        self,
+        guid: int,
+        prefix: str = "",
+        suffix: str = "",
+        num_enchants: int = 0,
+        num_sockets: int = 0,
+    ):
         self.guid = guid
         self.prefix = prefix
         self.suffix = suffix
         self.num_enchants = num_enchants
+        self.num_sockets = num_sockets
 
 
 def test_facts_read_an_item_that_answers_to_attributes():
-    facts = Facts.of(_AnItem(0xABC, "Demolishing [ITEM]", "", 2))
+    facts = Facts.of(_AnItem(0xABC, "Demolishing [ITEM]", "", 2, 3))
 
-    assert facts == Facts(guid=0xABC, prefix="Demolishing [ITEM]", suffix="", num_enchants=2)
+    assert facts == Facts(
+        guid=0xABC, prefix="Demolishing [ITEM]", suffix="", num_enchants=2, num_sockets=3
+    )
 
 
 def test_facts_read_a_registry_row_which_answers_to_keys_only():
@@ -121,7 +132,13 @@ def test_facts_read_a_registry_row_which_answers_to_keys_only():
     it as uppercase hex; the data files are indexed by the number, so the text
     has to be turned back into one here.
     """
-    row = _a_row(guid="0DEADBEEF1234567", prefix=None, suffix="of the Bear", num_enchants=0)
+    row = _a_row(
+        guid="0DEADBEEF1234567",
+        prefix=None,
+        suffix="of the Bear",
+        num_enchants=0,
+        num_sockets=2,
+    )
 
     facts = Facts.of(row)
 
@@ -131,12 +148,18 @@ def test_facts_read_a_registry_row_which_answers_to_keys_only():
     assert facts.prefix == ""
     assert facts.suffix == "of the Bear"
     assert facts.num_enchants == 0
+    assert facts.num_sockets == 2
 
 
 def test_a_row_with_nothing_filled_in_is_still_an_item_with_no_magic():
-    facts = Facts.of(_a_row(guid="ABCD", prefix=None, suffix=None, num_enchants=None))
+    facts = Facts.of(
+        _a_row(guid="ABCD", prefix=None, suffix=None, num_enchants=None, num_sockets=None)
+    )
 
     assert (facts.prefix, facts.suffix, facts.num_enchants) == ("", "", 0)
+    # Nothing in the column at all is none of them, which is what a socket-less
+    # item is: the number a socket filter reads is zero and not unknown.
+    assert facts.num_sockets == 0
 
 
 # --------------------------------------------------------------------------
@@ -162,6 +185,11 @@ def test_with_no_game_every_item_is_an_item_with_no_rarity(qapp):
     assert entry.icon is None
     assert entry.gate is None
     assert entry.set_name is None
+    # And nothing for the advanced search to read but the socket count, which
+    # is the item's own and not the game's: a machine with no game has no kind,
+    # no requirement and no class to filter by, and says so with the empties
+    # rather than by being a special case in the filter.
+    assert (entry.sockets, entry.stats, entry.cls) == (0, (), None)
 
 
 def test_the_answer_for_an_item_is_remembered_and_not_computed_twice(qapp):
@@ -188,9 +216,42 @@ def test_a_mapping_and_an_object_for_the_same_item_agree(qapp, real_game):
 
     from_item = catalog.entry("a", _AnItem(guid, prefix="Demolishing [ITEM]"))
     from_row = catalog.entry("b", _a_row(guid=guid, prefix="Demolishing [ITEM]",
-                                         suffix=None, num_enchants=0))
+                                         suffix=None, num_enchants=0, num_sockets=0))
 
     assert from_item == from_row
+
+
+@needs_game
+def test_a_row_carries_what_the_advanced_search_reads(qapp, real_game):
+    """The three facets the bar has no control for.
+
+    All three come down lookups the row is already making -- the item's own
+    bytes, the item's file, and the reference database -- and they are *on the
+    entry* rather than worked out per row, because the panel reads one of them
+    for every row of every poll while it is set.  The sockets are the one that
+    is the instance's and not the kind's: how many a sword can *hold* is in its
+    data file, and how many this one has is on the item.
+    """
+    catalog = Catalog(real_game, IconCache(real_game.install))
+
+    # An item that asks for an attribute.  One that asks for none would agree
+    # with an empty tuple whether or not it was ever asked, which is the shape
+    # of test that passes on the wrong code.
+    for guid in real_game._item_guids:
+        requires = real_game.requirements_for(_AnItem(guid))
+        if requires is not None and requires.stats:
+            break
+    else:  # pragma: no cover -- the archive always has one
+        pytest.skip("no item in this install states an attribute requirement")
+
+    entry = catalog.entry("a", _AnItem(guid, num_sockets=2))
+
+    assert entry.sockets == 2
+    assert entry.stats == requires.stats
+    # This fixture has no class table, for the reason tests/test_dat.py gives,
+    # so this is the answer every item gives on a machine without the reference
+    # database -- see tests/test_gamedata.py for the other one.
+    assert entry.cls is None
 
 
 @needs_game
@@ -244,11 +305,11 @@ def test_an_item_the_game_does_not_have_is_other_with_a_placeholder(real_game, q
 class _OneAnswer:
     """A game that answers the gate question and nothing else.
 
-    :meth:`Catalog._read` asks two questions of the game -- what the item asks
-    of a character and what it looks like -- and a catalogue built on this gets
-    the second answered with nothing.  That is a real combination (an item the
-    game has a gate for and no *look* for), and it is what keeps the two
-    questions from being read as one.
+    :meth:`Catalog._read` asks three questions of the game -- what the item asks
+    of a character, what it looks like, and which class it is for -- and a
+    catalogue built on this gets the last two answered with nothing.  That is a
+    real combination (an item the game has a gate for and no *look* for), and it
+    is what keeps the three questions from being read as one.
     """
 
     def __init__(self, requires: Requirements):
@@ -258,6 +319,12 @@ class _OneAnswer:
         return self._requires
 
     def appearance_for(self, item):
+        return None
+
+    def class_for(self, item):
+        """``None``, which is what a machine with no reference database says --
+        and the same answer the real thing gives for an item no class is
+        restricted to.  See :mod:`tl2stash.augments` for the second reading."""
         return None
 
 

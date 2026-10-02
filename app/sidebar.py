@@ -46,7 +46,7 @@ from tl2stash.taxonomy import OTHER, TYPE_GROUPS, Place
 
 from .card import BODY, DIM, GOLD, HEAD, LABEL, MUTED
 
-__all__ = ["SidePanel"]
+__all__ = ["SidePanel", "UNCLASSIFIED", "arranged"]
 
 #: What an item with no kind is called in the rail.  The reference database's
 #: word for the same thing, and there is no better one: the game never needed
@@ -94,7 +94,7 @@ def _rail_order() -> list[tuple[str, str | None]]:
     return [(group, subgroup) for group, subgroup, _ in TYPE_GROUPS] + [(OTHER, None)]
 
 
-def _arranged(
+def arranged(
     places: Iterable[Place],
 ) -> list[tuple[str, list[tuple[str | None, list[Place]]]]]:
     """The places as the rail draws them: group, subgroup, then the leaves.
@@ -102,6 +102,12 @@ def _arranged(
     A group whose subgroup is ``None`` is not split and gets no subgroup row,
     so ``Armor`` is a heading with six kinds under it and ``Weapons`` is a
     heading with three headings under it.
+
+    Public, and not only for the rail: the advanced search's Type grid draws
+    the same kinds in the same groups, in the same order, because the two are
+    one state with two views -- see
+    :class:`app.advsearch.AdvancedSearchOverlay`.  One arrangement read twice
+    is what keeps a kind from being second in one list and fifth in the other.
     """
     present = set(places)
     drawn: list[tuple[str, list[tuple[str | None, list[Place]]]]] = []
@@ -312,6 +318,38 @@ class SidePanel(QWidget):
         """The leaves that are ticked, flattened -- a group is its children."""
         return set(self._ticked)
 
+    def set_places(self, places: Iterable[Place]) -> None:
+        """Tick exactly these leaves and nothing else.
+
+        The other half of :meth:`places`, and the one the advanced search's
+        Type grid writes through: a kind is ticked in one of two places -- this
+        tree and that grid -- and the two are one state rather than two filters
+        that intersect, so a search that ticks a sword has to be able to
+        *un*tick a boot.
+
+        The group and subgroup rows are left to say what they say by
+        themselves, which is what ``ItemIsAutoTristate`` is for: ticking a leaf
+        moves its heading, and the heading's own state is read back off its
+        children rather than written here.  One :attr:`changed` at the end, and
+        none at all if the ticks were already these -- the window redraws the
+        wall for every one it hears.
+        """
+        wanted = {tuple(place) for place in places}
+        self._updating = True
+        try:
+            for place, leaf in self._leaves.items():
+                leaf.setCheckState(
+                    0,
+                    Qt.CheckState.Checked
+                    if place in wanted
+                    else Qt.CheckState.Unchecked,
+                )
+        finally:
+            self._updating = False
+        if wanted != self._ticked:
+            self._ticked = wanted
+            self.changed.emit()
+
     # -- the user --------------------------------------------------------
 
     def _item_changed(self, item: QTreeWidgetItem, column: int) -> None:
@@ -331,7 +369,16 @@ class SidePanel(QWidget):
         self.changed.emit()
 
     def reset(self) -> None:
-        """Untick everything, which is the state the window starts in."""
+        """Untick everything, which is the state the window starts in.
+
+        Silent when nothing was ticked, like every other write here: the window
+        redraws the wall for every signal it hears, and the two paths that clear
+        the rail -- a click on `Clear filters`, a different save file chosen --
+        both clear the bar as well, so a rail with nothing ticked in it has
+        nothing to say about either.
+        """
+        if not self._ticked:
+            return
         self._updating = True
         try:
             for leaf in self._leaves.values():
@@ -349,7 +396,7 @@ class SidePanel(QWidget):
         try:
             self.tree.clear()
             self._leaves = {}
-            for group, subgroups in _arranged(self._places):
+            for group, subgroups in arranged(self._places):
                 group_item = self._branch(group, self.tree.invisibleRootItem(), "group")
                 for subgroup, here in subgroups:
                     parent = (

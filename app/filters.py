@@ -26,6 +26,17 @@ of number boxes saying ``0`` and ``100`` beside them are not, and two outlined
 rectangles are what tells a reader where the rarity chips stop and the level
 range starts.
 
+:guilabel:`Advanced search` sits between the two, and opens
+:class:`app.advsearch.AdvancedSearchOverlay` -- four more facets that have no
+room in this row: an item level range, socket counts, four attribute
+requirements and the classes an item may be restricted to.  They are kept
+*here* rather than in the panel, because this is where every facet lives until
+the window asks for it, and the panel is a thing that opens and closes: a
+search that unset four facets by being closed would be a filter with a
+lifetime of its own.  The button wears the rail's gold while one of those four
+is narrowing the collection, which is the only sign a control this row has not
+got is doing anything -- see :meth:`FilterBar.advanced_active`.
+
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
 a chip stays worth reading while another one is ticked.
@@ -58,10 +69,18 @@ from PySide6.QtWidgets import (
 
 from tl2stash.card import TIER_INK
 
-from .models import LEVEL_MAX, SORT_KEYS, TIER_CHIPS
+from .card import GOLD
+from .models import (
+    LEVEL_MAX,
+    REQ_REST,
+    REQ_WORDS,
+    SORT_KEYS,
+    TIER_CHIPS,
+    Advanced,
+)
 from .theme import CHALK
 
-__all__ = ["FilterBar", "SpinBox"]
+__all__ = ["FilterBar", "SpinBox", "chip_style"]
 
 #: How much of a tier's colour a ticked pill is filled with, of 255.  A wash
 #: rather than the colour itself, so that the word on it stays the brightest
@@ -147,9 +166,14 @@ def _wash(ink: str) -> str:
     return f"rgba({colour.red()}, {colour.green()}, {colour.blue()}, {WASH})"
 
 
-def _chip_style(ink: str) -> str:
+def chip_style(ink: str) -> str:
     """A rarity chip: the window's light ink over the tier's own colour, in a
     pill.
+
+    Public, because the advanced search's panel draws the same five chips in
+    its Rarity row and the two rows are the same control in two places: a
+    player who has learned what a green pill means over the collection must
+    not be told a different story by a green pill inside the panel.
 
     The word is the light in *both* states and the tier is what the pill is
     *filled* with, which is the other way round from how this started: the word
@@ -201,6 +225,30 @@ def _set_style() -> str:
     )
 
 
+def _advanced_style(active: bool) -> str:
+    """The advanced search's button: a box the row's language, gold when it is on.
+
+    The same outlined rectangle as the number boxes, because it is a control in
+    the same row and one more of the same kind.  What it says that they cannot
+    is when it is *doing* something: the four facets behind it have no control
+    in this row, so without the ink a collection narrowed by a panel nobody can
+    see would look exactly like one narrowed by nothing.
+
+    The rail's gold rather than a colour of its own -- it is the ink the
+    reference uses for "this one is on", and the rail already uses it for a
+    group with everything ticked, which is the same statement about a different
+    control.
+    """
+    ink = GOLD if active else CHALK
+    return (
+        "QPushButton {"
+        f" color: {ink};"
+        f" border: 1px solid {ink};"
+        " border-radius: 3px; padding: 2px 8px;"
+        "}"
+    )
+
+
 def _box(title: str, controls: Iterable[QWidget]) -> QGroupBox:
     """A group of controls in its own outlined box.
 
@@ -234,6 +282,13 @@ class FilterBar(QWidget):
     #: chips would be the same numbers they already are.
     resorted = Signal()
 
+    #: `Clear filters` was pressed: every facet back to rest, and the whole
+    #: collection shown again.  A signal of its own because the bar is not the
+    #: only place a facet is ticked -- the kinds are in the rail, which is not
+    #: this widget's to untick -- and :attr:`changed` cannot say whether one
+    #: control moved or all of them were put back at once.
+    cleared = Signal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         #: True while this widget is writing to itself -- a reset, most of all
@@ -248,6 +303,20 @@ class FilterBar(QWidget):
         #: the button either, for the same reason: the arrow is written *from*
         #: this, so the glyph and what the window is told cannot come apart.
         self._backwards = False
+        #: The advanced search's four facets, which have no control here: an
+        #: item level range (kept as the pair of numbers it is), the socket
+        #: counts, the four attribute ranges in :data:`~app.models.REQ_WORDS`
+        #: order, and the class words.  Plain attributes rather than widgets,
+        #: because there is nothing to draw -- the panel draws them, and
+        #: :meth:`current` and :meth:`adopt` are how the two sides pass them.
+        #: All of them stay at rest until a panel writes one, and "at rest" is
+        #: a range or a set that lets everything through: the same bargain the
+        #: facets above make.
+        self._item_low = 0
+        self._item_high = LEVEL_MAX
+        self._sockets: set[int] = set()
+        self._reqs: tuple[tuple[int, int], ...] = REQ_REST
+        self._classes: set[str] = set()
 
         row = QHBoxLayout(self)
         row.setContentsMargins(INSET, 0, 0, 0)
@@ -353,10 +422,28 @@ class FilterBar(QWidget):
 
         row.addWidget(self.sort_box)
         row.addSpacing(10)
+
+        # The way into the four facets that have no room here, and the only
+        # thing in the row that opens something rather than being something.
+        # It stands just before the rarities, which is where the user asked for
+        # it and where it is worth being: what is behind it is the rest of what
+        # narrows a collection, and the rarities are the last of what is in
+        # front of it.
+        self.advanced = QPushButton("Advanced search")
+        self.advanced.setObjectName("advanced")
+        self.advanced.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.advanced.setToolTip(
+            "More ways to narrow the collection: item level, sockets,\n"
+            "an item's stat requirements, and the class it is for."
+        )
+        self._ink_advanced()
+        row.addWidget(self.advanced)
+        row.addSpacing(10)
+
         self.chips: dict[str, QCheckBox] = {}
         for word in TIER_CHIPS:
             chip = QCheckBox(word)
-            chip.setStyleSheet(_chip_style(TIER_INK[word.lower()]))
+            chip.setStyleSheet(chip_style(TIER_INK[word.lower()]))
             chip.setToolTip(f"Show only the {word.lower()} items.")
             chip.toggled.connect(self._moved)
             self.chips[word] = chip
@@ -440,6 +527,100 @@ class FilterBar(QWidget):
     def shown_set(self) -> str:
         """The set being shown, or the empty string for all of them."""
         return self._set
+
+    # -- what the bar says about the advanced search ----------------------
+
+    def item_level_range(self) -> tuple[int, int]:
+        """The item levels to show, both ends included.
+
+        The *other* level range, and the two are asked of different numbers:
+        what the item is against what it asks of the character.  This one has
+        no boxes in the row and comes from the panel, which is where it is set.
+        """
+        return (self._item_low, self._item_high)
+
+    def sockets(self) -> set[int]:
+        """The socket counts ticked; empty for any number of them."""
+        return set(self._sockets)
+
+    def requirement_ranges(self) -> tuple[tuple[int, int], ...]:
+        """The four attribute ranges, in :data:`~app.models.REQ_WORDS` order."""
+        return tuple(self._reqs)
+
+    def classes(self) -> set[str]:
+        """The class words ticked; empty for every class."""
+        return set(self._classes)
+
+    def advanced_active(self) -> bool:
+        """Whether one of the four panel-only facets is narrowing anything.
+
+        What the button's ink says, and the reason it is worked out from the
+        facets rather than remembered as a flag: a flag is a second answer to a
+        question the facets have already answered, and the two would come apart
+        the first time a panel was dismissed without being applied.
+        """
+        return bool(
+            self._item_low
+            or self._item_high != LEVEL_MAX
+            or self._sockets
+            or self._classes
+            or self._reqs != REQ_REST
+        )
+
+    def current(self) -> Advanced:
+        """Everything the advanced search opens on, as one value.
+
+        The bar's own three facets are read off their controls and the four
+        behind the button off the attributes above, so there is one copy of
+        each and nothing to keep in step.  ``places`` is left resting: the
+        kinds are ticked in the rail, which is not part of the bar, and whoever
+        assembles a draft fills that field from it -- see
+        :meth:`app.window.MainWindow._open_advanced`.
+        """
+        return Advanced(
+            text=self.search_text(),
+            tiers=frozenset(self.tiers()),
+            low=self.low.value(),
+            high=self.high.value(),
+            item_low=self._item_low,
+            item_high=self._item_high,
+            sockets=frozenset(self._sockets),
+            reqs=tuple(self._reqs),
+            classes=frozenset(self._classes),
+        )
+
+    def adopt(self, state: Advanced) -> None:
+        """Write a search back onto the controls, and onto the four behind them.
+
+        What pressing `Search` does with the draft the panel hands over.  The
+        three controls are written *silently*: this is one move, the window
+        makes it, and a bar that emitted for each of the five writes would have
+        the window re-apply half a search four times over.  The caller emits
+        once when it is done -- see :meth:`app.window.MainWindow._advanced_search`.
+
+        The rail is not touched.  ``state.places`` is the window's to apply,
+        because the rail is not part of the bar and this method has no way to
+        reach it.
+        """
+        self._updating = True
+        try:
+            self.search.setText(state.text)
+            for word, chip in self.chips.items():
+                chip.setChecked(word in state.tiers)
+            self.low.setValue(state.low)
+            self.high.setValue(state.high)
+        finally:
+            self._updating = False
+
+        self._item_low, self._item_high = state.item_low, state.item_high
+        self._sockets = set(state.sockets)
+        self._reqs = tuple(state.reqs)
+        self._classes = set(state.classes)
+        self._ink_advanced()
+
+    def _ink_advanced(self) -> None:
+        """Say whether the four facets behind the button are doing anything."""
+        self.advanced.setStyleSheet(_advanced_style(self.advanced_active()))
 
     # -- what the bar says about the order --------------------------------
 
@@ -551,15 +732,35 @@ class FilterBar(QWidget):
         does, and says nothing about the order any of it is in.  A player who
         has asked for the newest first and then clears the search box is still
         asking for the newest first.
+
+        The four behind the advanced button *are* put back, and they are the
+        ones that make this the whole of "show everything": they are facets of
+        the same collection, they are what the gold button has been saying is
+        on, and a `Clear filters` that left a class ticked somewhere the player
+        cannot see would be the one control here that does not do what it says.
         """
         self.search.clear()
         for chip in self.chips.values():
             chip.setChecked(False)
         self.low.setValue(0)
         self.high.setValue(LEVEL_MAX)
+        self._item_low, self._item_high = 0, LEVEL_MAX
+        self._sockets = set()
+        self._reqs = REQ_REST
+        self._classes = set()
+        self._ink_advanced()
 
     def reset(self) -> None:
-        """Put every control back, which is the state the window starts in."""
+        """Put every control back, which is the state the window starts in.
+
+        What `Clear filters` does, and it is the whole of that: the bar's own
+        controls and the four facets behind the button, said once through
+        :attr:`changed` so that the window applies the whole of it in one go.
+        The kinds are the rail's and are cleared by whoever hears
+        :attr:`cleared` -- the bar cannot reach them, and a bar that cleared
+        everything except the one control the player is looking at would be a
+        button that does not do what it says.
+        """
         self._updating = True
         try:
             self._clear_controls()
@@ -567,3 +768,4 @@ class FilterBar(QWidget):
         finally:
             self._updating = False
         self.changed.emit()
+        self.cleared.emit()

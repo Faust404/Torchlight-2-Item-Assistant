@@ -16,6 +16,7 @@ what :mod:`app.compare` is for.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -44,11 +45,13 @@ from tl2stash.service import STATUS_ABSORBED, ItemService
 from tl2stash.tooltip import build
 from tl2stash.watcher import StashWatcher
 
+from .advsearch import AdvancedSearchOverlay
 from .card import IconCache
 from .catalog import ICON_SIZE, Catalog
 from .compare import CompareOverlay
 from .filters import FilterBar
 from .models import (
+    CLASSES,
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
     MEMBERS_ROLE,
@@ -165,6 +168,15 @@ class MainWindow(QMainWindow):
         self.compare = CompareOverlay(self._icons(), central)
         self.compare.put_back.connect(self._put_back_one)
 
+        # The advanced search, over everything for the same reason, and hidden
+        # until the bar's button asks for it.  It is built with the window
+        # rather than on demand because its Type grid is fed the collection's
+        # shape on every poll -- a panel that had to be built before it could
+        # be opened on the right ticks would be rebuilt, and refilled, on every
+        # poll instead.
+        self.advanced = AdvancedSearchOverlay(central)
+        self.advanced.searched.connect(self._advanced_search)
+
         self.status = self.statusBar()
         self.status.showMessage("starting up")
 
@@ -227,6 +239,15 @@ class MainWindow(QMainWindow):
         self.filters = FilterBar()
         self.filters.changed.connect(self._filters_changed)
         self.filters.resorted.connect(self._resorted)
+        self.filters.advanced.clicked.connect(self._open_advanced)
+        # The other half of `Clear filters`: a kind is ticked in the rail, which
+        # is not the bar's widget, so the bar says *that it was cleared* and the
+        # window is what knows where the rest of the ticks live.  It is the set
+        # name's bargain over again -- two rebuilds of the wall for one click,
+        # because each half of the clearing is its own signal, and a click is
+        # not a poll.  The rail says nothing when it had nothing ticked, so a
+        # click on an empty rail is one rebuild rather than two.
+        self.filters.cleared.connect(self.sidebar.reset)
         return self.filters
 
     def _build_splitter(self) -> QSplitter:
@@ -693,9 +714,12 @@ class MainWindow(QMainWindow):
         # and not from the filters -- which is what keeps a row from vanishing
         # out from under the pointer the moment it is ticked.  The grid is
         # rebuilt with them, because what it draws is what the filters left.
-        self.sidebar.set_shape(
-            catalog.entry(row["fingerprint"], row).place for row in rows
-        )
+        places = [catalog.entry(row["fingerprint"], row).place for row in rows]
+        self.sidebar.set_shape(places)
+        # The same shape, to the advanced search's Type grid: one list of kinds
+        # in two places, so a kind can be ticked above or in the rail and the
+        # two are the same tick.
+        self.advanced.set_kinds(places)
         self._filters_changed()
 
         self._note_game()
@@ -832,16 +856,25 @@ class MainWindow(QMainWindow):
 
         One slot for the whole job, whether it was a kind ticked in the rail, a
         chip ticked in the bar or a set name clicked on a card: the proxy holds
-        all five facets at once, so applying four of them and rebuilding would
+        all nine facets at once, so applying eight of them and rebuilding would
         be a redraw of a list the player is not looking at.  Each setter
         returns without touching the rows when its facet has not moved, which
         is what keeps this free on the polls that changed nothing.
+
+        Four of the nine have no control in the row -- they are set on the
+        advanced search's panel and read back off the bar -- and they are
+        applied here with the rest, because to the collection they are not a
+        different kind of thing.
         """
         self.collection_proxy.setFilterFixedString(self.filters.search_text())
         self.collection_proxy.set_places(self.sidebar.places())
         self.collection_proxy.set_tiers(self.filters.tiers())
         self.collection_proxy.set_level_range(*self.filters.level_range())
         self.collection_proxy.show_set(self.filters.shown_set())
+        self.collection_proxy.set_item_levels(*self.filters.item_level_range())
+        self.collection_proxy.set_sockets(self.filters.sockets())
+        self.collection_proxy.set_requirements(self.filters.requirement_ranges())
+        self.collection_proxy.set_classes(self.filters.classes())
         self._count_facets()
         self._rebuild_collection()
 
@@ -857,6 +890,51 @@ class MainWindow(QMainWindow):
             self.filters.sort_key(), self.filters.sort_backwards()
         )
         self._rebuild_collection()
+
+    # -- the advanced search ---------------------------------------------
+
+    def _open_advanced(self) -> None:
+        """Open the panel on what is narrowing the collection right now.
+
+        A form that opens blank over a collection that is already narrowed is a
+        form that will quietly un-narrow it: the player ticks the one thing they
+        came for, presses Search, and has also thrown away everything they set
+        ten minutes ago.  So every control is filled from the state in force --
+        the bar's own three from their controls, the four behind the button from
+        the bar, and the kinds from the rail, which is where the kinds are
+        ticked.
+
+        The class section is offered only when there is something to offer it
+        *from*: the game's files do not say which class an item is for, so on a
+        machine without the reference database an empty section would be a
+        control that can never match anything -- see
+        :meth:`~tl2stash.gamedata.GameData.has_classes`.
+        """
+        state = replace(self.filters.current(), places=frozenset(self.sidebar.places()))
+        data = self._game_data()
+        offered = CLASSES if data is not None and data.has_classes else ()
+        self.advanced.open_for(state, offered)
+
+    def _advanced_search(self, state) -> None:
+        """Apply a committed draft: the bar, then the rail, then the wall.
+
+        Two writes and one redraw.  The bar is written silently -- it is one
+        move, and a bar that emitted would have the window apply half a search
+        before the rail had moved.  The rail's ticks are written through
+        :meth:`app.sidebar.SidePanel.set_places`, which *does* emit, so the
+        common case is one redraw arriving from there.  When the draft leaves
+        the ticks where they were -- a search narrowed by class and level
+        alone, which is most of them -- the rail says nothing, because nothing
+        moved, and the redraw is asked for here instead.
+        """
+        self.filters.adopt(state)
+        was = self.sidebar.places()
+        self.sidebar.set_places(state.places)
+        if self.sidebar.places() == was:
+            self._filters_changed()
+        note = self._describe()
+        if note:  # empty on a machine with no stash, where something else is said
+            self._set_status(note)
 
     def _count_facets(self) -> None:
         """Put the numbers on the rail and the chips.
@@ -883,6 +961,12 @@ class MainWindow(QMainWindow):
             # Said on the banner over the grid as well, because it explains why
             # the cards read as keys rather than as sentences.
             note += " · no game data"
+        if self.filters.advanced_active():
+            # The one narrowing with no control in the row.  The button says so
+            # in gold; this says it in words, because a player who set a class
+            # filter an hour ago reads the status line long before they think
+            # to open a panel and look.
+            note += " · advanced search is narrowing"
         return note
 
     def _set_status(self, message: str) -> None:
