@@ -54,6 +54,15 @@ COLLECTION_COLUMNS = ["Item"]
 #: neither is the unclassified tail, which is shown when nothing is ticked.
 TIER_CHIPS = ("Normal", "Magic", "Rare", "Unique", "Legendary")
 
+#: The top of the level range, and so the level of the box that ends it.
+#: Measured over the archive: 5,974 item files state a level and the highest of
+#: them is 105 -- the Wanderer's X07 set and a legendary wand -- so this is the
+#: round number above the game's own top.  The character cap is 100, and the
+#: game's items run past it, which is why the ceiling is not the cap.  A mod's
+#: item above 110 would fall outside the default range, which is the one thing
+#: this ceiling costs.
+LEVEL_MAX = 110
+
 #: What a row carries besides what it shows.
 #:
 #: The fingerprint is what a row *is* -- it is how a selection is turned back
@@ -285,8 +294,10 @@ class CollectionFilter(QSortFilterProxyModel):
         super().__init__(parent)
         self._places: set[Place] = set()
         self._tiers: set[str] = set()
-        self._low: int | None = None
-        self._high: int | None = None
+        #: The level range, as the two boxes hand it over.  It starts as the
+        #: whole of it, so the default is a range and not a special case.
+        self._low: int = 0
+        self._high: int = LEVEL_MAX
 
     # -- what is ticked --------------------------------------------------
 
@@ -303,8 +314,13 @@ class CollectionFilter(QSortFilterProxyModel):
             self._tiers = wanted
             self._refilter()
 
-    def set_level_range(self, low: int | None, high: int | None) -> None:
-        """Bounds inclusive; ``None`` at either end means unbounded."""
+    def set_level_range(self, low: int, high: int) -> None:
+        """Both bounds included, and both of them levels.
+
+        There is no open end: ``0`` is the level a socketable is, so a caller
+        asking for everything says ``0`` to the highest level there is rather
+        than saying nothing twice.
+        """
         if (low, high) != (self._low, self._high):
             self._low, self._high = low, high
             self._refilter()
@@ -370,9 +386,7 @@ class CollectionFilter(QSortFilterProxyModel):
 
         if ignoring != LEVEL_ROLE:
             level = self._value(parent, row, LEVEL_ROLE) or 0
-            if self._low is not None and level < self._low:
-                return False
-            if self._high is not None and level > self._high:
+            if level < self._low or level > self._high:
                 return False
 
         return True

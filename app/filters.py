@@ -36,14 +36,9 @@ from PySide6.QtWidgets import (
 from tl2stash.card import TIER_INK
 
 from .card import DIM
-from .models import TIER_CHIPS
+from .models import LEVEL_MAX, TIER_CHIPS
 
-__all__ = ["FilterBar", "LEVEL_MAX"]
-
-#: The highest level the game has an item at, so the range cannot be set past
-#: what the collection could hold.  Level 100 is the character cap; an item's
-#: own requirement runs a little above it.
-LEVEL_MAX = 100
+__all__ = ["FilterBar"]
 
 #: How dim a chip is drawn when it is not ticked.
 OFF_INK = "#6f6963"
@@ -125,8 +120,8 @@ class FilterBar(QWidget):
 
         row.addSpacing(10)
         row.addWidget(_heading("Level"))
-        self.low = self._spin()
-        self.high = self._spin()
+        self.low = self._spin(0)
+        self.high = self._spin(LEVEL_MAX)
         row.addWidget(self.low)
         row.addWidget(QLabel("to"))
         row.addWidget(self.high)
@@ -137,17 +132,21 @@ class FilterBar(QWidget):
         self.clear_button.clicked.connect(self.reset)
         row.addWidget(self.clear_button)
 
-    def _spin(self) -> QSpinBox:
-        """A min or a max, where zero means "no bound" rather than "level 0".
+    def _spin(self, value: int) -> QSpinBox:
+        """A min or a max: two levels, both ends included.
 
-        Meaning it in the widget is what keeps the empty string out of the
-        range arithmetic: zero is not a level the game has an item at, so it is
-        free to be the word ``Any``.
+        The boxes used to read ``Any`` at zero, which was one word for "do not
+        ask" -- two things a level box can mean, and only one of them is a
+        level.  Zero is one: a socketable is level 0 and the collection holds
+        them, so a box the player sets to 0 has to mean the thing it says.
         """
         spin = QSpinBox()
         spin.setRange(0, LEVEL_MAX)
-        spin.setSpecialValueText("Any")
-        spin.setValue(0)
+        spin.setValue(value)
+        spin.setToolTip(
+            "The item levels to show, both ends included.\n"
+            f"0 to {LEVEL_MAX} is the whole range, and is where these start."
+        )
         spin.valueChanged.connect(self._moved)
         return spin
 
@@ -178,9 +177,14 @@ class FilterBar(QWidget):
         """The rarity words that are ticked."""
         return {word for word, chip in self.chips.items() if chip.isChecked()}
 
-    def level_range(self) -> tuple[int | None, int | None]:
-        """The bounds, either of which is ``None`` when the box says "Any"."""
-        return (self.low.value() or None, self.high.value() or None)
+    def level_range(self) -> tuple[int, int]:
+        """The bounds, both of them levels and both ends included.
+
+        What comes out is the whole range until the player narrows it, so the
+        two boxes say what they are letting through rather than standing in for
+        a question nobody asked.
+        """
+        return (self.low.value(), self.high.value())
 
     # -- the user --------------------------------------------------------
 
@@ -196,7 +200,7 @@ class FilterBar(QWidget):
             for chip in self.chips.values():
                 chip.setChecked(False)
             self.low.setValue(0)
-            self.high.setValue(0)
+            self.high.setValue(LEVEL_MAX)
         finally:
             self._updating = False
         self.changed.emit()

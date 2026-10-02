@@ -40,10 +40,11 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
-from app.filters import LEVEL_MAX, FilterBar  # noqa: E402
+from app.filters import FilterBar  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
+    LEVEL_MAX,
     LEVEL_ROLE,
     PLACE_ROLE,
     TIER_ROLE,
@@ -209,15 +210,29 @@ def test_the_level_bounds_are_inclusive(qapp):
     assert _shown(proxy) == ["Alpha", "Gamma", "Delta", "Zeta", "Eta"]
 
 
-def test_the_open_end_of_a_level_range_is_unbounded(qapp):
-    """Zero in a box means "Any", so it arrives here as ``None``."""
-    proxy = _proxy()
+def test_the_default_range_is_the_whole_of_it(qapp):
+    """``0`` is a level -- a socketable's -- and every row has one.
 
-    proxy.set_level_range(12, None)
-    assert _shown(proxy) == ["Alpha", "Beta", "Gamma", "Delta", "Zeta", "Eta"]
+    The range used to come out of the boxes as ``(None, None)``, where zero
+    stood for the word "Any": one number meaning both "level 0" and "do not
+    ask", which cannot be told apart once it reaches here.  Now the default is
+    the range that lets everything through, and it is the range it says --
+    including the two ends of it, which are levels like any other.
+    """
+    items = [
+        ("Alpha", "Unique", BOOTS, 0),
+        ("Beta", "Unique", BOOTS, 40),
+        ("Gamma", "Rare", BOOTS, LEVEL_MAX),
+    ]
+    proxy = _proxy(items)
 
-    proxy.set_level_range(None, 12)
-    assert _shown(proxy) == ["Beta", "Epsilon"]
+    assert _shown(proxy) == ["Alpha", "Beta", "Gamma"]
+
+    proxy.set_level_range(0, 0)
+    assert _shown(proxy) == ["Alpha"], "zero means level zero and nothing else"
+
+    proxy.set_level_range(1, LEVEL_MAX - 1)
+    assert _shown(proxy) == ["Beta"]
 
 
 def test_every_facet_at_once(qapp):
@@ -460,7 +475,7 @@ def test_the_bar_reads_back_what_is_in_it(qapp):
 
     assert bar.search_text() == ""
     assert bar.tiers() == set()
-    assert bar.level_range() == (None, None)
+    assert bar.level_range() == (0, LEVEL_MAX), "the default is the whole range"
 
     bar.search.setText("drill")
     bar.chips["Unique"].setChecked(True)
@@ -468,7 +483,7 @@ def test_the_bar_reads_back_what_is_in_it(qapp):
 
     assert bar.search_text() == "drill"
     assert bar.tiers() == {"Unique"}
-    assert bar.level_range() == (45, None)
+    assert bar.level_range() == (45, LEVEL_MAX)
 
 
 def test_the_bar_carries_a_chip_for_every_rarity_the_game_has(qapp):
@@ -480,15 +495,23 @@ def test_the_bar_carries_a_chip_for_every_rarity_the_game_has(qapp):
     assert "Legendary" in bar.chips
 
 
-def test_a_level_box_of_zero_means_any_rather_than_level_zero(qapp):
+def test_the_level_boxes_start_on_the_whole_range(qapp):
+    """Both ends of it, written as the two levels they are.
+
+    The boxes used to read ``Any`` at zero, so the bar opened on a word about
+    not asking.  A player setting 0 now means the level-0 items -- the
+    socketables the collection holds -- and the default is the range that
+    happens to let everything through rather than a special case.
+    """
     bar = _bar()
 
-    bar.low.setValue(0)
-    bar.high.setValue(45)
+    assert (bar.low.value(), bar.high.value()) == (0, LEVEL_MAX)
+    assert bar.low.minimum() == 0
+    assert bar.low.maximum() == bar.high.maximum() == LEVEL_MAX
+    assert bar.low.specialValueText() == "", "a box shows a number, not a word"
 
-    assert bar.level_range() == (None, 45)
-    assert bar.low.specialValueText() == "Any"
-    assert bar.low.maximum() == LEVEL_MAX
+    bar.high.setValue(45)
+    assert bar.level_range() == (0, 45)
 
 
 def test_the_counts_go_on_the_chips(qapp):
@@ -511,13 +534,13 @@ def test_clearing_the_bar_puts_every_control_back(qapp):
     bar.chips["Unique"].setChecked(True)
     bar.low.setValue(20)
     bar.high.setValue(30)
-    assert bar.search_text() and bar.tiers() and bar.level_range() != (None, None)
+    assert bar.search_text() and bar.tiers() and bar.level_range() != (0, LEVEL_MAX)
 
     bar.reset()
 
     assert bar.search_text() == ""
     assert bar.tiers() == set()
-    assert bar.level_range() == (None, None)
+    assert bar.level_range() == (0, LEVEL_MAX)
 
 
 def test_the_bar_says_so_when_anything_in_it_moves(qapp):
