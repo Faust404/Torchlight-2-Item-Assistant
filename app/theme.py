@@ -439,11 +439,32 @@ QSpinBox {{
    is an image file and this application ships none.  Left to the style, the
    arrow is Fusion's own, and the list it opens is built from the palette --
    a field for the rows, the window's selection on the one under the
-   pointer -- so the popup comes out dark without a rule of its own. */
+   pointer -- so the popup comes out dark without a rule of its own.
+
+   Its padding is what makes the box a little wider than its longest word
+   needs, which is the user's own ask: the drop-down should not read as
+   tight against the key it is showing.  Six more pixels either side of the
+   word, and the *box* is the thing that grows, so the arithmetic that says a
+   filter box is as wide as its contents and no wider still holds. */
 QComboBox#sort {{
     border: 1px solid {CHALK};
     border-radius: 3px;
-    padding: 1px 3px;
+    padding: 1px 9px;
+}}
+/* The reverse arrow, which is the one control in the row that has to be told
+   how wide it is: left to the style it is a bare ``QPushButton``, and Fusion
+   gives those a *floor* of 80 pixels whatever is written on them -- so a
+   single glyph sat in a button three times the width of the drop-down beside
+   it, which is what the user pointed at.  The floor is not a number the
+   style will let anyone lower; claiming the widget in this sheet is what
+   takes it away, because a styled button is measured from its own box model.
+   The outline is the one the combo beside it wears, so the two still read as
+   one control with two halves. */
+QPushButton#reverse {{
+    color: {CHALK};
+    border: 1px solid {CHALK};
+    border-radius: 3px;
+    padding: 3px 12px;
 }}
 #banner {{
     color: {LABEL};

@@ -26,17 +26,20 @@ of number boxes saying ``0`` and ``100`` beside them are not, and two outlined
 rectangles are what tells a reader where the rarity chips stop and the level
 range starts.
 
-:guilabel:`Advanced search` sits between the two, and opens
-:class:`app.advsearch.AdvancedSearchOverlay` -- eight more facets that have no
-room in this row: an item level range, socket counts, four attribute
+:guilabel:`Advanced search` stands between the search box and the sort, and
+opens :class:`app.advsearch.AdvancedSearchOverlay` -- eight more facets that
+have no room in this row: an item level range, socket counts, four attribute
 requirements, the classes an item may be restricted to, the damage and armour
-elements asked about, and the property rows.  They are kept *here* rather than
-in the panel, because this is where every facet lives until the window asks for
-it, and the panel is a thing that opens and closes: a search that unset eight
-facets by being closed would be a filter with a lifetime of its own.  The
-button wears the rail's gold while one of those eight is narrowing the
-collection, which is the only sign a control this row has not got is doing
-anything -- see :meth:`FilterBar.advanced_active`.
+elements asked about, and the property rows.  It belongs with the search box
+rather than after the sort because what is behind it is the rest of what
+*narrows* a collection, and the sort is where the narrowing ends and the
+ordering begins.  Those eight facets are kept *here* rather than in the panel,
+because this is where every facet lives until the window asks for it, and the
+panel is a thing that opens and closes: a search that unset eight facets by
+being closed would be a filter with a lifetime of its own.  The button wears
+the rail's gold while one of those eight is narrowing the collection, which is
+the only sign a control this row has not got is doing anything -- see
+:meth:`FilterBar.advanced_active`.
 
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
@@ -245,7 +248,12 @@ def _advanced_style(active: bool) -> str:
         "QPushButton {"
         f" color: {ink};"
         f" border: 1px solid {ink};"
-        " border-radius: 3px; padding: 2px 8px;"
+        # Three pixels of vertical padding rather than two, which is the
+        # user's other ask about this button: the chips beside it are drawn
+        # at three and the reset at the style's own, so two left this the
+        # shortest control in the row by a pixel and it read as a thing
+        # sitting slightly below the line the others are on.
+        " border-radius: 3px; padding: 3px 8px;"
         "}"
     )
 
@@ -348,7 +356,10 @@ class FilterBar(QWidget):
         # control this row has had to find room for; the advanced search's
         # button is the next, and the box that takes every spare pixel is the
         # one place that room can come from without costing a control its
-        # width.
+        # width.  The button's own width came from the sheet rather than from
+        # here for the same reason -- see :mod:`app.theme` -- and moving it in
+        # front of the sort changed none of this arithmetic: it takes no
+        # stretch wherever it stands.
         #
         # It is a floor and not the width: the box takes every pixel the row
         # is not already spending (below), so it is as wide as the pane has
@@ -392,6 +403,31 @@ class FilterBar(QWidget):
         self.set_chip.setVisible(False)
         row.addWidget(self.set_chip)
 
+        # The way into the eight facets that have no room here, and the only
+        # thing in the row that opens something rather than being something.
+        # It stands between the search box and the sort, which is where the
+        # user asked for it: what is behind it is the rest of what *narrows* a
+        # collection, so it belongs with the controls that narrow, and the
+        # sort -- which only orders what the others leave -- is where the
+        # narrowing ends.
+        #
+        # After the set chip rather than before it, because that chip is the
+        # other half of the search box's own question and the two belong
+        # together; the chip takes no room in the layout at all until a set is
+        # being shown, so this is the control immediately after the search box
+        # on every ordinary day.
+        self.advanced = QPushButton("Advanced search")
+        self.advanced.setObjectName("advanced")
+        self.advanced.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.advanced.setToolTip(
+            "More ways to narrow the collection: item level, sockets,\n"
+            "an item's stat requirements, the class it is for, its damage\n"
+            "and armour, and the stats it shows."
+        )
+        self._ink_advanced()
+        row.addSpacing(10)
+        row.addWidget(self.advanced)
+
         # The sort, which is the one control here that does not narrow: it
         # orders what the others leave.  It stands where the reference keeps
         # its own -- just before the rarities, which are the one facet a sort
@@ -420,6 +456,10 @@ class FilterBar(QWidget):
         # ladder over and then asks for the names gets them backwards, which is
         # the one reading of *"reverse the order"* that cannot surprise anyone
         # halfway down a list.
+        #
+        # Its width is the sheet's rather than this file's -- a rule on
+        # ``QPushButton#reverse``, which is also what takes the style's own
+        # 80-pixel floor off it; see :mod:`app.theme`.
         self.reverse = QPushButton()
         self.reverse.setObjectName("reverse")
         self.reverse.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -428,24 +468,6 @@ class FilterBar(QWidget):
         self.sort_box = _box("Sort", [self.sort, self.reverse])
 
         row.addWidget(self.sort_box)
-        row.addSpacing(10)
-
-        # The way into the four facets that have no room here, and the only
-        # thing in the row that opens something rather than being something.
-        # It stands just before the rarities, which is where the user asked for
-        # it and where it is worth being: what is behind it is the rest of what
-        # narrows a collection, and the rarities are the last of what is in
-        # front of it.
-        self.advanced = QPushButton("Advanced search")
-        self.advanced.setObjectName("advanced")
-        self.advanced.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.advanced.setToolTip(
-            "More ways to narrow the collection: item level, sockets,\n"
-            "an item's stat requirements, the class it is for, its damage\n"
-            "and armour, and the stats it shows."
-        )
-        self._ink_advanced()
-        row.addWidget(self.advanced)
         row.addSpacing(10)
 
         self.chips: dict[str, QCheckBox] = {}

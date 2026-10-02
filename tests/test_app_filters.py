@@ -2087,6 +2087,65 @@ def test_the_button_says_when_one_of_the_eight_is_narrowing(qapp):
     assert CHALK not in bar.advanced.styleSheet(), "the ink is one or the other"
 
 
+def test_the_advanced_button_stands_on_the_line_the_rest_of_the_row_is_on(themed):
+    """The user's *"more in-line with the other filter options"*, as a height.
+
+    It wore two pixels of vertical padding against the chips' three, which left
+    it 21 tall in a row of 23s -- a pixel or two short of every control beside
+    it, which is the sort of thing that reads as a mistake long before anyone
+    can say what is wrong.  Three is what the pills and the reset are drawn at,
+    so three is what it wears; the number is pinned here rather than left to
+    the sheet because the whole complaint was about a measurement.
+
+    Themed, and shown, because a widget's height is its layout's answer and not
+    its own: an unshown bar has not been laid out and every control in it is
+    the same size.
+    """
+    bar = _bar()
+    bar.show()
+    bar.resize(1400, 44)
+    themed.processEvents()
+
+    chip = next(iter(bar.chips.values()))
+    assert chip.height() == 23, "the row's own line moved, so nothing here reads"
+    assert bar.advanced.height() == chip.height()
+    assert bar.advanced.height() == bar.clear_button.height(), (
+        "the button is a different height from the reset at the other end"
+    )
+
+
+def test_the_advanced_button_stands_between_the_search_box_and_the_sort(themed):
+    """Where the user asked for it, stated as a position rather than as prose.
+
+    What is behind the button is the rest of what *narrows* a collection, so it
+    belongs with the controls that narrow and in front of the sort, which only
+    orders what they leave.  The set chip stays outside it, hard against the
+    search box, because the two answer one question between them -- and the
+    chip is hidden except while a set is being shown, so on an ordinary day the
+    button is the control immediately after the box.
+
+    Both readings of the same claim: the order of the row's own layout, which
+    is what a later reflow would change, and the x the three controls were
+    actually drawn at on a shown bar.
+    """
+    bar = _bar()
+    bar.show()
+    bar.resize(1400, 44)
+    themed.processEvents()
+
+    row = bar.layout()
+    drawn = [row.itemAt(i).widget() for i in range(row.count())]
+    drawn = [w for w in drawn if w is not None]
+
+    assert drawn.index(bar.set_chip) < drawn.index(bar.advanced), (
+        "the set chip has come away from the search box it belongs to"
+    )
+    assert drawn.index(bar.search) < drawn.index(bar.advanced) < drawn.index(
+        bar.sort_box
+    )
+    assert bar.search.x() < bar.advanced.x() < bar.sort_box.x()
+
+
 # --------------------------------------------------------------------------
 # The sort, which is in the row but is not a facet of it
 # --------------------------------------------------------------------------
@@ -2130,6 +2189,43 @@ def test_the_arrow_turns_the_key_over_and_says_so(qapp):
     assert bar.sort_backwards() is False
     assert bar.reverse.text() == "↓"
     assert len(heard) == 2
+
+
+def test_the_arrow_beside_the_box_is_a_button_and_not_half_the_row(themed):
+    """The user's other two halves of the row's geometry, in one reading.
+
+    *"the sort drop down list can be a tiny bit wider and the arrow button can
+    be reduced by half or even a bit more than half as needed"* -- against what
+    they were: the box 76 wide and the arrow **80**, because an unstyled
+    ``QPushButton`` under Fusion is floored at 80 pixels whatever is written on
+    it.  So the arrow wore a single glyph in a button three times the width of
+    the drop-down beside it.  The floor is not a number the style will let
+    anyone lower, which is why both of these are the sheet's doing rather than
+    ``setFixedWidth``'s: claiming the button in the stylesheet takes the floor
+    away entirely, because a styled button is measured from its own box model
+    -- and it leaves the widget's ``sizeHint()`` in step with its layout, which
+    ``test_a_box_is_as_wide_as_what_is_in_it_and_no_wider`` is reading.
+
+    Both measured off a shown bar rather than off the sheet, because a rule is
+    not a width: what was asked about was what the player sees.
+    """
+    bar = _bar()
+    bar.show()
+    bar.resize(1400, 44)
+    themed.processEvents()
+
+    assert (bar.sort.width(), bar.sort.height()) == (88, 21), (
+        "the box is not the little wider than its word that was asked for"
+    )
+    assert (bar.reverse.width(), bar.reverse.height()) == (35, 23), (
+        "the arrow is not a small square button beside the box"
+    )
+    assert bar.reverse.width() < bar.sort.width() / 2, (
+        "the arrow is still more than half the width of the box it turns over"
+    )
+    assert bar.reverse.height() == next(iter(bar.chips.values())).height(), (
+        "the arrow is a different height from the controls on its own line"
+    )
 
 
 def test_the_bar_says_so_when_the_order_moves(qapp):
@@ -2398,9 +2494,19 @@ def test_a_box_is_as_wide_as_what_is_in_it_and_no_wider(themed):
     ``Player level`` would be width the collection paid for.
 
     Themed, because the frame being measured is the sheet's -- without it the
-    style's own frame is a different width and the sum proves nothing.
+    style's own frame is a different width and the sum proves nothing.  Shown
+    for the same kind of reason, and it is worth knowing before this trips
+    somebody up: a widget's ``sizeHint()`` is only the sheet's once the style
+    has been asked about it, and until the *parent* is polished a freshly named
+    child still answers with the bare style's hint -- the sort combo says 80
+    before the box it lives in has been asked for its own hint, and 88 after.
+    The two sides of this sum come from two levels, so the bar is shown to put
+    them in one state; a window shows it too, and reads the same numbers.
     """
     bar = _bar()
+    bar.show()
+    bar.resize(1400, 44)
+    themed.processEvents()
 
     for box in (bar.sort_box, bar.rarity_box, bar.level_box):
         layout = box.layout()

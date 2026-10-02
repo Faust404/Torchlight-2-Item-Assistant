@@ -259,6 +259,29 @@ def test_the_sort_box_leaves_its_arrow_to_the_style(themed):
     assert "QComboBox {" not in sheet, "the rule is for the sort box and no other"
 
 
+def test_the_reverse_arrow_is_a_button_by_name(themed):
+    """The one button in the window the sheet is allowed to redraw whole.
+
+    It has to be: left to the style, Fusion floors a bare ``QPushButton`` at 80
+    pixels whatever is written on it, and the arrow is a single glyph -- so
+    claiming the widget is what takes the floor away, because a styled button
+    is measured from its own box model.  Which is also why it is claimed *by
+    name*: a rule on ``QPushButton`` would restyle every button in the window,
+    including the panel's, and the one thing this rule is for is a glyph in a
+    small square.
+
+    The outline is the combo's, so the box and the arrow beside it still read
+    as one control with two halves.
+    """
+    sheet = themed.styleSheet()
+    opener = sheet.index("QPushButton#reverse {")
+    rule = sheet[opener : sheet.index("}", opener)]
+
+    assert f"border: 1px solid {CHALK};" in rule, "the outline is not the combo's"
+    assert "padding" in rule, "the padding is what makes the button small"
+    assert "QPushButton {" not in sheet, "the rule reached every button here"
+
+
 def test_the_window_is_set_in_the_site_s_own_voice(themed):
     """The body font is the site's, in the size it sets its page at.
 
