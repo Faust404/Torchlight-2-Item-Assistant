@@ -55,8 +55,10 @@ from PySide6.QtWidgets import (
 from tl2stash.card import (
     AFFIX,
     ARMOR,
+    AUGMENT_LOCKED,
     DAMAGE,
     DAMAGE_PER_SECOND,
+    Augment,
     Card,
     TIER_INK,
     requirements_lines,
@@ -68,6 +70,7 @@ __all__ = [
     "IconCache",
     "IconTile",
     "ItemCard",
+    "LOCKED",
     "MARK",
     "TIER_INK",
     "element_of",
@@ -101,6 +104,11 @@ DIM = "#8b837b"
 GOLD = "#e3ba6b"
 #: The game's magical-item green, which is what an affix line is written in.
 MAGIC = "#7cc24a"
+#: The site's ``.fx.locked`` grey, for a stat an item has not been given yet.
+#: It is a shade off :data:`DIM` on purpose and reads as one of the card's
+#: side-notes rather than as a stat -- which is the whole of the distinction an
+#: augment needs, because green on this card means the item *has* it.
+LOCKED = "#8d8579"
 MUTED = "#999999"
 FLAVOUR = "#8d8579"
 TILE_BG = "#100f0e"
@@ -644,6 +652,14 @@ class ItemCard(QFrame):
             first = self._part(column, first)
             self._socketed(column, card)
 
+        # What the item will become, under the sockets and over the set's
+        # ladder: the same place ``tl2stash.card.lines`` puts it, because the
+        # drawing and the flat list are one card.
+        if card.augments:
+            first = self._part(column, first)
+            for augment in card.augments:
+                self._augment(column, augment)
+
         # The set's ladder, in the place the game writes it: after the item's
         # own stats and its sockets, before the remark under both.  The same
         # order ``tl2stash.card.lines`` flattens them in, because the drawing
@@ -763,6 +779,46 @@ class ItemCard(QFrame):
                 # like any other -- so they are drawn like the item's own.
                 column.addWidget(self._stat(text, AFFIX))
 
+    def _augment(self, column: QVBoxLayout, augment: Augment) -> None:
+        """A task, and the stats finishing it would grant.
+
+        The one block on the card that is not about the item as it stands, so
+        the one block whose lines are not written in the affix green: the green
+        means the item *has* it, and the site's own note about this block is
+        exactly that -- the locked stats pointedly do not take it.
+
+        The task takes the gold, as it does on the site, where it is a chip:
+        the same colour the Damage per Second takes, and for the same reason
+        -- it is not a stat of the item but the thing about it that is worth
+        acting on.  It is not drawn as a chip here, because the card has no
+        other chip on it and one would be a device rather than a word.
+
+        The caption between the two is the site's, and on the site it is the
+        same gold, uppercase, with a dashed rule either side of it.  Here it is
+        a side-note in the dim the card writes those in, because the two lines
+        are told apart by their colour rather than by their furniture and a
+        second gold line would only compete with the first.
+        """
+        if augment.task:
+            label = QLabel(plain(augment.task, GOLD))
+            label.setObjectName("augtask")
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setWordWrap(True)
+            column.addWidget(label)
+
+        if not augment.gains:
+            return
+        caption = QLabel(AUGMENT_LOCKED)
+        caption.setObjectName("auglock")
+        caption.setWordWrap(True)
+        column.addWidget(caption)
+        for text in augment.gains:
+            label = QLabel(plain(text, LOCKED))
+            label.setObjectName("augfx")
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setWordWrap(True)
+            column.addWidget(label)
+
     def _part(self, column: QVBoxLayout, first: bool) -> bool:
         """Open a section.  Returns ``False``: nothing after this is first."""
         if not first:
@@ -842,6 +898,9 @@ STYLE = f"""
 #socketed {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #setname {{ font-size: 13px; font-weight: 600; }}
 #rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
+#augtask {{ font-size: 12.5px; }}
+#auglock {{ color: {DIM}; font-size: 10px; letter-spacing: 1px; }}
+#augfx {{ font-size: 12.5px; }}
 #flav {{ color: {FLAVOUR}; font-size: 12px; font-style: italic; }}
 #hint {{ color: {DIM}; font-size: 12.5px; }}
 """

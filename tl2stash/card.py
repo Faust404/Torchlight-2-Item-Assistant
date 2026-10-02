@@ -26,6 +26,8 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "AFFIX",
     "ARMOR",
+    "AUGMENT_LOCKED",
+    "Augment",
     "Block",
     "Card",
     "DAMAGE",
@@ -194,6 +196,28 @@ class Rung:
 
 
 @dataclass(frozen=True)
+class Augment:
+    """A task an item carries, and what finishing it would grant.
+
+    The one part of a card that is not a fact about the item but a promise
+    about it: ``Kill 20 Goblins to Upgrade``, and the stats that arrive once
+    the count is done.  The game works the unlock out at runtime from the
+    triggerable the item names and never writes the rewards down anywhere a
+    file can be read, so this is the one thing on the card that comes from the
+    reference database rather than from the game's own files -- which is why a
+    machine without that database draws the card it always did.
+
+    ``gains`` is what the item does *not* have yet.  An item that has finished
+    its task has them among its own properties and no block here at all: the
+    distinction is not drawn by the card, it is made before the card is built,
+    because a reward that has been collected is a property like any other.
+    """
+
+    task: str
+    gains: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Card:
     """One item, whole.
 
@@ -225,6 +249,12 @@ class Card:
     game's data does not describe -- a mod's, or a machine with no game on it.
     The two are one empty tuple on purpose: what the card draws is the ladder,
     and there is nothing to draw either way.
+
+    ``augments`` is what the item would gain from a task it has not finished,
+    in the order the game chains them -- which is one block on 73 of the 74
+    items that have one at all, and three on a developer's test sword.  Empty
+    on everything else, on an item whose task is already done, and on a
+    machine with no reference database to read.
 
     ``socketed`` is the part of the item's own effect list that a socket put
     there.  A save file does not keep a socket's contribution apart: what a
@@ -259,6 +289,7 @@ class Card:
     flavor: str | None
     requires: Requirements | None = None
     weapon_lead: tuple[str, ...] = ()
+    augments: tuple[Augment, ...] = ()
 
 
 #: The two words the game writes in front of the two kinds of gate, taken off
@@ -285,6 +316,13 @@ THE_ALTERNATIVE = "or"
 #: the card reserves a colour for.  A line is a string and the window reads it
 #: as one, the same bargain ``element_of`` makes.
 DAMAGE_PER_SECOND = "Damage per Second"
+
+#: What the reference database says stands between an item and its augment's
+#: rewards, drawn as a line of its own between the task and them.  Not the
+#: game's wording -- the game has none, it simply stops drawing the rewards as
+#: locked once they are not -- so it is the reference's, which is where the
+#: whole block comes from in the first place.
+AUGMENT_LOCKED = "locked until the task above is complete"
 
 
 def requirements_lines(card: Card) -> list[str]:
@@ -341,6 +379,18 @@ def lines(card: Card) -> list[str]:
     # are drawn as lines under the item that holds them.
     for gem in card.gems:
         out.extend(f"    {line}" for line in lines(gem))
+    # What the item will become, under the sockets and over the set's ladder,
+    # which is where the reference draws it -- the socket's lines are about the
+    # item as it stands and these are about the item as it will be, so the two
+    # remarks go together and before the things that are not about it at all.
+    # The caption is a line of its own rather than a heading, because the task
+    # above it is what it is about.
+    for augment in card.augments:
+        if augment.task:
+            out.append(augment.task)
+        if augment.gains:
+            out.append(AUGMENT_LOCKED)
+            out.extend(augment.gains)
     # The set last of the stats and first of the remarks, which is where the
     # game writes it: what wearing more of the set would grant is about the
     # item rather than on it, and the flavour line is the remark under both.

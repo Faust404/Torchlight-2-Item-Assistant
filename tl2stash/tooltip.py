@@ -47,6 +47,7 @@ from .card import (
     DAMAGE,
     TIER_KEYS,
     TIER_NONE,
+    Augment,
     Block,
     Card,
     Rung,
@@ -187,6 +188,37 @@ def _as_duration(seconds: float, precision: int) -> str:
     recovery per second').
     """
     return f"{format_value(seconds, precision)} sec."
+
+
+def _augment_blocks(item, data, properties: list[str]) -> tuple[Augment, ...]:
+    """What the item's task would grant, unless it has already granted it.
+
+    The game stops drawing the rewards as locked the moment the task is done:
+    they become ordinary affixes of the item and the block over them is gone.
+    The save file does not record that a task was *finished* -- what it records
+    is the result, the item's own effect list with the rewards in it -- so the
+    test is whether the item already says every line the task grants.
+
+    Every line, not any: an item that had somehow been given one of its three
+    has not finished the task, and half a block would be a worse lie than the
+    whole of one.  The two sides are the same sentence written by two different
+    parts of the game -- the reference scraped the one out of a tooltip and the
+    archive hands over the other -- so case, runs of whitespace and a trailing
+    full stop are not meant to match.
+    """
+    found = data.augment_for(item)
+    if not found:
+        return ()
+    said = {_settled(line) for line in properties}
+    gains = [gain for augment in found for gain in augment.gains]
+    if gains and all(_settled(gain) in said for gain in gains):
+        return ()
+    return found
+
+
+def _settled(text: str) -> str:
+    """A line reduced to what it says, for comparing two spellings of it."""
+    return " ".join(text.split()).rstrip(".").casefold()
 
 
 def _substitute(
@@ -570,14 +602,19 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
 
     if data is not None:
         own, socketed = _effect_lines(item, data, appearance)
-        blocks.append((AFFIX, added + own))
+        properties = added + own
+        blocks.append((AFFIX, properties))
     else:
         # With no data there is no index to resolve, so no record can be told
         # apart as a socket's: every named effect is the item's own.
-        blocks.append(
-            (AFFIX, added + [e.name for e in item.effects + item.effects2 if e.name])
-        )
+        properties = added + [e.name for e in item.effects + item.effects2 if e.name]
+        blocks.append((AFFIX, properties))
         socketed = []
+
+    # What the item will *become*, which is the one thing on the card no file
+    # in the archive holds: the unlock is a triggerable resolved at runtime and
+    # nothing points at it.  See :mod:`tl2stash.augments`.
+    augments = _augment_blocks(item, data, properties) if data is not None else ()
 
     flavor = None
     if data is not None:
@@ -626,6 +663,7 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         # card falls back to the level the save records.
         requires=data.requirements_for(item) if data is not None else None,
         weapon_lead=lead,
+        augments=augments,
     )
 
 

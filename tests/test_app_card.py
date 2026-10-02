@@ -38,6 +38,8 @@ from app.card import (  # noqa: E402
     DIM,
     GOLD,
     HEAD,
+    LOCKED,
+    MAGIC,
     MARK,
     MUTED,
     TIER_INK,
@@ -53,8 +55,10 @@ from app.card import (  # noqa: E402
 from tl2stash.card import (  # noqa: E402
     AFFIX,
     ARMOR,
+    AUGMENT_LOCKED,
     DAMAGE,
     DAMAGE_PER_SECOND,
+    Augment,
     Block,
     Card,
     Rung,
@@ -106,6 +110,14 @@ def texts(drawn: ItemCard, name: str) -> list[str]:
         for label in drawn.findChildren(QLabel)
         if label.objectName() == name
     ]
+
+
+#: What the tests' augmented weapon would gain, which is the reference
+#: database's own two lines for the Grimbone Wand.
+GAINS = (
+    "6% chance to cast Acid Rain from target",
+    "15% chance to Stun target for 2 sec.",
+)
 
 
 # --------------------------------------------------------------------------
@@ -341,7 +353,8 @@ def test_a_weapon_leads_with_its_output_over_its_own_stats(qapp):
 
 
 def test_the_number_a_weapon_is_chosen_for_is_the_one_in_gold(qapp):
-    """The site's ``--gold`` is kept for this and nothing else on the card.
+    """The site's ``--gold`` is kept for the two things that are worth acting
+    on, and this is the one a weapon leads with.
 
     A weapon's Damage per Second is a verdict rather than a stat -- the reason
     it is picked up at all -- and the two lines under it are what qualifies it,
@@ -350,6 +363,9 @@ def test_the_number_a_weapon_is_chosen_for_is_the_one_in_gold(qapp):
     The dps line is the one line drawn without the lift of :func:`emphasis`,
     and that is the point of it: the number is already the loudest thing in
     the line, so lifting it out would lift it out of the gold.
+
+    The other gold line on a card is an augment's task, which is the other
+    thing about an item that is not a stat of it; this card has none.
     """
     drawn = ItemCard(
         card(
@@ -367,7 +383,7 @@ def test_the_number_a_weapon_is_chosen_for_is_the_one_in_gold(qapp):
     assert HEAD not in lead[0], "the gold line lifts nothing out of itself"
     assert HEAD in lead[1], "and the lines under it lift their numbers as usual"
     assert all(DIM in line for line in lead[1:])
-    # The card reserves gold for the lead: nothing else is written in it.
+    # Nothing else on a card with no task is written in it.
     elsewhere = [
         label.text()
         for label in drawn.findChildren(QLabel)
@@ -382,6 +398,47 @@ def test_the_line_that_leads_is_read_off_the_text_and_not_beside_it(qapp):
     assert DAMAGE_PER_SECOND in texts(
         ItemCard(card(weapon_lead=(f"110 {DAMAGE_PER_SECOND}",))), "lead"
     )[0]
+
+
+def test_what_a_weapon_will_become_is_drawn_as_a_promise_and_not_a_stat(qapp):
+    """The task, the note that it is not done, and what finishing it grants.
+
+    None of the three is an affix line, and the green is the whole reason: on
+    this card green means the item *has* it.  The task takes the gold, because
+    the one other thing on the card written in it is the number a weapon is
+    chosen for, and this is the one other thing about a weapon worth acting on.
+    """
+    drawn = ItemCard(
+        card(
+            blocks=(Block(AFFIX, ("+25 Physical Damage",)),),
+            augments=(Augment("Kill 50 Ezrohir to Upgrade", GAINS),),
+        )
+    )
+
+    assert texts(drawn, "augtask") == [plain("Kill 50 Ezrohir to Upgrade", GOLD)]
+    assert texts(drawn, "auglock") == [AUGMENT_LOCKED]
+    assert texts(drawn, "augfx") == [plain(gain, LOCKED) for gain in GAINS]
+    assert not any(MAGIC in text for text in texts(drawn, "augfx"))
+
+    # One section for the stats and one for this: a rule between them, and
+    # nothing else on the card is drawn in a colour of its own.
+    assert len(drawn.findChildren(Hairline)) == 1
+
+    # A card with no block draws none of it, which is every card but the 74.
+    bare = ItemCard(card(blocks=(Block(AFFIX, ("+25 Physical Damage",)),)))
+    assert texts(bare, "augtask") == []
+    assert texts(bare, "auglock") == []
+    assert texts(bare, "augfx") == []
+
+
+def test_a_task_with_nothing_left_to_grant_is_still_a_task(qapp):
+    """The site draws the task on its own when it has no rewards under it --
+    the count is a fact about the item whether or not anything follows."""
+    drawn = ItemCard(card(augments=(Augment("Kill 5 Ratlins to Upgrade", ()),)))
+
+    assert texts(drawn, "augtask") == [plain("Kill 5 Ratlins to Upgrade", GOLD)]
+    assert texts(drawn, "auglock") == []
+    assert texts(drawn, "augfx") == []
 
 
 def test_what_the_item_asks_of_the_character_is_drawn_under_its_name(qapp):

@@ -32,7 +32,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
-from .card import DAMAGE_PER_SECOND
+from . import augments as _augments
+from .card import DAMAGE_PER_SECOND, Augment
 from .dat import (
     VAR_AFFIX,
     VAR_AFFIX_EFFECT,
@@ -769,6 +770,7 @@ class GameData:
         "install",
         "_affix_effects",
         "_armor_curve",
+        "_augments",
         "_by_name",
         "_display_names",
         "_effects",
@@ -802,6 +804,7 @@ class GameData:
         effect_curves: dict[str, dict[int, float]],
         socket_targets: dict[str, str],
         require_curves: dict[str, dict[int, float]] | None = None,
+        augments: dict[str, tuple[Augment, ...]] | None = None,
     ) -> None:
         self.install = install
         self._by_name = by_name
@@ -820,6 +823,7 @@ class GameData:
         self._armor_curve = armor_curve
         self._socket_targets = socket_targets
         self._require_curves = require_curves or {}
+        self._augments = augments or {}
         self._stash_tabs: list[int] | None = None
 
     def __repr__(self) -> str:
@@ -831,8 +835,18 @@ class GameData:
     # -- loading ----------------------------------------------------------
 
     @classmethod
-    def load(cls, install: str | Path) -> "GameData":
+    def load(
+        cls,
+        install: str | Path,
+        augments: dict[str, tuple[Augment, ...]] | None = None,
+    ) -> "GameData":
         """Read every file in :data:`WANTED` out of the archive.
+
+        ``augments`` is the reference database's table of what an item's
+        augment task would grant, which is not game data at all and is not in
+        the archive -- see :mod:`tl2stash.augments`.  ``None`` looks for it in
+        the usual places; ``{}`` says there is none, which is what a caller
+        that wants a card drawn from the game's own files alone passes.
 
         Raises whatever :class:`~tl2stash.pak.PakError` the archive gives if
         it cannot be opened at all; individual files that will not parse are
@@ -1053,6 +1067,7 @@ class GameData:
             effect_curves,
             socket_targets,
             require_curves,
+            _augments.load(install) if augments is None else augments,
         )
 
     # -- looking things up ------------------------------------------------
@@ -1447,6 +1462,26 @@ class GameData:
             return None
         node = self._inherited(data).get(VAR_FLAVOR)
         return node.text(VAR_FLAVOR) if node is not None else None
+
+    def augment_for(self, item) -> tuple[Augment, ...]:
+        """What the item's own task would grant, and none for most items.
+
+        Keyed on the item file's own ``NAME`` rather than on the guid the two
+        lookups above share, because the table is the reference database's and
+        that is how it files one: ``hammer_u02`` is a name, and the archive's
+        items are named after their files.  The guid is still the way *in* --
+        it is what leads to the file that states the name -- for the same
+        reason it leads to everything else, and it is the one key the save
+        file and the archive agree on.
+
+        Empty for the 6,099 items with no task, for one whose task is already
+        finished (which the caller settles, not this), and for every item on a
+        machine with no reference database.
+        """
+        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
+        if data is None:
+            return ()
+        return self._augments.get((data.root.text(VAR_NAME) or "").lower(), ())
 
     def appearance_for(self, item) -> Appearance | None:
         """What an item is, and what it looks like: its tier, kind and icon.

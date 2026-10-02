@@ -522,7 +522,10 @@ def install(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def game(tmp_path):
-    return GameData.load(install(tmp_path))
+    # No reference database: the augment table is not game data and the tests
+    # here are about the game's, so a machine that happens to have a checkout
+    # of the reference beside this one must not change what they see.
+    return GameData.load(install(tmp_path), augments={})
 
 
 # --------------------------------------------------------------------------
