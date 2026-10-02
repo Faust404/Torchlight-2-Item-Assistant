@@ -371,7 +371,6 @@ def _a_card(**fields) -> Card:
         sockets=0,
         blocks=(),
         gems=(),
-        socketed=(),
         set_ladder=(),
         flavor=None,
     )
@@ -536,7 +535,6 @@ def test_a_ladder_is_a_heading_and_its_lines_under_the_item_s_stats():
         sockets=0,
         blocks=(Block(AFFIX, ("+5 Strength",)),),
         gems=(),
-        socketed=(),
         set_ladder=(
             Rung(2, ("+6 Set damage",)),
             Rung(3, ("+5 Set burn", "2.5% chance to cast Test Proc on kill")),
@@ -577,7 +575,6 @@ def test_a_rung_is_a_heading_over_the_lines_it_carries():
         sockets=0,
         blocks=(),
         gems=(),
-        socketed=(),
         set_ladder=(Rung(2, ("+6 Set damage",)), Rung(3, ("+5 Set burn",))),
         flavor=None,
     )

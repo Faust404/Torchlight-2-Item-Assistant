@@ -104,7 +104,6 @@ def card(**kwargs) -> Card:
         "sockets": 1,
         "blocks": (),
         "gems": (),
-        "socketed": (),
         "set_ladder": (),
         "flavor": None,
     }
@@ -645,15 +644,13 @@ def test_a_gem_is_drawn_under_the_item_that_holds_it(qapp):
     assert len(drawn.findChildren(Hairline)) == 1
 
 
-def test_what_a_socket_added_is_drawn_under_its_own_heading(qapp):
-    """The heading is this window's word, and it is what tells the two numbers
-    apart: an Ice Ember reads ``+120 Ice Armor`` on the gorget it sits in and
-    ``+58`` on its own, and a player deciding whether to empty the socket
-    needs to know which line the item would keep.
+def test_what_is_in_a_socket_is_drawn_under_its_own_heading(qapp):
+    """The heading is this window's word, and it is over the gem rather than
+    over lines of the item's own -- a socket's contribution is not among the
+    item's effects, so the ember's card is the only place it is written.
 
-    The socket's lines come under the heading, the gem's own card under them,
-    and the item's own stats above both -- so the section is ruled off from
-    the item once and the gem takes no second rule of its own.
+    The item's own stats stay above the heading, so the section is ruled off
+    from the item once and the gem takes no second rule of its own.
     """
     gem = card(
         name="Ice Ember",
@@ -669,7 +666,6 @@ def test_what_a_socket_added_is_drawn_under_its_own_heading(qapp):
             sockets=1,
             gems=(gem,),
             blocks=(Block(AFFIX, ("15 Health stolen on hit",)),),
-            socketed=("+120 Ice Armor",),
         )
     )
 
@@ -677,9 +673,7 @@ def test_what_a_socket_added_is_drawn_under_its_own_heading(qapp):
     assert texts(drawn, "gem") == ["Ice Ember"]
 
     body = [label.text() for label in drawn.findChildren(QLabel) if label.objectName() == ""]
-    # The number is lifted into its own colour by ``mark``, so the line is
-    # checked for its words and for the green the whole line is inked with.
-    assert any("Ice Armor" in text and "120" in text for text in body), body
+    # The gem's own bonus, and the item keeping its own line where it was.
     assert any("#7cc24a" in text and "Ice Armor" in text for text in body), body
     assert any("Health stolen on hit" in text for text in body), body
     assert len(drawn.findChildren(Hairline)) == 1

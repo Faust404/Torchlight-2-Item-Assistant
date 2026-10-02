@@ -235,7 +235,8 @@ class Card:
     :data:`TIER_NONE`.  ``level`` is what the save file records the item as
     requiring, and 0 when it records none.  ``sockets`` is how many it has, not
     how many are filled -- the gems that fill them are ``gems``, each a card of
-    its own because that is how the game draws one.
+    its own because that is how the game draws one, and each carrying the whole
+    of what the socket contributes: see below.
 
     ``weapon_lead`` is the three lines a weapon leads with -- its Damage per
     Second, its attack speed and its reach -- and is empty on everything that
@@ -260,14 +261,14 @@ class Card:
     on everything else, on an item whose task is already done, and on a
     machine with no reference database to read.
 
-    ``socketed`` is the part of the item's own effect list that a socket put
-    there.  A save file does not keep a socket's contribution apart: what a
-    gem grants is *added to the item's own records*, at the value it has for
-    that item rather than the value it has on its own -- the Gorget's Ice
-    Ember reads ``+120 Ice Armor`` in the item's list and ``+58 Ice Armor`` on
-    the ember.  So the lines are split out here and drawn as their own
-    section, which is the one thing that tells the player which of the numbers
-    the item would keep if the socket were emptied.
+    ``socketed`` is not a field here, and the reason is the shape of the data
+    rather than of the card: a socket's contribution is not among the item's
+    lines.  The gem's card under ``Socketed`` is where it is written, and it
+    is written there alone.  What an item's effect list holds is the item's
+    own effects, even when one of them is the very effect a gem in it grants
+    -- the Gorget of the Hill Giant Chief's ``+120 Ice Armor`` is its own
+    fixed stat, and the ember in its socket grants ``+58`` of the same thing,
+    which is a number the gorget carries nowhere.
 
     ``requires`` is what the game gates the item on, worked out from the
     item's own data file.  ``level`` stays beside it because it is a different
@@ -288,7 +289,6 @@ class Card:
     sockets: int
     blocks: tuple[Block, ...]
     gems: tuple[Card, ...]
-    socketed: tuple[str, ...]
     set_ladder: tuple[Rung, ...]
     flavor: str | None
     requires: Requirements | None = None
@@ -386,12 +386,12 @@ def lines(card: Card) -> list[str]:
     out.extend(card.weapon_lead)
     for block in card.blocks:
         out.extend(block.lines)
-    # What a socket added, under its own heading and over the gems themselves
-    # -- the ember is what the player put in, and these are what it does to
-    # *this* item, which is not the same number it reads on its own card.
-    if card.gems or card.socketed:
+    # What is in a socket, under its own heading: the ember the player put
+    # there, and the bonus it grants *this* item -- which is the item's own
+    # number for the effect even though it is not among the item's lines, and
+    # is why the heading is over the gem rather than over lines of its own.
+    if card.gems:
         out.append("Socketed")
-    out.extend(card.socketed)
     # A gem reads as its own card, indented: in the game a socket's contents
     # are drawn as lines under the item that holds them.
     for gem in card.gems:

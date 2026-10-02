@@ -741,12 +741,11 @@ class ItemCard(QFrame):
             for text in found:
                 column.addWidget(self._stat(text, kind))
 
-        # What a socket added, as its own section: the lines the item's own
-        # records carry *because* of the socket, then the gems themselves.
-        # The two numbers differ on purpose -- the record holds what the gem
-        # grants this item, the gem's own card what it is on its own -- and
-        # the section is what says which is which.
-        if card.gems or card.socketed:
+        # What is in a socket, as its own section: the ember the player put
+        # there and the bonus it grants this item.  The heading is over the
+        # gem rather than over lines of the item's own, because the item's own
+        # effect list does not hold the socket's contribution at all.
+        if card.gems:
             first = self._part(column, first)
             self._socketed(column, card)
 
@@ -867,7 +866,7 @@ class ItemCard(QFrame):
         return label
 
     def _socketed(self, column: QVBoxLayout, card: Card) -> None:
-        """What a socket put on the item: the heading, its lines, the gems.
+        """What is in a socket: the heading, and the gems under it.
 
         The heading is this window's own word rather than the game's -- the
         game draws a socket's contents under the item with nothing over them,
@@ -875,17 +874,16 @@ class ItemCard(QFrame):
         put the gem there a moment ago.  A collection may hold an item nobody
         alive has ever unsocketed, so the section says what it is.
 
-        The lines come first and the gems under them: what the socket does to
-        *this* item is the item's own number, and the gem's card under it is
-        the gem's, which is a different number for the same effect -- an Ice
-        Ember reads ``+120 Ice Armor`` on the Gorget it is sitting in and
-        ``+58 Ice Armor`` on its own.
+        The gems are the whole of the section, because they are the whole of
+        what a socket contributes: an item's own effect list does not carry
+        it.  The Gorget of the Hill Giant Chief's ``+120 Ice Armor`` reads
+        among the item's own stats -- it is its own fixed stat -- and the
+        ``+58 Ice Armor`` the ember in it grants is on the ember's card here,
+        which is the only place that number exists.
         """
         heading = QLabel("Socketed")
         heading.setObjectName("socketed")
         column.addWidget(heading)
-        for text in card.socketed:
-            column.addWidget(self._stat(text, AFFIX))
         for gem in card.gems:
             self._gem(column, gem)
 

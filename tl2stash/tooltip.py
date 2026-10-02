@@ -296,67 +296,49 @@ def _substitute(
     return _TAG.sub(fill, template)
 
 
-def _socketed_indices(item: "Item") -> set[int]:
-    """The effect indices a socket put on the item.
-
-    A save file does not mark which of an item's effect records came from a
-    socket: the gem's contribution is *added to the item's own list*, and all
-    that is left to tell them apart is the index -- the position in
-    ``EFFECTSLIST`` -- which the socket's record shares with the gem's own
-    record for the same effect.  Measured on the Gorget: its first record is
-    index 38, and index 38 is the Ice Ember's own ice-defence record.
-
-    This is the same rule FNIStash reaches for (``makeGemDescriptors``), and
-    it has the same limit: an item rolled with the very effect a gem grants
-    has two records at one index and only one of them is the socket's.  There
-    is nothing in the file that would tell them apart, so both read as
-    socketed rather than neither.
-    """
-    return {
-        effect.index
-        for gem in item.gems
-        for effect in list(gem.effects) + list(gem.effects2)
-        # A record whose index lands nowhere carries its name instead, so it
-        # can never be matched by index and is left to the item.
-        if effect.index >= 0
-    }
-
-
-def _effect_lines(
-    item: "Item", data: "GameData", appearance=None
-) -> tuple[list[str], list[str]]:
-    """The item's effects, split into its own and what a socket added.
+def _effect_lines(item: "Item", data: "GameData", appearance=None) -> list[str]:
+    """The item's own effects, one line each, in file order.
 
     Both effect lists are read.  ``effects`` is what the item was rolled with;
-    ``effects2`` is what its gems, its enchantments and its set bonuses added.
-    Reading only the first is why a socketed item used to show fewer lines
-    than the game does.
+    ``effects2`` is what its enchantments and its set bonuses added.  Reading
+    only the first is why a socketed item used to show fewer lines than the
+    game does.
 
-    The second list returned is the socket's half of them, in the same order,
-    which is drawn as its own section -- a gem's contribution is not a stat
-    the item has, and a player deciding whether to empty a socket needs the
-    two apart.
+    What is *not* read out of them is anything a socket put there, because
+    nothing a socket put there is in them.  The tool used to split the list by
+    effect index -- a gem's record and the item's record for the same effect
+    share a position in ``EFFECTSLIST`` -- and the rule was wrong twice over.
+    Measured on the two socketed items on this machine: the Gorget of the Hill
+    Giant Chief's ``+120 Ice Armor`` is its own fixed stat, which the reference
+    database prints among the item's effects and not under its socket, and the
+    record the rule caught was the gorget's own line for the same *effect* the
+    ember grants, at the number the gorget has.  A Socketed Smallsword carries
+    one record and it is its own damage bonus: not one of the two things its
+    Void Ember Speck grants is in the item's list at all.
 
-    A socketable's own lines each name the host they are granted to.  A gem
-    is not one bonus but one per host, and the card is the only place the two
-    can be read side by side -- in the game the thing is already socketed and
-    the question has answered itself.  Only a socketable is written this way:
-    the same effect node on a sword is that sword's own damage bonus, which is
-    a fact about the sword and not about where it is worn.
+    So the gem's contribution is computed where the gem is, and the only place
+    it can be shown is the gem's own card under the item's -- see
+    :func:`build`.  An item's effect list is the item's, and index equality
+    means "the same effect", which is not the same question.
 
-    The host's half of it decides the order the lines are written in, which is
+    A socketable's own lines each name the host they are granted to.  A gem is
+    not one bonus but one per host, and the card is the only place the two can
+    be read side by side -- in the game the thing is already socketed and the
+    question has answered itself.  Only a socketable is written this way: the
+    same effect node on a sword is that sword's own damage bonus, which is a
+    fact about the sword and not about where it is worn.
+
+    The named host also decides the order the lines are written in, which is
     the reference database's: everything granted to both hosts, then the
     Armor/Trinket bonus, then the weapon's.  A gem's save records are in no
     order of their own -- the Flame Ember's weapon half is recorded first --
     so without this the card would lead with the wrong one of the two.
     """
     lines: list[str] = []
-    socketed: list[str] = []
     # One per line of ``lines``, in the same order: 0 for a line that names no
     # host, which is every line of everything that is not a socketable.
     hosts: list[int] = []
     socketable = appearance is not None and appearance.type_name == "Socketable"
-    from_socket = _socketed_indices(item)
     for effect in list(item.effects) + list(item.effects2):
         # The record's index is a position in EFFECTSLIST.DAT, and that is
         # what says which effect is meant.  The name beside it is an affix
@@ -424,19 +406,15 @@ def _effect_lines(
                 line = f"{host}: {line}"
             rank = _SOCKET_ORDER.get(target or "", 0)
 
-        if effect.index in from_socket:
-            socketed.append(line)
-        else:
-            lines.append(line)
-            hosts.append(rank)
+        lines.append(line)
+        hosts.append(rank)
 
     if any(hosts):
         # A stable sort, and only when a host is named: a socketable's two
         # halves come out of the save file in the order the game recorded them
         # and nothing else orders them.  Everything else keeps file order.
         lines = [line for _, line in sorted(zip(hosts, lines), key=lambda pair: pair[0])]
-    return lines, socketed
-
+    return lines
 
 def _set_ladder(title: str, data: "GameData") -> tuple[Rung, ...]:
     """What wearing more of the set ``title`` grants, rung by rung.
@@ -561,6 +539,10 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     ``data`` may be ``None``: the game's files are not always somewhere the
     tool can find them, and without them the lines that need wording come back
     as the names the save file gave, and the item has no tier, kind or icon.
+
+    The gems are cards of their own and are the only place a socket's
+    contribution is written, because the item's own effect list does not hold
+    it -- see :func:`_effect_lines`.
     """
     blocks: list[tuple[str, list[str]]] = []
 
@@ -601,15 +583,15 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     added = _added_damage_lines(item)
 
     if data is not None:
-        own, socketed = _effect_lines(item, data, appearance)
+        own = _effect_lines(item, data, appearance)
         properties = added + own
         blocks.append((AFFIX, properties))
     else:
-        # With no data there is no index to resolve, so no record can be told
-        # apart as a socket's: every named effect is the item's own.
+        # With no data there is no index to resolve, so there is no wording
+        # and no socketable's host to name: every effect is shown under the
+        # name the save file gave it.
         properties = added + [e.name for e in item.effects + item.effects2 if e.name]
         blocks.append((AFFIX, properties))
-        socketed = []
 
     # What the item will *become*, which is the one thing on the card no file
     # in the archive holds: the unlock is a triggerable resolved at runtime and
@@ -654,7 +636,6 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         # nothing under it, which is what lets `lines` concatenate them.
         blocks=tuple(Block(kind, tuple(found)) for kind, found in blocks if found),
         gems=tuple(build(gem, data) for gem in item.gems),
-        socketed=tuple(socketed),
         set_ladder=ladder,
         flavor=flavor or None,
         # What the game gates the item on -- the player level or the

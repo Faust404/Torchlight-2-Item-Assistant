@@ -35,6 +35,7 @@ from tl2stash.item import (  # noqa: E402
     Location,
     parse_item,
 )
+from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.stash import read_stash_file  # noqa: E402
 from tl2stash.tooltip import (  # noqa: E402
     PERMANENT,
@@ -630,9 +631,9 @@ def test_a_socketable_s_line_names_the_host_it_is_granted_to():
     gem = item("Ice Ember", level=0)
     gem.effects = [effect("", value=120.0, index=_SocketGame.SOCKET)]
 
-    own, socketed = _effect_lines(gem, _SocketGame(), _Kind("Socketable"))
-    assert own == ["Armor/Trinket: +120 Ice Armor"]
-    assert socketed == []
+    assert _effect_lines(gem, _SocketGame(), _Kind("Socketable")) == [
+        "Armor/Trinket: +120 Ice Armor"
+    ]
 
 
 def test_a_socketable_leads_with_the_half_that_is_not_the_weapon_s():
@@ -651,14 +652,11 @@ def test_a_socketable_leads_with_the_half_that_is_not_the_weapon_s():
         effect("", value=50.0, index=_SocketGame.OWN),  # granted to both
     ]
 
-    own, socketed = _effect_lines(gem, _TwoHostGame(), _Kind("Socketable"))
-
-    assert own == [
+    assert _effect_lines(gem, _TwoHostGame(), _Kind("Socketable")) == [
         "+50 Health",
         "Armor/Trinket: +120 Ice Armor",
         "Weapon: +26 Fire Damage",
     ]
-    assert socketed == []
 
 
 def test_the_same_effect_on_anything_else_is_named_to_no_host():
@@ -671,9 +669,7 @@ def test_the_same_effect_on_anything_else_is_named_to_no_host():
     sword = item("Test Sword", level=1)
     sword.effects = [effect("", value=120.0, index=_SocketGame.SOCKET)]
 
-    own, socketed = _effect_lines(sword, _SocketGame(), _Kind("Sword"))
-    assert own == ["+120 Ice Armor"]
-    assert socketed == []
+    assert _effect_lines(sword, _SocketGame(), _Kind("Sword")) == ["+120 Ice Armor"]
 
 
 def test_an_effect_both_hosts_get_is_left_without_a_host():
@@ -686,19 +682,20 @@ def test_an_effect_both_hosts_get_is_left_without_a_host():
     gem = item("Unique Gem", level=0)
     gem.effects = [effect("", value=82.0, index=_SocketGame.OWN)]
 
-    own, socketed = _effect_lines(gem, _SocketGame(), _Kind("Socketable"))
-    assert own == ["+82 Health"]
+    assert _effect_lines(gem, _SocketGame(), _Kind("Socketable")) == ["+82 Health"]
 
 
-def test_a_socket_s_line_is_read_out_of_the_item_s_own_list():
-    """A save file does not mark which of an item's records came from a socket.
+def test_a_socket_does_not_split_the_item_s_own_lines():
+    """The rule that was wrong, and the item it was measured on.
 
-    What a gem grants is *added to the item's own list*, at the value it has
-    for that item -- so the one thing left to tell the two apart is the index,
-    which the item's record shares with the gem's own record for the same
-    effect.  Here the item carries two records and the gem one: index 26 is
-    the item's own health and stays among its stats, index 38 is the socket's
-    ice armour and goes under its own heading.
+    The tool used to read a socket's contribution out of the item's own effect
+    list by index: a gem's record and the item's record for the same effect
+    share a position in ``EFFECTSLIST``, so an index the gem also had was
+    taken for the socket's.  What that catches is the item's own line for the
+    same *effect* -- here the ice armour the gorget was rolled with -- which
+    the reference database prints among the item's effects and not under its
+    socket.  Index equality means "the same effect", which is not the question
+    the split was asking.
     """
     gem = item("Ice Ember", level=0)
     gem.effects = [effect("", value=58.0, index=_SocketGame.SOCKET)]
@@ -708,39 +705,72 @@ def test_a_socket_s_line_is_read_out_of_the_item_s_own_list():
         effect("", value=82.0, index=_SocketGame.OWN),
     ]
 
-    own, socketed = _effect_lines(holder, _SocketGame())
-    assert own == ["+82 Health"]
-    assert socketed == ["+120 Ice Armor"]
+    assert _effect_lines(holder, _SocketGame()) == ["+120 Ice Armor", "+82 Health"]
 
 
-def test_a_record_the_gem_does_not_share_stays_the_item_s():
-    """The other half of the rule, and the reason it is the index rather than
-    "anything a gem has": an item rolled with health and a gem granting ice
-    keeps its health, whatever else the gem does."""
-    gem = item("Ice Ember", level=0)
-    gem.effects = [effect("", value=58.0, index=_SocketGame.SOCKET)]
-    holder = item(num_sockets=1, gems=[gem])
-    holder.effects = [effect("", value=82.0, index=_SocketGame.OWN)]
+def test_a_real_socket_puts_nothing_in_the_item_s_own_list(game):
+    """The other half of the measurement, and the reason the split is gone.
 
-    own, socketed = _effect_lines(holder, _SocketGame())
-    assert own == ["+82 Health"]
-    assert socketed == []
+    The Gorget's own list *does* hold an ice-armour record, so the index rule
+    looked right there -- but that record is the gorget's own affix.  The
+    Socketed Smallsword settles it: its list holds exactly one record, its own
+    ``DAMAGE BONUS SECONDARY``, and nothing at all of the two things its Void
+    Ember Speck grants.  A socket's contribution is worked out where the gem
+    is, and the item's list never sees it.
+    """
+    sword = _a_socketed_sword()
+    if sword is None:
+        pytest.skip("no sword with a gem is stored on this machine")
+
+    (gem,) = sword.gems
+    granted = [
+        effect.index for effect in list(gem.effects) + list(gem.effects2)
+    ]
+    assert granted, "the gem's own records are the premise"
+
+    listed = [effect.index for effect in sword.effects + sword.effects2]
+    assert not (set(listed) & set(granted)), (
+        "a gem's effect index turned up in the item's own list"
+    )
 
 
-def test_a_record_with_no_index_can_never_read_as_a_socket_s():
+def test_a_record_with_no_index_is_still_the_item_s_own():
     """``index`` is -1 on a record whose effect is settled by its name -- a
-    mod's, mostly -- and -1 is not a position in any gem's list either, so
-    such a record is always the item's own.  Nothing else in the file would
-    say so, and guessing from the name is exactly what the index is here to
-    avoid: 107 affixes share one name."""
+    mod's, mostly -- and no socketing changes what that record says.  Guessing
+    from the name instead is exactly what the index is here to avoid: 107
+    affixes share one name."""
     gem = item("Ice Ember", level=0)
     gem.effects = [effect("OFFLAME DAMAGE BONUS", value=58.0)]
     holder = item(num_sockets=1, gems=[gem])
     holder.effects = [effect("OFFLAME DAMAGE BONUS", value=120.0)]
 
-    own, socketed = _effect_lines(holder, _SocketGame())
-    assert socketed == []
-    assert own == ["OFFLAME DAMAGE BONUS"], "the name stands in with no wording"
+    assert _effect_lines(holder, _SocketGame()) == ["OFFLAME DAMAGE BONUS"], (
+        "the name stands in with no wording"
+    )
+
+
+def _a_socketed_sword():
+    """The Socketed Smallsword, read out of the tool's own registry.
+
+    Read only, so a test can never write to it.  ``None`` when the registry is
+    not on this machine or holds nothing socketed.
+    """
+    root = Path(__file__).resolve().parent.parent
+    for name in ("items-vanilla-76561198328811052.db", "items.db"):
+        path = root / "var" / name
+        if not path.is_file():
+            continue
+        with Registry(path) as registry:
+            for entry in registry.rows():
+                if not entry["raw"]:
+                    continue
+                try:
+                    it = parse_item(entry["raw"])
+                except Exception:  # noqa: BLE001 -- an unreadable blob is not this test's business
+                    continue
+                if it.gems and len(it.effects) + len(it.effects2) <= 2:
+                    return it
+    return None
 
 
 def _a_socketed_item():
@@ -768,12 +798,11 @@ def _a_socketed_item():
 def test_a_real_socket_s_line_is_shown_apart_from_the_item_s_own(game):
     """The item the split was measured on: the Gorget of the Hill Giant Chief.
 
-    Its Ice Ember reads ``+58 Ice Armor`` on its own card and ``+120 Ice
-    Armor`` in the item's effect list, and both are true: the record holds
-    what the ember grants *this gorget*.  What the split buys is the one thing
-    that tells the player which is which -- the ice line reads under
-    ``Socketed``, and the block above it is what the item would still have
-    with the socket emptied.
+    Its Ice Ember grants ``+58 Ice Armor``, and the ``+120 Ice Armor`` the
+    Gorget shows is its own fixed stat -- the reference database prints it
+    among the item's effects.  So the gorget keeps its line where it belongs,
+    among its own, and the ember's card under ``Socketed`` is where the socket
+    is written down.
     """
     gorget = _a_socketed_item()
     if gorget is None:
@@ -783,11 +812,9 @@ def test_a_real_socket_s_line_is_shown_apart_from_the_item_s_own(game):
     flat = lines(card)
 
     (affix,) = [block for block in card.blocks if block.kind == AFFIX]
-    assert not any("Ice Armor" in line for line in affix.lines), affix.lines
-
-    assert card.socketed == ("+120 Ice Armor",)
+    assert any("+120 Ice Armor" in line for line in affix.lines), affix.lines
     assert flat.count("+120 Ice Armor") == 1
-    assert flat.index("Socketed") < flat.index("+120 Ice Armor")
+    assert flat.index("+120 Ice Armor") < flat.index("Socketed")
 
     # And the gem under it is a card of its own, with the gem's own number.
     assert [gem.name for gem in card.gems] == ["Ice Ember"]
@@ -829,10 +856,10 @@ def test_a_real_socketable_s_two_halves_are_named_on_the_card(game):
         effect("", value=58.0, index=_effect_index(game, "FIRE DEFENSE"), damage_type=1),
     ]
 
-    own, socketed = _effect_lines(ember, game, _Kind("Socketable"))
-
-    assert own == ["Armor/Trinket: +58 Fire Armor", "Weapon: +29 Fire Damage"]
-    assert socketed == []
+    assert _effect_lines(ember, game, _Kind("Socketable")) == [
+        "Armor/Trinket: +58 Fire Armor",
+        "Weapon: +29 Fire Damage",
+    ]
 
 
 @needs_game
