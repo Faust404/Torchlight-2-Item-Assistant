@@ -1,11 +1,13 @@
-"""The bar across the top: the search box, the rarities, the level range.
+"""The row over the collection: the search box, the rarities, the level range.
 
 Three of the four things that narrow a collection, in one row above the cards
 rather than in a column beside them -- which is where the reference tool puts
-them, and where they cost the wall none of its width.  The fourth, the kinds,
-stays in the rail: a kind has a path (a sword is a one-handed weapon) and a
-tree is the only control that says so, while a tree drawn across the top of a
-window is a tree nobody reads.
+them, and where they cost the wall none of its width.  The row sits over the
+collection and not across the whole window, so that the controls are next to
+the only pane they narrow.  The fourth, the kinds, stays in the rail: a kind
+has a path (a sword is a one-handed weapon) and a tree is the only control
+that says so, while a tree drawn across the top of a window is a tree nobody
+reads.
 
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside

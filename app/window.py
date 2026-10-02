@@ -159,10 +159,6 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addLayout(self._build_toolbar())
-        # The filters are a row of the window rather than a column of it: what
-        # narrows a collection is asked once and then read past, and a column
-        # asks for its width on every one of the collection's rows.
-        layout.addWidget(self._build_filters())
         layout.addWidget(self._build_splitter(), stretch=1)
         self.setCentralWidget(central)
 
@@ -214,7 +210,7 @@ class MainWindow(QMainWindow):
         return bar
 
     def _build_filters(self) -> FilterBar:
-        """The row of controls that narrow the collection, above the cards."""
+        """The controls that narrow the collection, over the cards they narrow."""
         self.filters = FilterBar()
         self.filters.changed.connect(self._filters_changed)
         return self.filters
@@ -260,7 +256,17 @@ class MainWindow(QMainWindow):
         self.grid.compare.connect(self._compare_copies)
         self.grid.transfer.connect(self._transfer_row)
         right.addWidget(self.grid, stretch=1)
-        splitter.addWidget(self.collection_group)
+
+        # The filters stand directly over the collection and span nothing else.
+        # They narrow one pane, and a row reaching across the window reads as
+        # if it narrowed all three -- while the pane it does narrow is the one
+        # it should be next to, which is what makes them easier to reach.
+        self.collection_pane = QWidget()
+        pane = QVBoxLayout(self.collection_pane)
+        pane.setContentsMargins(0, 0, 0, 0)
+        pane.addWidget(self._build_filters())
+        pane.addWidget(self.collection_group, stretch=1)
+        splitter.addWidget(self.collection_pane)
 
         self.sidebar.changed.connect(self._filters_changed)
 

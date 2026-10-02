@@ -197,6 +197,28 @@ def test_the_two_panels_describe_different_places(window):
     assert "0" in window.collection_group.title()
 
 
+def test_the_filters_stand_over_the_pane_they_narrow(window):
+    """The search box, the rarities and the level range, on the collection.
+
+    They narrow one pane of the three and nothing else, so they belong over
+    it: a row across the whole window both reads as if it narrowed the game's
+    stash and the kinds too, and puts the controls a window's width away from
+    the cards they act on.  The pane's column is the filters with the
+    collection under them, which is the whole of the arrangement.
+    """
+    pane = window.collection_pane
+    assert window.filters.parent() is pane
+    assert window.collection_group.parent() is pane
+
+    column = pane.layout()
+    assert column.indexOf(window.filters) < column.indexOf(window.collection_group)
+    assert column.count() == 2, "the pane holds the filters and the collection"
+
+    # And nothing of them is left in the window's own column, which is the
+    # toolbar and the splitter.
+    assert window.centralWidget().layout().indexOf(window.filters) == -1
+
+
 def test_the_collection_lists_only_what_the_tool_holds(window, monkeypatch):
     """The contract for the right-hand panel.
 
