@@ -27,6 +27,9 @@ from tl2stash.card import (  # noqa: E402
     ARMOR,
     DAMAGE,
     TIER_NONE,
+    Block,
+    Card,
+    Rung,
     carried_magic,
     display_tier,
     lines,
@@ -282,3 +285,104 @@ def test_the_flat_lines_are_the_card_flattened():
         "OFTHEELEPHANT MAX HP",
         "    Flawless Ruby",
     ]
+
+
+# --------------------------------------------------------------------------
+# A set's ladder, flattened
+# --------------------------------------------------------------------------
+
+
+def test_a_ladder_is_a_heading_and_its_lines_under_the_item_s_stats():
+    """``(2) Set`` over what two pieces grant, and the ladder under the item's
+    own affixes rather than among them.
+
+    A rung is not a stat the item has -- it is what *more of the set* would
+    grant -- so it comes after everything the item itself carries and before
+    the flavour line, which is the remark under both.
+    """
+    card = Card(
+        name="Test Blade",
+        tier="unique",
+        tier_word="Unique",
+        type_name="Sword",
+        set_name="Test Set",
+        icon=None,
+        level=7,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+5 Strength",)),),
+        gems=(),
+        set_ladder=(
+            Rung(2, ("+6 Set damage",)),
+            Rung(3, ("+5 Set burn", "2.5% chance to cast Test Proc on kill")),
+        ),
+        flavor="A remark.",
+    )
+
+    assert lines(card) == [
+        "Test Blade",
+        "Requires Level 7",
+        "+5 Strength",
+        "(2) Set",
+        "+6 Set damage",
+        "(3) Set",
+        "+5 Set burn",
+        "2.5% chance to cast Test Proc on kill",
+        "A remark.",
+    ]
+
+
+def test_a_rung_is_a_heading_over_the_lines_it_carries():
+    """The heading is the piece count and nothing else, so a ladder's shape is
+    readable down the left of it: ``(2) Set``, then ``(3) Set``.
+
+    Dropping a rung that came out with nothing to say is ``_set_ladder``'s
+    business and is tested there -- the flattening prints the rungs the card
+    holds rather than filtering them a second time.
+    """
+    card = Card(
+        name="Test Blade",
+        tier="unique",
+        tier_word="Unique",
+        type_name="Sword",
+        set_name="Test Set",
+        icon=None,
+        level=0,
+        sockets=0,
+        blocks=(),
+        gems=(),
+        set_ladder=(Rung(2, ("+6 Set damage",)), Rung(3, ("+5 Set burn",))),
+        flavor=None,
+    )
+
+    assert lines(card) == [
+        "Test Blade",
+        "(2) Set",
+        "+6 Set damage",
+        "(3) Set",
+        "+5 Set burn",
+    ]
+
+
+@needs_game
+def test_a_real_set_piece_reads_its_ladder_under_its_own_stats(real_game):
+    """End to end from the save file's guid to the words on the card.
+
+    Which rung says what is ``tests/test_gamedata.py``'s business; what this
+    pins is that ``build`` fills the ladder in at all -- a set that renders
+    everywhere but on the card is a set the player never sees.
+    """
+    guid, _, set_id, _ = _a_set_item(real_game, "UNIQUE")
+    card = build(item(guid=guid), real_game)
+
+    assert card.set_ladder, f"{set_id} came out with no ladder"
+    assert all(rung.count >= 2 for rung in card.set_ladder)
+    assert all(rung.lines for rung in card.set_ladder)
+
+    flat = lines(card)
+    for rung in card.set_ladder:
+        assert f"({rung.count}) Set" in flat
+    # Under the stats and before the flavour, when there is one.
+    first = min(flat.index(f"({rung.count}) Set") for rung in card.set_ladder)
+    for block in card.blocks:
+        for line in block.lines:
+            assert flat.index(line) < first

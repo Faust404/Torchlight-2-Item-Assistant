@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tl2stash import dat  # noqa: E402
 from tl2stash.dat import (  # noqa: E402
     VAR_AFFIX_EFFECT,
+    VAR_AFFIX_LEVEL,
     VAR_BADDES,
     VAR_BADDESOT,
     VAR_BASEFILE,
@@ -298,22 +299,27 @@ def test_every_constant_this_module_measured_reproduces_from_its_name():
     assert field_hash("DESCRIPTION") == VAR_FLAVOR
 
 
-def test_the_ids_no_name_has_reproduced_are_these_four():
+def test_the_ids_no_name_has_reproduced_are_these_five():
     """Every constant either falls out of the rule or is listed here.
 
-    Two different things stop a constant reproducing from *its own* name.  The
-    module names four of them for what the field means rather than what it is
-    called -- ``VAR_FLAVOR`` is the field ``DESCRIPTION``, ``VAR_EFFECT_TYPE``
-    is the field ``EFFECT`` -- and those hash correctly under the game's
-    spelling.  The rest are simply their own names.
+    Two different things stop a constant reproducing from *its own* name.
+    Four of them the module names for what the field means rather than what
+    it is called -- ``VAR_FLAVOR`` is the field ``DESCRIPTION``,
+    ``VAR_EFFECT_TYPE`` is the field ``EFFECT`` -- and those hash correctly
+    under the game's spelling.  ``VAR_AFFIX_LEVEL`` is the same arrangement
+    for a smaller reason: the field is the one word ``AFFIXLEVEL``, and the
+    constant is spaced for reading.  The rest are simply their own names.
 
-    What is left over is four ids with no name at all, and that is the point
+    What is left over is five ids with no name at all, and that is the point
     of writing the list down: none of them is a hash of a name nobody has
-    guessed yet by accident, and a fifth cannot join them without someone
-    deciding it belongs.
+    guessed yet by accident, and a sixth cannot join them without someone
+    deciding it belongs.  ``VAR_EFFECT_GRAPH`` is the one that arrived last:
+    the graph an effect's numbers scale with, on 36 of the 239 effects, filed
+    under two ids that always hold the same string.
     """
     renamed = {
         VAR_AFFIX_EFFECT: "TYPE",
+        VAR_AFFIX_LEVEL: "AFFIXLEVEL",
         VAR_DISPLAY_NAME: "DISPLAYNAME",
         VAR_FLAVOR: "DESCRIPTION",
         VAR_EFFECT_TYPE: "EFFECT",
@@ -333,6 +339,7 @@ def test_the_ids_no_name_has_reproduced_are_these_four():
         "VAR_ARMOR_MIN_WEIGHT",
         "VAR_ARMOR_MULT",
         "VAR_ARMOR_WEIGHT",
+        "VAR_EFFECT_GRAPH",
         "VAR_SLOT_BASE",
     ]
 

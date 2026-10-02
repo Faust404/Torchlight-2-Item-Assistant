@@ -51,6 +51,7 @@ from .card import (
     TIER_NONE,
     Block,
     Card,
+    Rung,
     display_tier,
     lines,
 )
@@ -58,7 +59,7 @@ from .dat import VAR_FLAVOR
 from .item import strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .gamedata import GameData
+    from .gamedata import GameData, SetBonus
     from .item import Effect, Item
 
 __all__ = ["build", "format_value", "render"]
@@ -83,6 +84,18 @@ _DAMAGE_TYPES = {
 
 #: What the game writes as an effect's duration when it does not wear off.
 PERMANENT = -1000.0
+
+#: Which of an effect's four wordings a set's bonus is written with when it
+#: lasts for no time at all: the timeless positive one, which is the wording an
+#: effect record asks for with a description type of zero.  A set bonus that
+#: *does* state a duration is written with the over-time wording instead --
+#: ``UNEARTHLY``'s fourth rung reads ``2320 Physical Damage over 5 sec.``,
+#: which is the type-2 wording, and its node states ``DURATION`` of '5'.
+ALWAYS_ON = 0x00
+
+#: The over-time wording, for the same reason.  The rule the game follows is
+#: the data's own: the node's stated duration, above zero, picks this one.
+OVER_TIME = 0x02
 
 #: The effects that *are* an item's armour rather than a stat on it.  A piece
 #: carrying one states its armour twice -- once as this effect and once as the
@@ -141,12 +154,19 @@ def format_value(value: float, precision: int = 1) -> str:
     return text[:-2] if text.endswith(".0") else text
 
 
-def _as_float(word: int) -> float:
+def _as_float(word: int | float) -> float:
     """An effect value: four bytes that are really a float.
 
     ``Item`` hands these over as integers, because that is what the file
     holds.  A value of 15.0 arrives as 1097859072.
+
+    A float is passed through, because not every effect comes out of a save
+    file: a set's bonus is read out of the game's own data, where the same
+    four bytes arrive already unpacked.  One reader for both is what lets a
+    set bonus go through the same substitution an item's affix does.
     """
+    if isinstance(word, float):
+        return word
     return struct.unpack("<f", struct.pack("<I", word & 0xFFFFFFFF))[0]
 
 
@@ -182,15 +202,25 @@ def _substitute(
     line reads ``--3%``.  Everywhere else the value goes in as it stands,
     which is what the game does: a record whose wording already says
     "reduced by" and whose number is -10 reads ``reduced by -10%``.
+
+    A hole at the very *start* of a template has nothing in front of it and is
+    not signed, which is worth stating because the test for the character
+    before a match is empty there: ``'[VALUE] Health recovery per second'`` is
+    the wording of ``HP RECHARGE PLAYER``, and a negative number on it keeps
+    its sign -- which is what the game shows for the Asphyx set, whose bonus
+    is ``-12 health recovery per second``.
     """
     values = effect.values
 
     def fill(match: re.Match) -> str:
         tag = match.group(1)
         # re.sub hands back the whole template as the match's string, so the
-        # character the tag was written after is one step to the left.
+        # character the tag was written after is one step to the left.  There
+        # is no character when the tag *starts* the template -- and the empty
+        # string is a substring of every string, so the test is written out
+        # rather than left as `in`.
         written = template[match.start() - 1] if match.start() else ""
-        fix = abs if written in "+-" else (lambda number: number)
+        fix = abs if written in ("+", "-") else (lambda number: number)
 
         def at(index: int) -> str:
             if index < len(values):
@@ -278,8 +308,8 @@ def _effect_lines(item: "Item", data: "GameData") -> list[str]:
             effect,
             data.display_precision(node),
             # [NAME] is the *skill* the effect casts or alters, not the effect
-            # and not the affix.  See GameData.skill_name.
-            data.skill_name(effect.name) or effect.name or None,
+            # and not the affix.  See GameData.display_name.
+            data.display_name(effect.name) or effect.name or None,
             _as_float(effect.value),
         )
         # Templates are written with a trailing space where a hole ends the
@@ -287,6 +317,69 @@ def _effect_lines(item: "Item", data: "GameData") -> list[str]:
         # tooltip, and a line of it here.
         lines.append(line.rstrip())
     return lines
+
+
+def _set_ladder(title: str, data: "GameData") -> tuple[Rung, ...]:
+    """What wearing more of the set ``title`` grants, rung by rung.
+
+    A set's bonus is an effect like any other -- the same schema, the same
+    wording, the same holes in it -- so it is written here by the same
+    substitution an item's own effects go through, and ``+6% to Ice Damage``
+    from a set cannot come out differently from the same line off an affix.
+
+    Only the file it was read out of differs, and only in one way: a data
+    file's effect *is* its numbers, where a save file's record has to be
+    pointed at the effect it means.  So there is no index to trust here and no
+    gem to blame -- a rung says which effect it grants by name, and the one
+    thing the record would have said is read off the rung's own duration
+    instead of being assumed.
+
+    A rung left with no lines is dropped rather than drawn as a bare
+    ``(3) Set``: the card's rule is that a heading with nothing under it is
+    not a section.
+    """
+    out: list[Rung] = []
+    for rung in data.set_ladder(title):
+        written = tuple(
+            line
+            for line in (_bonus_line(bonus, data) for bonus in rung.bonuses)
+            if line
+        )
+        if written:
+            out.append(Rung(rung.count, written))
+    return tuple(out)
+
+
+def _bonus_line(bonus: "SetBonus", data: "GameData") -> str:
+    """One effect a set grants, written the way the game writes it.
+
+    The wording is ``EFFECTSLIST``'s and the numbers are the set file's.  An
+    effect nobody has wording for is shown under its own name, which is the
+    same bargain :func:`_effect_lines` makes for a record it cannot place.
+
+    Two things are read off the bonus rather than assumed, because a set's
+    ladder is written the same way an item's effects are and the game decides
+    both the same way.  The duration -- above zero, the node states one of its
+    own, and the wording is the over-time one with ``[DURATION]`` and
+    ``[VALUE_OT]`` filled from it.  And the name: ``[NAME]`` is the *skill* an
+    effect casts, which for a rung is the name on the rung's own node.
+    """
+    node = data.effect_for(bonus.name)
+    if node is None:
+        return bonus.name
+    template = data.effect_template(
+        node, OVER_TIME if bonus.duration > 0 else ALWAYS_ON
+    )
+    if not template:
+        return bonus.name
+    line = _substitute(
+        strip_markup(template),
+        bonus,
+        data.display_precision(node),
+        data.display_name(bonus.skill) or bonus.skill or None,
+        bonus.value,
+    )
+    return line.rstrip()
 
 
 def _added_damage_lines(item: "Item") -> list[str]:
@@ -397,6 +490,14 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     # read different rarities off the same item.
     tier_word = display_tier(appearance.tier, item) if appearance else ""
 
+    # What wearing more of the set would grant.  The name on the appearance is
+    # the one the player reads -- 'True North', not 'U_TRUE_NORTH' -- and the
+    # ladder answers to either spelling, so nothing here has to know which of
+    # the two it is holding.
+    ladder: tuple[Rung, ...] = ()
+    if data is not None and appearance is not None and appearance.set_name:
+        ladder = _set_ladder(appearance.set_name, data)
+
     return Card(
         name=item.display_name,
         tier=TIER_KEYS.get(tier_word, TIER_NONE),
@@ -410,6 +511,7 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         # nothing under it, which is what lets `lines` concatenate them.
         blocks=tuple(Block(kind, tuple(found)) for kind, found in blocks if found),
         gems=tuple(build(gem, data) for gem in item.gems),
+        set_ladder=ladder,
         flavor=flavor or None,
     )
 

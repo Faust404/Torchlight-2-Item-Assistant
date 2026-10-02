@@ -29,6 +29,7 @@ __all__ = [
     "Block",
     "Card",
     "DAMAGE",
+    "Rung",
     "TIER_INK",
     "TIER_KEYS",
     "TIER_MAGIC",
@@ -177,6 +178,21 @@ class Block:
 
 
 @dataclass(frozen=True)
+class Rung:
+    """One rung of the set an item belongs to: a piece count, and its lines.
+
+    ``count`` is how many of the set's pieces it takes to get the lines under
+    it, and the lines are written by the same machinery that writes the item's
+    own -- a set's bonus is an effect like any other, and only the file it was
+    read out of differs.  A rung with no lines is not drawn: the card keeps
+    the rule that a heading with nothing under it is not a section.
+    """
+
+    count: int
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Card:
     """One item, whole.
 
@@ -196,6 +212,12 @@ class Card:
     not a tier: a set piece is shown as the rare or unique thing its own file
     says it is, and this is the one place the membership is drawn out -- the
     kind line reads ``Unique Set Boots``.
+
+    ``set_ladder`` is what wearing more of that set grants, cheapest rung
+    first, and it is empty for an item in no set *and* for one in a set the
+    game's data does not describe -- a mod's, or a machine with no game on it.
+    The two are one empty tuple on purpose: what the card draws is the ladder,
+    and there is nothing to draw either way.
     """
 
     name: str
@@ -208,6 +230,7 @@ class Card:
     sockets: int
     blocks: tuple[Block, ...]
     gems: tuple[Card, ...]
+    set_ladder: tuple[Rung, ...]
     flavor: str | None
 
 
@@ -229,6 +252,12 @@ def lines(card: Card) -> list[str]:
     # are drawn as lines under the item that holds them.
     for gem in card.gems:
         out.extend(f"    {line}" for line in lines(gem))
+    # The set last of the stats and first of the remarks, which is where the
+    # game writes it: what wearing more of the set would grant is about the
+    # item rather than on it, and the flavour line is the remark under both.
+    for rung in card.set_ladder:
+        out.append(f"({rung.count}) Set")
+        out.extend(rung.lines)
     if card.flavor:
         out.append(card.flavor)
     return out

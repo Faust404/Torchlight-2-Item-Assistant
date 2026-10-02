@@ -21,11 +21,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tl2stash.gamedata import GameData, find_install  # noqa: E402
+from tl2stash.card import Rung  # noqa: E402
+from tl2stash.gamedata import (  # noqa: E402
+    GameData,
+    SetBonus,
+    SetRung,
+    find_install,
+)
 from tl2stash.item import AddedDamage, Effect, Item, Location  # noqa: E402
 from tl2stash.tooltip import (  # noqa: E402
     PERMANENT,
     _added_damage_lines,
+    _set_ladder,
     _substitute,
     format_value,
     render,
@@ -488,3 +495,76 @@ def test_flavour_text_is_shown_for_an_item_that_has_it(game):
         "A3-Crystal_Fire",
         "The heat from the crystal burns to the touch.",
     ]
+
+
+# --------------------------------------------------------------------------
+# A set's ladder
+# --------------------------------------------------------------------------
+
+
+class _SetGame:
+    """Just enough of a :class:`~tl2stash.gamedata.GameData` for a ladder.
+
+    The shipped archive has no set whose wording comes out empty, so the rule
+    that a rung with nothing under it is dropped cannot be reached through the
+    real data -- and a rule nothing can reach is a rule nothing keeps.  This
+    stands in for the game: two rungs, one effect each, and a template that is
+    a single space for the first of them -- which is what a half-translated
+    file looks like, and what ``rstrip`` leaves empty.
+
+    ``wording`` is what ``EFFECTSLIST`` would hold; leaving an effect out of it
+    is the other half of the path, a mod's bonus naming an effect the game's
+    own file has never heard of.
+    """
+
+    def __init__(self, wording: dict[str, str] | None = None):
+        self._wording = {"SILENT": " ", "SPOKEN": "+[VALUE] Set damage"}
+        if wording is not None:
+            self._wording = wording
+
+    def set_ladder(self, title: str) -> tuple[SetRung, ...]:
+        return tuple(
+            SetRung(count, (SetBonus(name, (1.0,), 0.0, 0x00, None),))
+            for count, name in ((2, "SILENT"), (3, "SPOKEN"))
+        )
+
+    def effect_for(self, name: str):
+        # Nothing is ever looked inside the node here -- only the template's
+        # text is this stub's business, so the name stands in for the node.
+        return name if name in self._wording else None
+
+    def effect_template(self, node, description_type: int) -> str:
+        return self._wording[node]
+
+    def display_precision(self, node) -> int:
+        return 0
+
+    def display_name(self, name: str) -> str | None:
+        return None
+
+
+def test_a_rung_with_nothing_under_it_is_dropped():
+    """A heading with nothing under it is not a section, which is the rule the
+    card's blocks already keep -- and it has to hold here too, because the app
+    draws each rung as a heading and would draw a bare ``(2) Set``.
+
+    Only the silent rung goes, and its neighbour is the same ladder one
+    template along -- so what is tested is the drop rather than the ladder's
+    length.
+    """
+    assert _set_ladder("TEST", _SetGame()) == (Rung(3, ("+1 Set damage",)),)
+
+
+def test_a_rung_with_no_wording_at_all_falls_back_to_the_effect_s_name():
+    """An effect nobody has words for is shown under its own name, which is
+    the same bargain an item's own effects make -- so the rung survives.
+
+    A missing effect takes the same path: a bonus naming an effect that is not
+    in ``EFFECTSLIST`` is a mod's set, not a reason to draw nothing.
+    """
+    ladder = _set_ladder("TEST", _SetGame({}))
+
+    assert ladder == (
+        Rung(2, ("SILENT",)),
+        Rung(3, ("SPOKEN",)),
+    )

@@ -40,6 +40,7 @@ from typing import Iterator
 from .binary import ParseError, Reader
 
 __all__ = [
+    "VAR_AFFIX",
     "VAR_AFFIX_EFFECT",
     "VAR_ARMOR_ELECTRIC",
     "VAR_ARMOR_FIRE",
@@ -49,16 +50,21 @@ __all__ = [
     "VAR_ARMOR_PHYSICAL",
     "VAR_ARMOR_POISON",
     "VAR_ARMOR_WEIGHT",
+    "VAR_AFFIX_LEVEL",
     "VAR_BADDES",
     "VAR_BADDESOT",
     "VAR_BASEFILE",
+    "VAR_COUNT",
     "VAR_DAMAGE_ELECTRIC",
     "VAR_DAMAGE_FIRE",
     "VAR_DAMAGE_ICE",
     "VAR_DAMAGE_PHYSICAL",
     "VAR_DAMAGE_POISON",
+    "VAR_DAMAGE_TYPE",
     "VAR_DISPLAYPRECISION",
     "VAR_DISPLAY_NAME",
+    "VAR_DURATION",
+    "VAR_EFFECT_GRAPH",
     "VAR_EFFECT_TYPE",
     "VAR_FLAVOR",
     "VAR_GOODDES",
@@ -204,6 +210,41 @@ VAR_SLOT_BASE = 0x173B97DF
 #: EFFECT is the effect proper (``MAX HP``, ``DAMAGE BONUS``) -- a name that is
 #: unique and that EFFECTSLIST holds description wording for.
 VAR_AFFIX_EFFECT = field_hash("TYPE")
+
+#: The set ladder: a set's own file is a root with one child per rung, each
+#: carrying how many of the set's pieces it takes and the name of the affix it
+#: grants.  A rung names an affix *file* rather than stating its bonus, so
+#: reading a ladder is two lookups -- the rung, and then the affix it names.
+#:
+#: ``VAR_AFFIX`` is both the child's node id and the field the name is under,
+#: which is one field in two places rather than two that must agree.
+VAR_COUNT = field_hash("COUNT")
+VAR_AFFIX = field_hash("AFFIX")
+
+#: The level a set rung's bonus is granted at -- which is also the level its
+#: numbers are *scaled to*.  A rung states its numbers as a nominal and names
+#: a by-level graph beside them, and the two are combined at this level.  It
+#: is a field of the rung rather than of the item: two pieces of a set can sit
+#: at different levels and the same rung still grants the same number.
+VAR_AFFIX_LEVEL = field_hash("AFFIXLEVEL")
+
+#: The by-level graph an effect's numbers scale with, as a bare stem under
+#: ``MEDIA/GRAPHS/STATS`` -- ``'STEAL_HEALTH_AND_MANA'`` for LIFE STEAL, and
+#: ``'MANA_PLAYER_GENERIC'`` for DRAW MANA.  36 of the 239 effects name one;
+#: the rest state numbers that need no curve.
+#:
+#: Filed under two ids, ``0x0B01C930`` and ``0x0B01C933``, which always hold
+#: the same string -- measured over all 239 effects, no disagreement.  Both
+#: were read off the files; neither is a hashed name, and no candidate name
+#: tried has produced them.
+VAR_EFFECT_GRAPH = 0x0B01C930
+
+#: What a *data file's* effect node states its numbers in.  The save file's
+#: effect record has a value list instead, and the two are the same numbers:
+#: the ends of a range the game rolls between are ``MIN`` and ``MAX``, and the
+#: roll is what lands in a record's value list.
+VAR_DURATION = field_hash("DURATION")
+VAR_DAMAGE_TYPE = field_hash("DAMAGE_TYPE")
 
 #: The name to show for a skill or a monster.  Distinct from VAR_NAME, which
 #: on a skill is its internal id: a spell node called ``Fireball III`` reads

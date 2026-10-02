@@ -494,6 +494,14 @@ class ItemCard(QFrame):
             first = self._part(column, first)
             self._gem(column, gem)
 
+        # The set's ladder, in the place the game writes it: after the item's
+        # own stats and its sockets, before the remark under both.  The same
+        # order ``tl2stash.card.lines`` flattens them in, because the drawing
+        # and the flat list are the same card.
+        if card.set_ladder:
+            first = self._part(column, first)
+            self._ladder(column, card)
+
         # The flavour line is not a section and takes no rule, which is the
         # site's own note about it: it is a remark about the item rather than
         # one of its stats.
@@ -504,6 +512,29 @@ class ItemCard(QFrame):
             flavour.setWordWrap(True)
             column.addWidget(flavour)
         return body
+
+    def _ladder(self, column: QVBoxLayout, card: Card) -> None:
+        """What wearing more of the set grants: the set, then each rung.
+
+        The set's name is drawn in the set purple -- the one colour no tier of
+        an item is drawn in, because a set is not a tier -- and each rung under
+        it as ``(2) Set`` with its lines below, which is how the site draws a
+        ladder and how the game words one.
+        """
+        title = QLabel(card.set_name or "")
+        title.setObjectName("setname")
+        title.setStyleSheet(f"color:{TIER_INK['set']}")
+        title.setWordWrap(True)
+        column.addWidget(title)
+
+        for rung in card.set_ladder:
+            heading = QLabel(f"({rung.count}) Set")
+            heading.setObjectName("rung")
+            column.addWidget(heading)
+            for text in rung.lines:
+                # A rung's lines are affix lines -- a set's bonus is an effect
+                # like any other -- so they are drawn like the item's own.
+                column.addWidget(self._stat(text, AFFIX))
 
     def _part(self, column: QVBoxLayout, first: bool) -> bool:
         """Open a section.  Returns ``False``: nothing after this is first."""
@@ -567,6 +598,8 @@ STYLE = f"""
     font-size: 11px;
 }}
 #gem {{ color: {HEAD}; font-size: 12.5px; font-weight: 600; }}
+#setname {{ font-size: 13px; font-weight: 600; }}
+#rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #flav {{ color: {FLAVOUR}; font-size: 12px; font-style: italic; }}
 #hint {{ color: {DIM}; font-size: 12.5px; }}
 """

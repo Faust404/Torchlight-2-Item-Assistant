@@ -17,14 +17,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash.dat import (  # noqa: E402
+    VAR_AFFIX,
     VAR_AFFIX_EFFECT,
+    VAR_AFFIX_LEVEL,
     VAR_BADDES,
     VAR_BADDESOT,
+    VAR_COUNT,
+    VAR_DAMAGE_TYPE,
     VAR_DISPLAYPRECISION,
     VAR_DISPLAY_NAME,
+    VAR_DURATION,
+    VAR_EFFECT_GRAPH,
     VAR_EFFECT_TYPE,
     VAR_GOODDES,
     VAR_GOODDESOT,
+    VAR_MAXDAMAGE,
+    VAR_MINDAMAGE,
     VAR_NAME,
     VAR_SET,
     VAR_SLOT_BASE,
@@ -34,13 +42,23 @@ from tl2stash.dat import (  # noqa: E402
 )
 from tl2stash.gamedata import (  # noqa: E402
     DEFAULT_PRECISION,
+    GRAPH_LEVEL_VAR,
+    GRAPH_VALUE_VAR,
     GameData,
     archive_path,
     find_install,
     read_unit_type,
 )
 
-from test_dat import TEXT, TRANSLATE, needs_game, real_game, write_dat  # noqa: E402
+from test_dat import (  # noqa: E402
+    FLOAT,
+    INT,
+    TEXT,
+    TRANSLATE,
+    needs_game,
+    real_game,
+    write_dat,
+)
 from test_pak import write_synthetic_pak  # noqa: E402
 from test_tooltip import item  # noqa: E402
 
@@ -61,15 +79,20 @@ def install(tmp_path: Path) -> Path:
         strings[index] = text
         return index
 
-    def effect(name: str, templates: dict[int, str]) -> dict:
+    def effect(name: str, templates: dict[int, str], graph: str | None = None) -> dict:
         """One effect node.  ``templates`` maps a description variable to its
         wording; written as a dict because the keys are the game's constants.
+
+        ``graph`` is the by-level curve the effect's numbers scale with, as a
+        bare stem, which is how 36 of the game's 239 effects state it.
         """
         variables = {
             VAR_NAME: (TEXT, string(name)),
             VAR_EFFECT_TYPE: (TEXT, string(f"KEFFECT_TYPE_{name}")),
             VAR_DISPLAYPRECISION: (2, 2),
         }
+        if graph:
+            variables[VAR_EFFECT_GRAPH] = (TEXT, string(graph))
         for var, text in templates.items():
             variables[var] = (TRANSLATE, string(text))
         return {"vars": variables}
@@ -88,9 +111,57 @@ def install(tmp_path: Path) -> Path:
                 },
             ),
             effect("MAX MANA", {VAR_GOODDES: "+[VALUE] Max Mana"}),
+            # Three effects for the set ladders below: one whose numbers scale
+            # with a curve, one that names a skill, and one that lasts.
+            effect(
+                "SET DAMAGE BONUS",
+                {VAR_GOODDES: "+[VALUE] Set damage"},
+                graph="TEST_CURVE",
+            ),
+            effect(
+                "SET PROC",
+                {VAR_GOODDES: "[VALUE]% chance to cast [NAME] on kill"},
+            ),
+            effect(
+                "SET BURN",
+                {
+                    VAR_GOODDES: "+[VALUE] Set burn",
+                    VAR_GOODDESOT: "[VALUE_OT] Set burn damage over [DURATION]",
+                },
+            ),
         ]
     }
     files["MEDIA/EFFECTSLIST.DAT"] = write_dat(strings, [effects])
+
+    # A by-level curve, and the skill one of the effects above names.  200% at
+    # level 1 and 145.5% at level 10 -- the second is what the real archive's
+    # MANA_PLAYER_GENERIC states at level 99 -- so the rungs below land on
+    # different numbers from one nominal, one of them exactly and one of them
+    # only after rounding.  The rows are the root's children, as a graph file
+    # has them: a top-level list of two nodes would parse as one node and lose
+    # the second.
+    files["MEDIA/GRAPHS/STATS/TEST_CURVE.DAT"] = write_dat(
+        {},
+        [
+            {
+                "kids": [
+                    {"vars": {GRAPH_LEVEL_VAR: (INT, 1), GRAPH_VALUE_VAR: (FLOAT, 200.0)}},
+                    {"vars": {GRAPH_LEVEL_VAR: (INT, 10), GRAPH_VALUE_VAR: (FLOAT, 145.5)}},
+                ]
+            }
+        ],
+    )
+    files["MEDIA/SKILLS/TESTPROC.DAT"] = write_dat(
+        {0: "TEST_PROC", 1: "Test Proc"},
+        [
+            {
+                "vars": {
+                    VAR_NAME: (TEXT, 0),
+                    VAR_DISPLAY_NAME: (TEXT, 1),
+                }
+            }
+        ],
+    )
 
     # Containers: each names itself and declares the id the save file records.
     for name, cid in (("ARMS", 24), ("SPELLS", 26)):
@@ -131,9 +202,118 @@ def install(tmp_path: Path) -> Path:
                     affix("OFGHOST", "NO SUCH EFFECT"),
                     # An affix wearing an effect's name, which EFFECTSLIST wins.
                     affix("MAX MANA", "MELEEDAMAGEBONUS"),
+                    # The affixes a set's rungs name.  Shaped like the real
+                    # ones: the root carries nothing but the name, and one
+                    # child per effect it grants, whose *node id* is the effect
+                    # variable -- the rung's numbers live on those children
+                    # rather than on the root, which is the difference from the
+                    # affixes above.
+                    {
+                        "vars": {VAR_NAME: (TEXT, string("SET AFFIX TWO"))},
+                        "kids": [
+                            # MIN and MAX, as floats and in file order, then a
+                            # third number that is a *parameter* of the effect
+                            # rather than part of its value: only the first two
+                            # scale with a curve.
+                            {
+                                "id": VAR_EFFECT_TYPE,
+                                "vars": {
+                                    VAR_AFFIX_EFFECT: (
+                                        TEXT,
+                                        string("SET DAMAGE BONUS"),
+                                    ),
+                                    VAR_MINDAMAGE: (FLOAT, 3.0),
+                                    VAR_MAXDAMAGE: (FLOAT, 3.0),
+                                    0x67A1010: (FLOAT, 7.0),
+                                },
+                            },
+                            # Names a skill, which is what a [NAME] hole wants.
+                            # The name on the node is the one the *skill* is
+                            # filed under, and only the skill carries a display
+                            # name.
+                            {
+                                "id": VAR_EFFECT_TYPE,
+                                "vars": {
+                                    VAR_AFFIX_EFFECT: (TEXT, string("SET PROC")),
+                                    VAR_NAME: (TEXT, string("TEST_PROC")),
+                                    VAR_MINDAMAGE: (FLOAT, 2.5),
+                                    VAR_MAXDAMAGE: (FLOAT, 2.5),
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        "vars": {VAR_NAME: (TEXT, string("SET AFFIX THREE"))},
+                        "kids": [
+                            # A duration, written as text as the real files
+                            # write it, which is what puts the effect on the
+                            # over-time wording.
+                            {
+                                "id": VAR_EFFECT_TYPE,
+                                "vars": {
+                                    VAR_AFFIX_EFFECT: (TEXT, string("SET BURN")),
+                                    VAR_DURATION: (TEXT, string("5")),
+                                    VAR_DAMAGE_TYPE: (TEXT, string("FIRE")),
+                                    VAR_MINDAMAGE: (FLOAT, 5.0),
+                                    VAR_MAXDAMAGE: (FLOAT, 5.0),
+                                },
+                            }
+                        ],
+                    },
                 ]
             }
         ],
+    )
+
+    # Sets.  The first is shaped like the ones that made the rules: a rung per
+    # piece count, one count asked for twice, and a level per rung.  The
+    # second exists for the one case the first cannot show -- a rung whose
+    # level the curve does not state.
+    def rung(count: int, level: int, affix_name: str) -> dict:
+        return {
+            "id": VAR_AFFIX,
+            "vars": {
+                VAR_COUNT: (INT, count),
+                VAR_AFFIX_LEVEL: (INT, level),
+                VAR_AFFIX: (TEXT, string(affix_name)),
+            },
+        }
+
+    def set_file(set_id: str, shown: str, rungs: list[dict]) -> bytes:
+        return write_dat(
+            strings,
+            [
+                {
+                    "vars": {
+                        VAR_NAME: (TEXT, string(set_id)),
+                        VAR_DISPLAY_NAME: (TEXT, string(shown)),
+                    },
+                    "kids": rungs,
+                }
+            ],
+        )
+
+    files["MEDIA/SETS/TEST_SET.DAT"] = set_file(
+        "TEST_SET",
+        "Test Set",
+        [
+            rung(2, 1, "SET AFFIX TWO"),
+            rung(2, 1, "SET AFFIX TWO"),
+            rung(3, 10, "SET AFFIX THREE"),
+        ],
+    )
+    # A rung whose level the curve does not state, and one whose product is not
+    # a whole number.  3 at 145.5% is 4.365, which the game shows as 5 -- the
+    # ceiling, where rounding to nearest would give 4.
+    files["MEDIA/SETS/TEST_OFF_CURVE.DAT"] = set_file(
+        "TEST_OFF_CURVE",
+        "Off Curve",
+        [rung(2, 5, "SET AFFIX TWO")],
+    )
+    files["MEDIA/SETS/TEST_ROUND.DAT"] = set_file(
+        "TEST_ROUND",
+        "Round",
+        [rung(2, 10, "SET AFFIX TWO")],
     )
 
     files["MEDIA/UNITS/ITEMS/SWORDS/DJINN FIRE SWORD.DAT"] = write_dat(
@@ -200,9 +380,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Six parse; the seventh is a DAT that will not, and the eighth is not a
-    DAT at all."""
-    assert game.files_read == 6
+    """Eleven parse; the twelfth is a DAT that will not, and the thirteenth is
+    not a DAT at all."""
+    assert game.files_read == 11
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -266,10 +446,11 @@ def test_an_effect_name_with_a_space_is_still_found(game):
 def test_effects_are_found_by_position_too(game):
     """The order in the file is the game's, and position is the fallback for
     a name that does not resolve."""
-    assert game.effect_count == 2
+    assert game.effect_count == 5
     assert game.effect(0).text(VAR_NAME) == "MELEEDAMAGEBONUS"
     assert game.effect(1).text(VAR_NAME) == "MAX MANA"
-    assert game.effect(2) is None
+    assert game.effect(4).text(VAR_NAME) == "SET BURN"
+    assert game.effect(5) is None
     assert game.effect(-1) is None
     assert game.effect(9999) is None
 
@@ -380,6 +561,118 @@ def test_precision_is_read_and_defaulted(game):
 
 
 # --------------------------------------------------------------------------
+# A set's ladder
+# --------------------------------------------------------------------------
+
+
+def test_a_ladder_is_gathered_by_piece_count(game):
+    """Cheapest rung first, and both names a set answers to.
+
+    An item's ``SET`` field spells the internal name and the card draws the
+    display one, so both are indexed -- which is what lets the window and the
+    tooltip ask in the spelling each of them happens to hold.
+    """
+    ladder = game.set_ladder("TEST_SET")
+    assert [rung.count for rung in ladder] == [2, 3]
+    assert game.set_ladder("test set") == ladder
+    assert game.set_ladder("Test Set") == ladder
+
+
+def test_two_rungs_at_one_count_are_one_rung(game):
+    """Tundra asks for 2, 2 and 3, and the player reads one ``(2) Set``.
+
+    What the file spells as two rungs is one to the player, so a count appears
+    once in the ladder and the rungs at it are gathered in the file's order.
+    """
+    counted = {rung.count: rung for rung in game.set_ladder("TEST_SET")}
+    assert len(counted[2].bonuses) == 4  # the two effects, twice
+    assert [bonus.name for bonus in counted[2].bonuses] == [
+        "SET DAMAGE BONUS",
+        "SET PROC",
+        "SET DAMAGE BONUS",
+        "SET PROC",
+    ]
+
+
+def test_a_set_the_archive_has_not_got_has_no_ladder(game):
+    """A mod's set is the case: the piece is drawn without a ladder."""
+    assert game.set_ladder("NO SUCH SET") == ()
+    assert game.set_ladder("") == ()
+
+
+def test_a_rung_is_scaled_by_the_curve_its_effect_names(game):
+    """The number the game shows is the nominal at the rung's affix *level*.
+
+    TEST_CURVE is 200% at level 1 and 145.5% at level 10, and the effect's
+    nominal is 3, so the same affix on a rung at each of those levels reads 6
+    and 5 -- the level is the rung's own rather than the set's or the item's.
+    """
+    assert game.set_ladder("TEST_SET")[0].bonuses[0].values[0] == 6.0
+    assert game.set_ladder("TEST_ROUND")[0].bonuses[0].values[0] == 5.0
+
+
+def test_a_scaled_rung_rounds_up(game):
+    """3 at 145.5% is 4.365 and the game shows 5.
+
+    Ceiling, not rounding to nearest -- the same direction the game's display
+    rounds an effect's value in -- which is what makes it 5 rather than 4.
+    """
+    rung = game.set_ladder("TEST_ROUND")[0]
+    assert rung.bonuses[0].values[0] == 5.0
+
+
+def test_only_the_value_pair_scales_never_the_parameters(game):
+    """DRAW MANA's radius stays 3 however its value scales.
+
+    An effect's numbers are its whole schema -- the low and high ends of the
+    value, and then whatever else it needs (a pulse rate, a radius, a count).
+    The curve is on the value, so everything past the first two numbers goes
+    through as the file wrote it.
+    """
+    rung = game.set_ladder("TEST_ROUND")[0]
+    assert rung.bonuses[0].values == (5.0, 5.0, 7.0)
+
+
+def test_a_level_the_curve_does_not_state_leaves_the_numbers_alone(game):
+    """Every one of the archive's rungs has its level in its curve.
+
+    A mod's rung is the case this is written for: half a curve is not worth
+    guessing from, and the nominal the file states is at least the file's own
+    number rather than an invented one.  The rung below asks for level 5 and
+    TEST_CURVE states 1 and 10.
+    """
+    rung = game.set_ladder("TEST_OFF_CURVE")[0]
+    assert rung.bonuses[0].values[:2] == (3.0, 3.0)
+
+
+def test_a_rung_s_own_name_is_the_skill_its_wording_can_cast(game):
+    """``[NAME]`` is the skill, and on a rung it is the node's own name.
+
+    The effect proper is ``SET PROC``, whose wording casts something; what it
+    casts is filed under ``TEST_PROC`` -- the name on the rung's node -- and
+    the display name on that node is what the player reads.
+    """
+    rung = {r.count: r for r in game.set_ladder("TEST_SET")}[2]
+    assert rung.bonuses[1].skill == "TEST_PROC"
+    assert game.display_name("TEST_PROC") == "Test Proc"
+    # An effect node that states no name of its own has no skill to offer.
+    assert rung.bonuses[0].skill is None
+
+
+def test_a_duration_is_read_off_the_rung_as_text(game):
+    """A data file writes ``DURATION`` as text, and it decides the wording."""
+    rung = {r.count: r for r in game.set_ladder("TEST_SET")}[3]
+    assert rung.bonuses[0].duration == 5.0
+    # And a rung that states none has none, rather than the last one's.
+    assert {r.count: r for r in game.set_ladder("TEST_SET")}[2].bonuses[0].duration == 0.0
+
+
+def test_a_damage_type_the_file_writes_is_the_number_a_record_carries(game):
+    rung = {r.count: r for r in game.set_ladder("TEST_SET")}[3]
+    assert rung.bonuses[0].damage_type == 0x02  # FIRE, as a save record has it
+
+
+# --------------------------------------------------------------------------
 # Containers
 # --------------------------------------------------------------------------
 
@@ -484,11 +777,11 @@ def test_a_skill_is_found_by_the_name_an_affix_shares_with_it(real_game):
     Only the skill carries the display name, which is what makes looking the
     name up as a display name work where looking it up as a node does not.
     """
-    assert real_game.skill_name("WC_PROC_FULLHEAL") == "Fully Heal Self"
-    assert real_game.skill_name("wc_proc_fullheal") == "Fully Heal Self"
+    assert real_game.display_name("WC_PROC_FULLHEAL") == "Fully Heal Self"
+    assert real_game.display_name("wc_proc_fullheal") == "Fully Heal Self"
     # An affix that grants no skill has no display name to give.
-    assert real_game.skill_name("OFTHEBEAR DAMAGE BONUS") is None
-    assert real_game.skill_name("") is None
+    assert real_game.display_name("OFTHEBEAR DAMAGE BONUS") is None
+    assert real_game.display_name("") is None
 
 
 # --------------------------------------------------------------------------
@@ -729,6 +1022,71 @@ def test_a_set_piece_is_shown_as_the_rarity_its_own_file_states(real_game):
             f"a {wanted} set piece should read as {shown_as}"
         )
         assert appearance.set_name == shown
+
+
+@needs_game
+def test_a_real_set_s_ladder_is_the_one_its_own_file_states(real_game):
+    """Every set in the archive reads as a ladder, counted from the file.
+
+    The expectation is gathered here rather than through the code under test:
+    each set file is parsed again and its rungs counted by their ``COUNT``
+    field, so what is compared is the game's own numbers against the tool's.
+    Two rungs at one count are *one* rung to the player -- three of the
+    archive's sets list one twice -- so the file's counts are deduplicated
+    before the comparison, which is the only thing the tool does to them.
+
+    Swept over all of them rather than one, because the failure this is here
+    for is silent: a rung whose affix the tool cannot find contributes no
+    bonuses and leaves the ladder one rung short, and no single set would
+    show it.
+    """
+    from tl2stash.pak import PakFile, PakIndex
+
+    man = archive_path(real_game.install)
+    index = PakIndex.read(man)
+    swept = 0
+    with PakFile(man.with_name("DATA.PAK"), index) as archive:
+        for entry in index.entries:
+            if not entry.startswith("MEDIA/SETS/") or not entry.endswith(".DAT"):
+                continue
+            root = DatFile.parse(archive.read(entry)).root
+            name = root.text(VAR_NAME)
+            counts = {
+                int(child.number(VAR_COUNT) or 0)
+                for child in root.children
+                if child.text(VAR_AFFIX)
+            }
+            assert counts, f"{entry} has no rungs at all"
+
+            ladder = real_game.set_ladder(name)
+            assert [rung.count for rung in ladder] == sorted(counts), entry
+            assert all(bonus.name for rung in ladder for bonus in rung.bonuses), entry
+            swept += 1
+
+    assert swept > 80, "the sweep stopped finding set files"
+
+
+@needs_game
+def test_a_real_set_piece_carries_its_set_s_display_name_and_ladder(real_game):
+    """The whole chain for one item: its ``SET`` field to the set's file, and
+    that file to the bonuses the player reads as ``(2) Set``.
+
+    :func:`_a_set_item` hands back the display name read straight from the set
+    file, so the name is the game's own string; the ladder is the tool's, and
+    every rung of it has to render as something with a word in it.
+    """
+    guid, _, set_id, shown = _a_set_item(real_game, "UNIQUE")
+
+    assert real_game.display_name(set_id) == shown
+    ladder = real_game.set_ladder(set_id)
+    assert ladder, f"{set_id} has no ladder"
+    assert ladder[0].count >= 2, "a rung is never one piece"
+    for rung in ladder:
+        for bonus in rung.bonuses:
+            text = real_game.effect_template(
+                real_game.by_name(bonus.name), 0x00
+            )
+            assert text, f"{bonus.name} has no wording"
 
 
 @needs_game

@@ -24,16 +24,21 @@ implementation.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Mapping
 
 from .dat import (
+    VAR_AFFIX,
     VAR_AFFIX_EFFECT,
+    VAR_AFFIX_LEVEL,
     VAR_BADDES,
     VAR_BADDESOT,
+    VAR_COUNT,
     VAR_DISPLAYPRECISION,
     VAR_GOODDES,
     VAR_GOODDESOT,
@@ -52,7 +57,11 @@ from .dat import (
     VAR_DAMAGE_ICE,
     VAR_DAMAGE_PHYSICAL,
     VAR_DAMAGE_POISON,
+    VAR_DAMAGE_TYPE,
     VAR_DISPLAY_NAME,
+    VAR_DURATION,
+    VAR_EFFECT_GRAPH,
+    VAR_EFFECT_TYPE,
     VAR_FLAVOR,
     VAR_ICON,
     VAR_LEVEL,
@@ -75,6 +84,8 @@ __all__ = [
     "Appearance",
     "Derived",
     "GameData",
+    "SetBonus",
+    "SetRung",
     "archive_path",
     "find_install",
     "read_unit_type",
@@ -114,15 +125,48 @@ EFFECTSLIST = "MEDIA/EFFECTSLIST.DAT"
 #: it hits has to come from here, reached by the unit id the item carries.
 ITEMS_DIR = "MEDIA/UNITS/ITEMS/"
 
-#: The two by-level curves the damage and armour arithmetic are built on.  A
-#: graph file is a list of nodes, each carrying a level and the value at that
-#: level -- the two field ids are plain small numbers rather than hashed
-#: names, which is how a graph node is told apart from every other node in the
-#: archive.
+#: A set's own file, named the way an item's ``SET`` field spells it --
+#: ``U_TRUE_NORTH`` for ``MEDIA/SETS/U_TRUE_NORTH.DAT``.  What one of these
+#: holds is the ladder: the set's name, and a rung per bonus.
+SETS_DIR = "MEDIA/SETS/"
+
+#: The damage types, as the four letters a data file writes them in, against
+#: the number the save file's effect record uses.  All six words in the
+#: archive's set ladders are here; the numbers are the ones
+#: :mod:`tl2stash.tooltip` reads a record's ``damage_type`` with, so that a
+#: bonus from a set file and a bonus from an item are written the same way.
+#:
+#: ``PHYSICAL`` is 0 rather than 1 because that is the number the game's own
+#: records carry: 0 and 1 are both "Physical" there, and 0 is the one used.
+DAMAGE_TYPE_IDS = {
+    "PHYSICAL": 0x00,
+    "FIRE": 0x02,
+    "ICE": 0x03,
+    "ELECTRIC": 0x04,
+    "POISON": 0x05,
+    "ALL": 0x06,
+}
+
+#: The by-level graphs: one curve per file, a list of nodes each carrying a
+#: level and the value there -- the two field ids are plain small numbers
+#: rather than hashed names, which is how a graph node is told apart from
+#: every other node in the archive.
+#:
+#: Every file in the directory is read, not just the two named below, because
+#: an effect names its own curve and 36 of them name one: a set rung's numbers
+#: are a nominal scaled by whichever graph its effect points at.  The two here
+#: are the ones the damage and armour arithmetic is built on.
+GRAPHS_DIR = "MEDIA/GRAPHS/STATS/"
 GRAPH_WEAPON_DAMAGE = "MEDIA/GRAPHS/STATS/BASE_WEAPON_DAMAGE.DAT"
 GRAPH_ARMOR = "MEDIA/GRAPHS/STATS/ARMOR_PLAYER_BYLEVEL_FORSET.DAT"
 GRAPH_LEVEL_VAR = 120
 GRAPH_VALUE_VAR = 121
+
+#: The divisor a set rung's nominal is scaled by: ``shown = nominal * curve /
+#: 100``.  The same 100 that turns a share into a percentage, and the curves
+#: are stated the same way -- ``STEAL_HEALTH_AND_MANA`` at level 1 is 5.25, so
+#: a nominal 375 is shown as 20.
+GRAPH_PERCENT = 100.0
 
 #: The damage types, in the order the game lists them, with the field each
 #: one's share is stated in.
@@ -331,6 +375,80 @@ def _spaced(word: str) -> str:
     return re.sub(r"^([12])H", r"\1H ", word).title()
 
 
+@dataclass(frozen=True)
+class SetBonus:
+    """One effect a rung of a set's ladder grants, as the set's files state it.
+
+    Shaped like an :class:`~tl2stash.item.Effect` on purpose.  A set bonus is
+    written the way an item's own affix is -- the same wording, the same
+    substitution -- so this goes to the same machinery a record out of the save
+    file goes through, and there is one account of how a stat reads.
+
+    The two are not *stored* the same way, which is the whole of the
+    difference.  A save file's record holds its values as four bytes that are
+    really a float; a data file states the same numbers as numbers, and as a
+    list in the order the effect's own schema names them.  ``DRAW MANA`` is
+    the case that shows it: its five numbers are the per-monster minimum, the
+    per-monster maximum, the pulse rate, the radius and the target count, and
+    its wording asks for the fourth of them by name.  So the first value is
+    the one a ``[VALUE]`` hole wants and the rest follow in file order.
+
+    ``damage_type`` is the number a save record would carry rather than the
+    word the set file writes -- ``ICE`` is 3 -- so that a ``[DMGTYPE]`` hole
+    is filled from one table instead of two.  It is always a number, never
+    None: a bonus that states no type is Physical, which is what the game's
+    records of those same bonuses carry.
+
+    ``skill`` is the rung node's own ``NAME``, and it is what a ``[NAME]``
+    hole wants.  The holes are rare among the set ladders -- a handful of
+    rungs cast something -- and where they occur the name is the skill the
+    cast runs, not the effect: VALKYRIE's rung is an effect under the name
+    ``WC_Zombie Proc Skill``, whose display name is the ``raise shadowling``
+    the player reads.  It is the node's ``NAME`` rather than the ``TYPE`` in
+    ``values``' effect, and it is missing on 69 of the archive's 418 rung
+    effects, which state their numbers and nothing else.
+
+    A curve the effect names is *already applied* to ``values`` by the time
+    this is built: what a set file states is a nominal, and the number the
+    player reads is that nominal scaled to the rung's affix level.
+    """
+
+    #: The effect's own name, which is what ``EFFECTSLIST.DAT`` files it
+    #: under: the node's ``TYPE``, not the affix name beside it.  It is unique
+    #: where an affix name is not.
+    name: str
+    values: tuple[float, ...]
+    duration: float
+    damage_type: int
+    skill: str | None = None
+
+    @property
+    def value(self) -> float:
+        """What a ``[VALUE]`` hole wants, which is the first of the list.
+
+        A set's bonus is not rolled, so there is no range to choose from:
+        over the archive's 391 rungs, ``MIN`` and ``MAX`` are equal on every
+        one of the 402 effects that state them.
+        """
+        return self.values[0] if self.values else 0.0
+
+
+@dataclass(frozen=True)
+class SetRung:
+    """One rung of a set's ladder: how many pieces, and what that grants.
+
+    ``count`` is how many of the set's pieces the player has to be wearing.  A
+    rung can grant more than one effect -- 9 of the archive's 391 do, four
+    apiece -- and a set can have more than one rung at the same count: Tundra
+    asks for 2, 2 and 3, and the player reads one ``(2) Set`` with both of its
+    lines under it.  So a count appears at most once here, and what the file
+    spelled as two rungs is one.
+    """
+
+    count: int
+    bonuses: tuple[SetBonus, ...]
+
+
 def archive_path(install: str | Path) -> Path:
     """The manifest for an install, whether given the install or its ``PAKS``.
 
@@ -357,9 +475,11 @@ class GameData:
         "_by_name",
         "_display_names",
         "_effects",
+        "_effect_curves",
         "_effect_order",
         "_item_files",
         "_item_guids",
+        "_sets",
         "_stash_tabs",
         "_weapon_curve",
     )
@@ -373,20 +493,24 @@ class GameData:
         effect_order: list[DatNode],
         affix_effects: dict[str, set[str]],
         containers: dict[int, str],
+        sets: dict[str, DatNode],
         failed: list[tuple[str, str]],
         files_read: int,
         item_files: dict[str, DatFile],
         item_guids: dict[int, DatFile],
         weapon_curve: dict[int, float],
         armor_curve: dict[int, float],
+        effect_curves: dict[str, dict[int, float]],
     ) -> None:
         self.install = install
         self._by_name = by_name
         self._display_names = display_names
         self._effects = effects
+        self._effect_curves = effect_curves
         self._effect_order = effect_order
         self._affix_effects = affix_effects
         self.containers = containers
+        self._sets = sets
         self.failed = failed
         self.files_read = files_read
         self._item_files = item_files
@@ -422,10 +546,12 @@ class GameData:
         effect_order: list[DatNode] = []
         affix_effects: dict[str, set[str]] = {}
         containers: dict[int, str] = {}
+        sets: dict[str, DatNode] = {}
         failed: list[tuple[str, str]] = []
         item_files: dict[str, DatFile] = {}
         item_guids: dict[int, DatFile] = {}
         curves: dict[str, dict[int, float]] = {}
+        effect_curves: dict[str, dict[int, float]] = {}
         read = 0
 
         with PakFile(pak_path, index) as pak:
@@ -440,7 +566,7 @@ class GameData:
                     continue
                 read += 1
 
-                if path in (GRAPH_WEAPON_DAMAGE, GRAPH_ARMOR):
+                if path.startswith(GRAPHS_DIR):
                     curves[path] = _graph_points(data)
 
                 if path.startswith(ITEMS_DIR):
@@ -478,6 +604,20 @@ class GameData:
                     if found is not None:
                         containers[found[0]] = found[1]
 
+                if path.startswith(SETS_DIR):
+                    # A set's file, kept whole: the root *is* the set, and its
+                    # children are the rungs of its ladder.  Filed under both
+                    # names it answers to, because its two callers have one
+                    # each -- an item's ``SET`` field spells the internal name
+                    # and the card draws the display name.
+                    for spelling in (
+                        data.root.text(VAR_NAME),
+                        data.root.name,
+                        data.root.text(VAR_DISPLAY_NAME),
+                    ):
+                        if spelling:
+                            sets.setdefault(spelling.upper(), data.root)
+
                 for node in data.root.walk():
                     name = node.name
                     if name:
@@ -507,6 +647,22 @@ class GameData:
                                     granted.upper()
                                 )
 
+        # Which curve each effect's numbers scale with, resolved once here
+        # rather than on every rung lookup.  Read after the loop, so it does
+        # not matter whether the manifest lists the effects or the graphs
+        # first.  An effect whose graph is missing is simply absent, and its
+        # numbers go through unscaled -- which is what an effect that names no
+        # graph at all gets too, and what a mod's half-read archive gets.
+        for name, node in effects.items():
+            stem = node.text(VAR_EFFECT_GRAPH)
+            if not stem:
+                continue
+            if not stem.upper().endswith(DATA_SUFFIX):
+                stem += DATA_SUFFIX
+            points = curves.get(_data_path(GRAPHS_DIR + stem))
+            if points:
+                effect_curves[name] = points
+
         return cls(
             install,
             by_name,
@@ -515,12 +671,14 @@ class GameData:
             effect_order,
             affix_effects,
             containers,
+            sets,
             failed,
             read,
             item_files,
             item_guids,
             curves.get(GRAPH_WEAPON_DAMAGE, {}),
             curves.get(GRAPH_ARMOR, {}),
+            effect_curves,
         )
 
     # -- looking things up ------------------------------------------------
@@ -538,8 +696,13 @@ class GameData:
         key = name.upper()
         return self._effects.get(key) or self._by_name.get(key)
 
-    def skill_name(self, name: str) -> str | None:
-        """What the player is shown for the skill ``name``, if it is one.
+    def display_name(self, name: str) -> str | None:
+        """What the player is shown for the thing ``name``, if it has a name.
+
+        A node's ``NAME`` is its internal id and its ``DISPLAYNAME`` is what
+        the player reads, and the two are not the same thing.  A skill is
+        ``spell_fireball`` under the first and ``Fireball III`` under the
+        second; a set is ``U_TRUE_NORTH`` and ``True North``.
 
         A handful of effects name a skill in their wording -- ``'[VALUE]%
         chance to cast [NAME] on kill'`` -- and the name that goes in the hole
@@ -549,6 +712,8 @@ class GameData:
         ``MEDIA/SKILLS/ARBITER/WANDCHAOS``, and only the skill carries the
         display name ``'Fully Heal Self'``.  So the record's own name is the
         key, and it is looked up as a display name rather than as a node.
+
+        ``None`` for a thing that has no second name, which is most of them.
         """
         if not name:
             return None
@@ -751,7 +916,58 @@ class GameData:
         # not what the player sees, but it is better than an unnamed set.
         return replace(
             appearance,
-            set_name=self.skill_name(appearance.set_name) or appearance.set_name,
+            set_name=self.display_name(appearance.set_name) or appearance.set_name,
+        )
+
+    def set_ladder(self, name: str) -> tuple[SetRung, ...]:
+        """A set's bonuses, one rung per piece count, cheapest rung first.
+
+        ``name`` may be either of the two names a set answers to: an item's
+        ``SET`` field spells the internal one (``U_TRUE_NORTH``) and the card
+        draws the display one (``True North``).  Both are indexed at load.
+
+        Reading a ladder is two lookups deep.  The set's own file says how
+        many pieces a rung takes and *which affix* it grants; the affix states
+        the numbers, under one ``EFFECT`` child per effect it grants.  A rung
+        can name more than one -- 9 of the archive's 391 grant four apiece.
+
+        Gathered by piece count rather than listed as the file has them, for
+        two reasons.  The file's order is not to be trusted -- 87 of the
+        archive's 88 sets list their rungs in order and ``OUTLANDER_B25``
+        lists 2, 3, 2 -- and two rungs can ask for the same count, which is
+        one rung to the player: Tundra's ladder is 2, 2, 3 and its card reads
+        ``(2) Set`` once, with both lines under it.
+
+        Empty for a set the archive has not got, which is what a mod's set is.
+        The caller draws the piece without a ladder rather than nothing.
+        """
+        root = self._sets.get((name or "").upper())
+        if root is None:
+            return ()
+
+        rungs: dict[int, list[SetBonus]] = {}
+        for child in root.children:
+            affix = self._by_name.get((child.text(VAR_AFFIX) or "").upper())
+            if affix is None:
+                continue
+            level = int(child.number(VAR_AFFIX_LEVEL) or 1)
+            bonuses = [
+                bonus
+                for bonus in (
+                    _bonus(effect, self._effect_curves, level)
+                    for effect in affix.children
+                    if effect.node_id == VAR_EFFECT_TYPE
+                )
+                if bonus is not None
+            ]
+            if bonuses:
+                count = int(child.number(VAR_COUNT) or 0)
+                # In the file's order within a count, which is the order the
+                # game draws them in too.
+                rungs.setdefault(count, []).extend(bonuses)
+        return tuple(
+            SetRung(count, tuple(bonuses))
+            for count, bonuses in sorted(rungs.items())
         )
 
     def _inherited(self, data: DatFile) -> dict[int, DatNode]:
@@ -817,6 +1033,119 @@ class GameData:
                 if name.startswith(SHARED_STASH)
             )
         return self._stash_tabs
+
+
+def _bonus(
+    effect: DatNode,
+    curves: Mapping[str, dict[int, float]] | None = None,
+    level: int = 1,
+) -> SetBonus | None:
+    """One effect a rung of a set's ladder grants, read off the affix node.
+
+    ``None`` for a node that names no effect at all, which the archive has not
+    got but a hand-written file can.
+
+    The name is the node's ``TYPE`` -- the field naming the effect proper,
+    which is what ``EFFECTSLIST.DAT`` files the wording under -- rather than
+    the ``NAME`` beside it, which is the affix's own and is not unique: 107
+    different affixes are called ``OFFLAME DAMAGE BONUS``.  ``TYPE`` is
+    present on all 418 of the archive's rung effects; ``NAME`` is missing on
+    69 of them, which state their numbers and nothing else.
+
+    The values are the node's numbers in the order the file writes them, and
+    that order is the effect's own schema: measured over those 418, the count
+    of numbers is the number of value slots the effect declares, and the first
+    is ``MIN`` on every one of the 402 that states it.
+
+    A node that states no damage type is Physical rather than unknown.  19 of
+    the 418 state none, and the effects they grant are the armour-bonus family
+    -- ``PERCENT ARMOR BONUS``, ``ARMOR BONUS``, ``DEFENSE`` -- whose wording
+    still says ``[DMGTYPE]``.  Real records of those same affixes carry 0, or
+    1, and both of those are Physical: the game fills the hole in from the
+    same default, and a card that did not would read ``+6% to ? Armor``.
+
+    ``curves`` and ``level`` are the scaling: a set file states a nominal and
+    the game shows the nominal scaled to the rung's ``AFFIXLEVEL`` by whichever
+    graph the effect names, as a percentage.  Only the first two numbers are
+    scaled -- the value pair -- because the ones after them are the effect's
+    *parameters* rather than its magnitude: DRAW MANA's five are the per-monster
+    low and high, the pulse rate, the radius and the target count, and its
+    printed radius stays 3 however the value scales.
+
+    Measured over the archive's 391 rungs against the reference database's own
+    set text: 326 agree exactly.  The one that does not is the third rung of
+    ``EMBERMAGE_TRINKETS_FROST``, whose text reads ``+2 Mana/sec`` where this
+    reads ``+4``: its nominal is 7.5 and ``MANA_PLAYER_GENERIC`` states 47.5 at
+    its level and never anything near the 26.7 the reference's number would
+    need, at any level of the curve.  Every other curve in the archive was
+    checked the same way.  So the reference states that one rung differently
+    from the game's own data, and this follows the data.
+
+    A curve with no point at ``level``, or none at all, leaves the numbers as
+    the file stated them -- which is the other half of the same rule rather
+    than an exception to it: the ``-1.5%`` of ``DRAGONRIFT``'s second rung is
+    a nominal written out in full, with no graph behind it, and the game shows
+    it exactly as written.  Every one of the archive's scaled rungs has its
+    level in its curve; a mod's rung is the case the fallback is written for.
+    """
+    name = effect.text(VAR_AFFIX_EFFECT) or effect.text(VAR_NAME) or effect.name
+    if not name:
+        return None
+
+    curve = (curves or {}).get(name.upper())
+    values = [
+        value for value in effect.variables.values() if isinstance(value, float)
+    ]
+    if curve:
+        factor = curve.get(level)
+        if factor is not None:
+            scale = factor / GRAPH_PERCENT
+            # The scale lands on an integer, and it rounds *toward positive
+            # infinity* -- the same direction the game's own display rounds an
+            # effect's value in.  Measured: nominal 3.0 at 145.5% is 4.365 and
+            # the game shows 5; nominal 0.5 at 79.5% is 0.3975 and it shows 1;
+            # nominal -0.333 at 3840% is -12.787 and it shows -12, which is
+            # the ceiling and not the truncation.  `float()` matters: the
+            # value list is read back as float32 bit patterns downstream, and
+            # an int would be unpacked as one.
+            values = [
+                float(math.ceil(value * scale)) if slot < 2 else value
+                for slot, value in enumerate(values)
+            ]
+
+    return SetBonus(
+        name=name,
+        values=tuple(values),
+        duration=_seconds(effect),
+        damage_type=DAMAGE_TYPE_IDS.get(
+            (effect.text(VAR_DAMAGE_TYPE) or "").upper(),
+            DAMAGE_TYPE_IDS["PHYSICAL"],
+        ),
+        skill=effect.text(VAR_NAME),
+    )
+
+
+def _seconds(effect: DatNode) -> float:
+    """How long an effect lasts, from the node's ``DURATION``.
+
+    A data file writes the duration as *text* -- ``'5'``, ``'60'``, ``'0'`` --
+    rather than as a number, which is why this is not just ``number()``.  What
+    the value means is what the wording asks for: an effect whose duration is
+    above zero is described with the over-time template, whose ``[DURATION]``
+    and ``[VALUE_OT]`` holes are filled from it, and the game does the same
+    with an effect record's duration rather than consulting anything else.
+
+    Anything that is not a number reads as zero -- the archive writes no such
+    value, but the field is free text and a duration the tool cannot read is
+    better shown as no duration than as a crash.
+    """
+    text = effect.text(VAR_DURATION)
+    if text is not None:
+        try:
+            return float(text)
+        except ValueError:
+            return 0.0
+    return effect.number(VAR_DURATION) or 0.0
 
 
 def _container_entry(data: DatFile) -> tuple[int, str] | None:

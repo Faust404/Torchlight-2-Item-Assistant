@@ -43,7 +43,15 @@ from app.card import (  # noqa: E402
     emphasis,
     mark,
 )
-from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Block, Card  # noqa: E402
+from tl2stash.card import (  # noqa: E402
+    ADDED,
+    AFFIX,
+    ARMOR,
+    DAMAGE,
+    Block,
+    Card,
+    Rung,
+)
 
 from test_dat import needs_game, real_game  # noqa: E402
 
@@ -73,6 +81,7 @@ def card(**kwargs) -> Card:
         "sockets": 1,
         "blocks": (),
         "gems": (),
+        "set_ladder": (),
         "flavor": None,
     }
     fields.update(kwargs)
@@ -318,6 +327,51 @@ def test_a_gem_is_drawn_under_the_item_that_holds_it(qapp):
     assert texts(drawn, "gem") == ["Flawless Ruby"]
     # Ruled off from the item's own stats above it, like any other section.
     assert len(drawn.findChildren(Hairline)) == 1
+
+
+def test_a_set_s_ladder_is_drawn_under_the_item_s_own_stats(qapp):
+    """The set's name, then each rung as ``(2) Set`` over its lines.
+
+    The name is drawn in the set purple, which is the one colour no tier uses
+    -- a set is not a rarity, and the card already says the rarity in its own
+    colour in the kind line.  The ladder is a section like any other, so it
+    takes a rule above it and none between its own lines.
+    """
+    drawn = ItemCard(
+        card(
+            set_name="Test Set",
+            blocks=(Block(AFFIX, ("+5 Strength",)),),
+            set_ladder=(
+                Rung(2, ("+6 Set damage",)),
+                Rung(3, ("+5 Set burn", "2.5% chance to cast Test Proc on kill")),
+            ),
+        )
+    )
+
+    title = drawn.findChild(QLabel, "setname")
+    assert title.text() == "Test Set"
+    assert TIER_INK["set"] in title.styleSheet()
+    assert texts(drawn, "rung") == ["(2) Set", "(3) Set"]
+
+    # The rung's lines are affix lines, drawn the way the item's own are: the
+    # number in a rung's line is lifted into its own colour, so the line is
+    # checked for its words and for the green the whole line is inked with.
+    body = [label.text() for label in drawn.findChildren(QLabel) if label.objectName() == ""]
+    for words in ("Set damage", "Set burn", "chance to cast Test Proc"):
+        assert any(words in text for text in body), words
+    assert any("#7cc24a" in text and "Set burn" in text for text in body)
+    # One rule for the whole ladder, not one per rung.
+    assert len(drawn.findChildren(Hairline)) == 1
+
+
+def test_an_item_in_no_set_draws_no_ladder_at_all(qapp):
+    """An item in a set the data does not describe -- a mod's -- is the same
+    empty tuple as one in no set, and draws the same nothing."""
+    drawn = ItemCard(card(blocks=(Block(AFFIX, ("+5 Strength",)),)))
+
+    assert texts(drawn, "setname") == []
+    assert texts(drawn, "rung") == []
+    assert drawn.findChildren(Hairline) == []
 
 
 # --------------------------------------------------------------------------
