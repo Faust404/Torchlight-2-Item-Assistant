@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QCheckBox,
     QLabel,
     QPushButton,
+    QScrollArea,
     QWidget,
 )
 
@@ -314,7 +315,7 @@ def test_the_panel_is_inset_from_the_window_on_every_side(qapp):
 
 
 def test_the_panel_is_capped_and_the_backdrop_dims_the_window(qapp):
-    """Wide enough for the two-column grid of kinds, and no wider.
+    """As wide as the form needs and no wider than a form should be.
 
     And the window behind it is dimmed rather than hidden, which is the scrim
     the comparison screen paints -- deliberately the same one: both are the
@@ -326,6 +327,31 @@ def test_the_panel_is_capped_and_the_backdrop_dims_the_window(qapp):
     assert overlay.panel().width() < host.width()
     painted = overlay.palette().color(QPalette.ColorRole.Window)
     assert [painted.red(), painted.green(), painted.blue()] == list(SCRIM[:3])
+
+
+def test_the_panel_opens_at_the_width_of_the_form_it_holds(qapp):
+    """The user's *"expand the width of the pop up window itself to comfortably
+    show everything"*, stated as what the panel is made of.
+
+    The panel is as wide as the form wants to be drawn, so no section is
+    squeezed below the size its own contents ask for -- which is the thing the
+    user was buying: rows drawn whole rather than rows drawn narrow because a
+    scroll area guessed a width for them.  And there is never a sideways bar:
+    the policy is off rather than merely satisfied, because "nothing here is
+    reached by scrolling across" and "the rows happen to fit today" are two
+    different statements and only the first one is the request.
+    """
+    _, overlay = opened(size=(1400, 900))
+    body = overlay.findChild(QScrollArea, "abody")
+    inside = body.widget()
+
+    assert body.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert not body.horizontalScrollBar().isVisible()
+    assert body.viewport().width() >= inside.sizeHint().width(), (
+        "the form is wider than the window it scrolls in"
+    )
+    for caption, section in sections(overlay).items():
+        assert section.width() >= section.sizeHint().width(), f"{caption} is squeezed"
 
 
 def test_escaping_the_panel_puts_it_away_and_applies_nothing(qapp):

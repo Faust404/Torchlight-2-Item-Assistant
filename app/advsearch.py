@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -83,7 +83,10 @@ ALL_TYPES = "All"
 #: read down a column, and a search box spanning a 1400px screen puts its words
 #: at one edge and its end at the other; the reference caps its own panel for
 #: the same reason, and this is a little wider than its 620 -- for the Type
-#: grid, which now draws four kinds to a row where it drew two.
+#: grid, which now draws four kinds to a row where it drew two.  It is a cap
+#: and not a width: what the panel opens at is the width of the form inside it
+#: -- see :class:`Body` -- and this is only what stops a wide window handing it
+#: more than a form should have.
 PANEL_MAX = 820
 
 #: How many kind boxes stand in one row of the Type grid.  The user's own
@@ -334,6 +337,46 @@ class Section(QWidget):
     def note(self, text: str) -> None:
         """A hint under the row above, against the field and not the label."""
         self.rows.addRow(_row_label(""), _note(text))
+
+
+class Body(QScrollArea):
+    """The column of sections, as wide as the form that stands in it.
+
+    A scroll area's own width hint is a guess rather than a measurement -- Qt
+    hands it a few dozen ems whatever is inside -- and the guess is narrower
+    than this form.  The wide rows were squeezed into it and the difference was
+    handed to a sideways scroll bar, which is what the user saw and asked never
+    to see again: the panel is this column's width and nothing else, so the
+    hint is taken from the content instead.  The panel opens at the width the
+    form asks to be drawn at, up to :data:`PANEL_MAX` and the room the window
+    has, and every row is drawn at the size its own contents asked for.
+
+    The sideways bar is *off* rather than merely unwanted, because those are
+    two different statements: nothing here is meant to be reached by scrolling
+    across, and a bar that came back the moment a row was a pixel too wide
+    would be the same complaint again.  Up and down still scrolls -- the form
+    is longer than any window -- and that is the one direction the panel reads
+    in.
+
+    A window narrower than the form is the one case left over, and it is the
+    window's answer that is the smaller one: the panel is given the room there
+    is and the last few pixels of a wide row are cut off, rather than the panel
+    offering to slide across.  A window that narrow is one the collection
+    behind it is already unreadable in.
+    """
+
+    def sizeHint(self) -> QSize:  # noqa: N802 -- Qt naming
+        inside = self.widget()
+        if inside is None:
+            return super().sizeHint()
+        # The form's own width, plus the strip the scroll bar takes when it
+        # stands beside it: a hint that forgot the bar would be a hint whose
+        # last few pixels were the ones clipped.
+        bare = super().sizeHint()
+        return QSize(
+            inside.sizeHint().width() + self.verticalScrollBar().sizeHint().width(),
+            bare.height(),
+        )
 
 
 class TypeGrid(QWidget):
@@ -926,18 +969,21 @@ class AdvancedSearchOverlay(QWidget):
         row.addWidget(close)
         return head
 
-    def _body(self) -> QScrollArea:
+    def _body(self) -> Body:
         """The sections, in the reference's own order, in a column that scrolls.
 
         The reference folds its sections; this scrolls them instead, because a
         fold is a state the panel would have to remember and the panel is
         thrown away on every Esc -- and seven sections of a form is a longer
-        scroll than four, but a scroll either way.
+        scroll than four, but a scroll either way.  Down only, and the column
+        is what gives the panel its width rather than the other way round --
+        see :class:`Body`.
         """
-        scroll = QScrollArea()
+        scroll = Body()
         scroll.setObjectName("abody")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.viewport().setAutoFillBackground(False)
 
         content = QWidget()
