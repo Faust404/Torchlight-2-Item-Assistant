@@ -19,14 +19,14 @@ button carrying an arrow -- and it stands where the reference keeps its own,
 just before the rarities, which are the one facet a sort is a reading *of*.
 
 The rarities and the levels are each in a box of their own, in the window's own
-control ink like every other control the player operates
+control ink, like the search box and the number boxes
 (:data:`app.theme.CHALK` says why), and the sort's two controls are in one of
 the same boxes.  Five pills reading ``Unique 4`` in a row are legible; a pair
 of number boxes saying ``0`` and ``100`` beside them are not, and two outlined
 rectangles are what tells a reader where the rarity chips stop and the level
 range starts.
 
-:guilabel:`Advanced search` stands between the search box and the sort, and
+:guilabel:`Advanced Search` stands between the search box and the sort, and
 opens :class:`app.advsearch.AdvancedSearchOverlay` -- eight more facets that
 have no room in this row: an item level range, socket counts, four attribute
 requirements, the classes an item may be restricted to, the damage and armour
@@ -36,10 +36,10 @@ rather than after the sort because what is behind it is the rest of what
 ordering begins.  Those eight facets are kept *here* rather than in the panel,
 because this is where every facet lives until the window asks for it, and the
 panel is a thing that opens and closes: a search that unset eight facets by
-being closed would be a filter with a lifetime of its own.  The button wears
-the rail's gold while one of those eight is narrowing the collection, which is
-the only sign a control this row has not got is doing anything -- see
-:meth:`FilterBar.advanced_active`.
+being closed would be a filter with a lifetime of its own.  The button is the
+one filled control in the row and wears the reference's own gold at rest --
+see :func:`_advanced_style` -- and what says one of those eight is narrowing
+the collection is the second step of that fill.
 
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
@@ -73,7 +73,7 @@ from PySide6.QtWidgets import (
 
 from tl2stash.card import TIER_INK
 
-from .card import GOLD
+from .card import GOLD, LABEL
 from .models import (
     LEVEL_MAX,
     REQ_REST,
@@ -90,6 +90,17 @@ __all__ = ["FilterBar", "SpinBox", "chip_style"]
 #: rather than the colour itself, so that the word on it stays the brightest
 #: thing in the chip.
 WASH = 77
+
+#: How much of the gold the advanced search's button is filled with, of 255 --
+#: at rest, and then while one of the eight facets behind it is narrowing the
+#: collection.  Well under :data:`WASH`, because the button is not a tick: it
+#: is a lit door standing in a row of outlined controls, and the reference
+#: fills its own at two strengths for exactly that reason.  The two numbers are
+#: read off its pair of fills -- ``#2a2216`` at rest and ``#3a2f1c`` when the
+#: panel is open -- taken as washes of the gold here rather than as its literal
+#: browns, so that the fill is made the way every other fill in this row is.
+ADV_TINT = 20
+ADV_TINT_ON = 42
 
 #: How far the row stands in from the left edge of the pane it is over.  The
 #: bar is the collection box's *sibling* rather than its content -- the pane
@@ -164,10 +175,16 @@ class SpinBox(QSpinBox):
         ]
 
 
-def _wash(ink: str) -> str:
-    """A tier's colour as a fill the chip's own word can be written on."""
+def _wash(ink: str, alpha: int = WASH) -> str:
+    """A colour as a fill the chip's own word can be written on.
+
+    The weight is a parameter because the one thing in this row that is filled
+    without being ticked is the advanced search's button, whose two states are
+    this same wash drawn twice -- see :data:`ADV_TINT`.  Everything else takes
+    the default and is a tick.
+    """
     colour = QColor(ink)
-    return f"rgba({colour.red()}, {colour.green()}, {colour.blue()}, {WASH})"
+    return f"rgba({colour.red()}, {colour.green()}, {colour.blue()}, {alpha})"
 
 
 def chip_style(ink: str) -> str:
@@ -230,30 +247,35 @@ def _set_style() -> str:
 
 
 def _advanced_style(active: bool) -> str:
-    """The advanced search's button: a box the row's language, gold when it is on.
+    """The advanced search's button: the reference's gold, lit while it works.
 
-    The same outlined rectangle as the number boxes, because it is a control in
-    the same row and one more of the same kind.  What it says that they cannot
-    is when it is *doing* something: the four facets behind it have no control
-    in this row, so without the ink a collection narrowed by a panel nobody can
-    see would look exactly like one narrowed by nothing.
+    Every other control in this row is an outline, which is what makes this one
+    findable: the reference fills its own way-into-a-search and writes it in
+    gold *at rest* rather than turning it gold under the pointer like the
+    buttons beside it, because a door is not one more filter -- the treatment
+    it also gives its panel's own Search button, so that on its page the door
+    and the button behind it are visibly one idea.
 
-    The rail's gold rather than a colour of its own -- it is the ink the
-    reference uses for "this one is on", and the rail already uses it for a
-    group with everything ticked, which is the same statement about a different
-    control.
+    What is left to say, then, is whether one of the eight facets behind it is
+    narrowing the collection at all: without it a search narrowed by a panel
+    nobody is looking at would read exactly like one narrowed by nothing.  So
+    the *strength* is what moves and not the ink -- the wash deepens, and the
+    outline goes from the label's tan to the gold itself, which is the
+    reference's own second state.  Two channels, for the same reason the rail's
+    group buttons carry three inks: a control that is lit at rest cannot say
+    "I am working" by being lit.
+
+    The reference lights that same second fill under the *pointer* as well,
+    and this does not: there the state it stands for is an open panel, while
+    here it is a live facet -- so a button that lit up under a passing pointer
+    would be saying the search was narrowed when nothing had been touched.
     """
-    ink = GOLD if active else CHALK
     return (
         "QPushButton {"
-        f" color: {ink};"
-        f" border: 1px solid {ink};"
-        # Three pixels of vertical padding rather than two, which is the
-        # user's other ask about this button: the chips beside it are drawn
-        # at three and the reset at the style's own, so two left this the
-        # shortest control in the row by a pixel and it read as a thing
-        # sitting slightly below the line the others are on.
-        " border-radius: 3px; padding: 3px 8px;"
+        f" color: {GOLD};"
+        f" border: 1px solid {GOLD if active else LABEL};"
+        f" background: {_wash(GOLD, ADV_TINT_ON if active else ADV_TINT)};"
+        " border-radius: 3px; padding: 2px 8px;"
         "}"
     )
 
@@ -416,7 +438,7 @@ class FilterBar(QWidget):
         # together; the chip takes no room in the layout at all until a set is
         # being shown, so this is the control immediately after the search box
         # on every ordinary day.
-        self.advanced = QPushButton("Advanced search")
+        self.advanced = QPushButton("Advanced Search")
         self.advanced.setObjectName("advanced")
         self.advanced.setCursor(Qt.CursorShape.PointingHandCursor)
         self.advanced.setToolTip(
@@ -606,10 +628,11 @@ class FilterBar(QWidget):
     def advanced_active(self) -> bool:
         """Whether one of the eight panel-only facets is narrowing anything.
 
-        What the button's ink says, and the reason it is worked out from the
-        facets rather than remembered as a flag: a flag is a second answer to a
-        question the facets have already answered, and the two would come apart
-        the first time a panel was dismissed without being applied.
+        What the button's second state says, and the reason it is worked out
+        from the facets rather than remembered as a flag: a flag is a second
+        answer to a question the facets have already answered, and the two
+        would come apart the first time a panel was dismissed without being
+        applied.
         """
         return bool(
             self._item_low

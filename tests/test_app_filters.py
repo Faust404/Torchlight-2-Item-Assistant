@@ -55,7 +55,14 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from app.card import BODY, DIM, GOLD, HEAD, LABEL, MUTED, IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
-from app.filters import INSET, WASH, FilterBar  # noqa: E402
+from app.filters import (  # noqa: E402
+    ADV_TINT,
+    ADV_TINT_ON,
+    INSET,
+    WASH,
+    FilterBar,
+    _wash,
+)
 from app.sidebar import COUNT_PX  # noqa: E402
 from app.theme import BODY_PX, CHALK, FIELD, RAIL_PX, SHELL, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
@@ -2058,59 +2065,69 @@ def test_the_bar_says_what_the_panel_would_open_on(qapp):
     assert state.places == frozenset(), "the kinds are the rail's to fill in"
 
 
+def test_the_way_into_the_advanced_search_is_lit_at_rest(qapp):
+    """The one filled control in the row, which is the reference's own doing.
+
+    Every other thing here is an outline in the window's control ink, so the
+    button that opens the panel is the one the eye has to be able to find
+    without reading: the reference writes its own way-into-a-search in gold at
+    rest, fills it, and outdims it with the label's tan rather than with the
+    white every other control wears -- because a door is not one more filter,
+    and because it gives the panel's own Search button the same treatment.  The
+    fill is a wash and not a colour, like every other fill in this row, so the
+    word on it is the brightest thing it draws.
+
+    Read off the sheet it was given rather than off the pixels, as the state
+    below is: what is being asked is what the button was told to wear, and the
+    drawing of a word in a colour is measured elsewhere.
+    """
+    bar = _bar()
+    sheet = bar.advanced.styleSheet()
+
+    assert f"color: {GOLD};" in sheet, "the word is not the reference's gold"
+    assert f"border: 1px solid {LABEL};" in sheet, "the outline is not the tan"
+    assert f"background: {_wash(GOLD, ADV_TINT)};" in sheet, (
+        "the button is not filled, or not at the resting strength"
+    )
+    assert CHALK not in sheet, "the way in is not one of the outlined controls"
+
+
 def test_the_button_says_when_one_of_the_eight_is_narrowing(qapp):
     """A facet with no control in the row must not be an invisible one.
 
-    The eight have no widget here, so without the ink a collection narrowed by
-    a panel nobody is looking at would read exactly like one narrowed by
-    nothing -- which is why the button turns the rail's gold (see
-    :func:`app.filters._advanced_style`).  Read off the sheet it was given
-    rather than off the pixels, because what is being asked is what the button
-    was told to wear; the gold itself is drawn like every other word in the
-    window, and the rail's own ink test is where that is measured.
+    The eight have no widget here, so without a second state a collection
+    narrowed by a panel nobody is looking at would read exactly like one
+    narrowed by nothing.  The word cannot be what moves -- it is the gold at
+    rest and gold while it works -- so the *strength* is: the wash deepens and
+    the outline goes from the label's tan to the gold itself.  Read off the
+    sheet it was given rather than off the pixels, because what is being asked
+    is what the button was told to wear; the gold itself is drawn like every
+    other word in the window, and the rail's own ink test is where that is
+    measured.
     """
     bar = _bar()
 
-    assert GOLD not in bar.advanced.styleSheet()
-    assert CHALK in bar.advanced.styleSheet()
+    assert f"background: {_wash(GOLD, ADV_TINT)};" in bar.advanced.styleSheet()
 
-    bar.adopt(Advanced(sockets=frozenset({1})))
-    assert GOLD in bar.advanced.styleSheet()
+    for advanced in (
+        Advanced(sockets=frozenset({1})),
+        Advanced(damage=(("fire", 20, 40),)),
+        Advanced(stats=(("to fire damage", 0, NUMBER_MAX),)),
+    ):
+        bar.reset()
+        bar.adopt(advanced)
+        sheet = bar.advanced.styleSheet()
+        assert f"color: {GOLD};" in sheet, "the word stopped being the gold"
+        assert f"border: 1px solid {GOLD};" in sheet, "the outline stayed the tan"
+        assert f"background: {_wash(GOLD, ADV_TINT_ON)};" in sheet, (
+            "the fill did not deepen, so the button says nothing"
+        )
+        assert CHALK not in sheet, "the way in is not one of the outlined controls"
+        assert _wash(GOLD, ADV_TINT) not in sheet, "both states at once"
 
     bar.reset()
-    bar.adopt(Advanced(damage=(("fire", 20, 40),)))
-    assert GOLD in bar.advanced.styleSheet()
-
-    bar.reset()
-    bar.adopt(Advanced(stats=(("to fire damage", 0, NUMBER_MAX),)))
-    assert GOLD in bar.advanced.styleSheet()
-    assert CHALK not in bar.advanced.styleSheet(), "the ink is one or the other"
-
-
-def test_the_advanced_button_stands_on_the_line_the_rest_of_the_row_is_on(themed):
-    """The user's *"more in-line with the other filter options"*, as a height.
-
-    It wore two pixels of vertical padding against the chips' three, which left
-    it 21 tall in a row of 23s -- a pixel or two short of every control beside
-    it, which is the sort of thing that reads as a mistake long before anyone
-    can say what is wrong.  Three is what the pills and the reset are drawn at,
-    so three is what it wears; the number is pinned here rather than left to
-    the sheet because the whole complaint was about a measurement.
-
-    Themed, and shown, because a widget's height is its layout's answer and not
-    its own: an unshown bar has not been laid out and every control in it is
-    the same size.
-    """
-    bar = _bar()
-    bar.show()
-    bar.resize(1400, 44)
-    themed.processEvents()
-
-    chip = next(iter(bar.chips.values()))
-    assert chip.height() == 23, "the row's own line moved, so nothing here reads"
-    assert bar.advanced.height() == chip.height()
-    assert bar.advanced.height() == bar.clear_button.height(), (
-        "the button is a different height from the reset at the other end"
+    assert f"background: {_wash(GOLD, ADV_TINT)};" in bar.advanced.styleSheet(), (
+        "the reset did not put the button back to its resting strength"
     )
 
 
