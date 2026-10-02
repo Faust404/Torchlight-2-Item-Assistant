@@ -176,8 +176,8 @@ SANS = ("Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif")
 #: rather than a different scheme.
 BODY_PX = 13
 
-#: The rail's own size, one step up from the body's -- the only place in the
-#: window that sets a size of its own.
+#: The rail's own size, one step up from the body's, and the size *every* row
+#: of it is drawn at -- the kinds and the headings over them alike.
 #:
 #: The rail is a column of kind names down the left edge with a window's worth
 #: of height to spare and nothing else in it, and its words are the one thing
@@ -187,10 +187,18 @@ BODY_PX = 13
 #: kind names are already the ones that elide, so a size the column cannot
 #: hold would trade a small word for half a word.
 #:
-#: Two things are drawn at this size and they are one number written once --
-#: the rows, and the box at the head of each of them, which is a square in the
-#: theme's own sheet rather than anything the style measures.  That is why it
-#: is here and not in :mod:`app.sidebar`: the sheet is what draws both.
+#: The headings used to be a step *below* this, which is what the user then
+#: asked to have put right -- a heading smaller than the words it heads reads
+#: as an afterthought -- so :mod:`app.sidebar` names this constant for all
+#: three levels and tells them apart by ink, weight and case instead.  Measured
+#: before the change went in: the longest heading, ``TWO-HANDED``, comes to
+#: 105 of the 130 pixels a subgroup row has at the pane's default width.
+#:
+#: Three things are drawn at this size and they are one number written once --
+#: the rows, the box at the head of each of them, which is a square in the
+#: theme's own sheet rather than anything the style measures, and every heading
+#: in :mod:`app.sidebar`.  That is why it is here and not in that module: the
+#: sheet is what draws two of the three.
 RAIL_PX = 15
 
 
@@ -341,8 +349,11 @@ QTreeView {{
 }}
 /* The rail's own voice, and the one place a widget sets its own size: it is a
    column of kind names with height to spare, so the words are set a step up
-   from the window's body -- see RAIL_PX.  Found by name rather than as
-   ``QTreeView`` because this is a rule about the rail, not about trees.
+   from the window's body -- see RAIL_PX.  That is the size of every row, not
+   only of the kinds: the headings are set the same size from the same constant
+   in app.sidebar, and are told apart by their ink instead.  Found by name
+   rather than as ``QTreeView`` because this is a rule about the rail, not about
+   trees.
 
    Its ground is here for the same reason.  A view's viewport is painted in the
    palette's ``Base``, which is the field -- so left alone the rail would be the

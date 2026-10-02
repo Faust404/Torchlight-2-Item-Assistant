@@ -15,12 +15,15 @@ rebuilds its rows on every filter change and drops the ones that reach zero --
 boxes that vanish from under the cursor as you tick them.
 
 **The voice.**  The rail is drawn the way the reference draws its own column:
-group rows in the card's ``HEAD`` tan, subgroup rows in ``LABEL`` a size down
+group rows in the card's ``HEAD`` tan, subgroup rows in the deeper ``LABEL``
 and upper-cased, leaves in the window's own body ink, counts in the
 reference's ``--muted`` at 11px, and a hover band under the row the pointer is
-on.  A heading also says what a click on it would do, which is the reference's
-tri-state and the only thing that tells one bulk toggle from another: all of
-it ticked goes gold, some of it wears a ``·``, an empty row dims.
+on.  Headings are the *same size* as the kinds they head -- see ``_HEADINGS``
+-- so the levels are told apart by ink, weight and case rather than by a size
+ramp, which is what the user asked for.  A heading also says what a click on
+it would do, which is the reference's tri-state and the only thing that tells
+one bulk toggle from another: all of it ticked goes gold, some of it wears a
+``·``, an empty row dims.
 
 Nothing here decides anything.  It draws what it is told to draw, says what
 has been ticked, and emits :attr:`SidePanel.changed`; :class:`~app.models.
@@ -45,6 +48,7 @@ from PySide6.QtWidgets import (
 from tl2stash.taxonomy import OTHER, TYPE_GROUPS, Place
 
 from .card import BODY, DIM, GOLD, HEAD, LABEL, MUTED
+from .theme import RAIL_PX
 
 __all__ = ["SidePanel", "UNCLASSIFIED", "arranged"]
 
@@ -55,15 +59,27 @@ __all__ = ["SidePanel", "UNCLASSIFIED", "arranged"]
 UNCLASSIFIED = "Unclassified"
 
 #: How a heading row is drawn: ``(ink, size in px, row height in px)``.  The
-#: inks and the two sizes are the reference's own -- a group is its ``--head``
-#: at 11.5px, which Qt's whole-pixel sizes round to 12, and a subgroup its
-#: ``--label`` at 10 -- and the heights are what its own padding and line
-#: height come to at those sizes.  Both rows are set as sizes of the rail's
-#: voice, which is the window's own family: the sheet sets the family once and
-#: these only choose how big.
+#: inks are the reference's own -- a group is its ``--head`` tan and a subgroup
+#: its deeper ``--label`` -- and the sizes are the rail's, ``RAIL_PX``, which is
+#: the size the kinds under them are drawn at.
+#:
+#: Both were a step *down* from the kinds until the user said so -- 12 and 10
+#: against the leaves' 15 -- and the complaint is the whole reason they are now
+#: one size: a heading set smaller than the words it heads reads as an
+#: afterthought rather than as a heading.  What tells the three levels apart is
+#: what tells them apart in the reference's own rail: the ink, the weight, and
+#: the upper case on a subgroup.  The sizes still differ from the *counts*'
+#: 11px, which is the one thing on a row that is meant to read as a side-note.
+#:
+#: The heights stay what they were, and they are what keeps the hierarchy
+#: legible once the sizes match: a group's 30px row stands a step above its
+#: subgroup's 26, which is exactly the leaf's own row.  Measured against the
+#: real rail before the sizes moved: at the pane's own 180px the name column is
+#: 142px, a subgroup has 130 of it after the 12px indent, and the longest of
+#: them -- ``TWO-HANDED`` -- comes to 105px at this size.
 _HEADINGS = {
-    "group": (HEAD, 12, 30),
-    "subgroup": (LABEL, 10, 26),
+    "group": (HEAD, RAIL_PX, 30),
+    "subgroup": (LABEL, RAIL_PX, 26),
 }
 
 #: What every count on the rail is drawn in: the reference's ``--muted`` at
@@ -170,10 +186,10 @@ class SidePanel(QWidget):
         tree.setColumnCount(2)
         tree.header().setVisible(False)
         # Not uniform, which is what a tree of one size would normally ask for:
-        # the rail draws a heading a size down from its leaves, so every row
-        # carries its own height and the view has to read it.  With this on,
-        # every row is drawn at the first row's height and the 15px leaves are
-        # clipped by the 12px heading above them.
+        # a heading's row is taller than a leaf's -- 30 and 26 against the
+        # sheet's 26 -- so every row carries its own height and the view has to
+        # read it.  With this on, every row is drawn at the first row's height
+        # and the group's 30px row is clipped down to the leaves' size.
         tree.setUniformRowHeights(False)
         tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

@@ -35,7 +35,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QFontMetrics, QPalette, QStandardItem  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPalette,
+    QStandardItem,
+)
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -1531,10 +1537,17 @@ def test_a_kind_whose_name_does_not_fit_says_all_of_it_on_hover(qapp):
 def test_the_rail_wears_the_reference_s_inks_and_sizes(qapp):
     """The user's second change: the reference's colours and headings.
 
-    A group is its ``--head`` tan, a subgroup its ``--label`` a size down and
-    upper-cased, a leaf the window's own body ink, and every count its
-    ``--muted`` at 11px.  Read off the drawn rows rather than off a constant,
-    because what the player sees is what the rows are set to.
+    A group is its ``--head`` tan, a subgroup its ``--label`` upper-cased, a
+    leaf the window's own body ink, and every count its ``--muted`` at 11px.
+    Read off the drawn rows rather than off a constant, because what the
+    player sees is what the rows are set to.
+
+    Every one of the three *word* sizes is the rail's own, which is the later
+    request and the reason this says equality rather than a ramp: the headings
+    were 12 and 10 against the kinds' 15, and the user's complaint was exactly
+    that -- a heading drawn smaller than the words it heads.  What separates
+    the levels now is the ink above, the weight, and the upper case on the
+    subgroup, all of which this test pins alongside.
     """
     panel = _panel()
     panel.set_shape([BOOTS, SWORD])
@@ -1551,11 +1564,46 @@ def test_the_rail_wears_the_reference_s_inks_and_sizes(qapp):
         assert row.foreground(1).color().name() == MUTED
         assert row.font(1).pixelSize() == COUNT_PX
 
-    # The reference sets a subgroup smaller than its group and both smaller
-    # than the kinds they head, which is the whole of the hierarchy.
-    assert armor.font(0).pixelSize() == 12
-    assert one_handed.font(0).pixelSize() == 10
-    assert armor.font(0).pixelSize() < RAIL_PX
+    # One size for the words and one for the counts.  A heading is not a size
+    # under its kinds, and the kinds are not a size under their heading.
+    assert armor.font(0).pixelSize() == RAIL_PX
+    assert one_handed.font(0).pixelSize() == RAIL_PX
+    assert sword.font(0).pixelSize() < 0, (
+        "the leaves take their size from the sheet -- Qt's sentinel for a font "
+        "with no size of its own is negative -- and setting one here would be a "
+        "second place the rail's size is written"
+    )
+    assert armor.text(0) == "Armor" and one_handed.text(0) == "ONE-HANDED", (
+        "the subgroup is not upper-cased, which is now one of the two things "
+        "telling it from the group above it"
+    )
+
+
+def test_the_longest_heading_still_fits_the_rail_it_is_drawn_in(themed):
+    """The check that the size change is one the rail can actually draw.
+
+    Raising the headings to the kinds' size is only safe while the widest of
+    them still fits the column -- and a heading that elides is a heading that
+    reads as half a word, which is the one thing a size for *headings* cannot
+    cost.  Measured rather than assumed: the rail's own name column, less the
+    indent a subgroup row is drawn at, against the words themselves at the
+    size the rows are set to.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    panel.resize(180, 400)
+    panel.show()
+    themed.processEvents()
+
+    tree = panel.tree
+    room = tree.columnWidth(0) - tree.indentation()
+    assert room > 0, "the rail was not laid out, so there is nothing to measure"
+
+    for words in ("ACCESSORIES", "ONE-HANDED", "TWO-HANDED", "OFF-HAND"):
+        font = QFont(QApplication.font())
+        font.setPixelSize(RAIL_PX)
+        drawn = QFontMetrics(font).horizontalAdvance(words)
+        assert drawn < room, f"{words} is cut off at {drawn} of {room} pixels"
 
 
 def test_the_rail_s_rows_are_drawn_with_air_between_them(themed):
