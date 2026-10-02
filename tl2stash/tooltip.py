@@ -85,6 +85,15 @@ _DAMAGE_TYPES = {
 #: What the game writes as an effect's duration when it does not wear off.
 PERMANENT = -1000.0
 
+#: A socketable's two hosts, in the words the player reads.
+#:
+#: The game's files say ``WEAPON`` and ``TRINKET``, and the reference database
+#: -- which is where these two come from -- writes the second as
+#: ``Armor/Trinket``: one word for the two, because a gem in a ring and a gem
+#: in a breastplate are granted the same bonus, and the game's own affix files
+#: agree, spelling the host ``TRINKET`` for both.
+_SOCKET_HOSTS = {"WEAPON": "Weapon", "TRINKET": "Armor/Trinket"}
+
 #: Which of an effect's four wordings a set's bonus is written with when it
 #: lasts for no time at all: the timeless positive one, which is the wording an
 #: effect record asks for with a description type of zero.  A set bonus that
@@ -282,7 +291,9 @@ def _socketed_indices(item: "Item") -> set[int]:
     }
 
 
-def _effect_lines(item: "Item", data: "GameData") -> tuple[list[str], list[str]]:
+def _effect_lines(
+    item: "Item", data: "GameData", appearance=None
+) -> tuple[list[str], list[str]]:
     """The item's effects, split into its own and what a socket added.
 
     Both effect lists are read.  ``effects`` is what the item was rolled with;
@@ -294,6 +305,13 @@ def _effect_lines(item: "Item", data: "GameData") -> tuple[list[str], list[str]]
     which is drawn as its own section -- a gem's contribution is not a stat
     the item has, and a player deciding whether to empty a socket needs the
     two apart.
+
+    A socketable's own lines each name the host they are granted to.  A gem
+    is not one bonus but one per host, and the card is the only place the two
+    can be read side by side -- in the game the thing is already socketed and
+    the question has answered itself.  Only a socketable is written this way:
+    the same effect node on a sword is that sword's own damage bonus, which is
+    a fact about the sword and not about where it is worn.
     """
     lines: list[str] = []
     socketed: list[str] = []
@@ -349,6 +367,16 @@ def _effect_lines(item: "Item", data: "GameData") -> tuple[list[str], list[str]]
         # sentence ('... is reduced by [VALUE]% '); it is layout in the game's
         # tooltip, and a line of it here.
         line = line.rstrip()
+
+        # Where the bonus goes, when the thing granting it is socketed rather
+        # than worn.  An effect no affix claims for one host -- one both hosts
+        # get, or one two affixes claim for two different hosts -- has none to
+        # name, and is left as it stands.
+        if appearance is not None and appearance.type_name == "Socketable":
+            host = _SOCKET_HOSTS.get(data.socket_target(node.name) or "")
+            if host:
+                line = f"{host}: {line}"
+
         if effect.index in from_socket:
             socketed.append(line)
         else:
@@ -482,6 +510,11 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     """
     blocks: list[tuple[str, list[str]]] = []
 
+    # What the item *is*, read once: the effect lines want the kind, to know
+    # whether they are writing a socketable's bonuses, and the headline below
+    # wants the rest of it.
+    appearance = data.appearance_for(item) if data is not None else None
+
     # The save file holds one number for a weapon -- its physical maximum --
     # and no elemental part at all, so the game's own arithmetic is used
     # where it can be: the item's data file says how the damage divides, and
@@ -503,7 +536,7 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     blocks.append((ADDED, _added_damage_lines(item)))
 
     if data is not None:
-        own, socketed = _effect_lines(item, data)
+        own, socketed = _effect_lines(item, data, appearance)
         blocks.append((AFFIX, own))
     else:
         # With no data there is no index to resolve, so no record can be told
@@ -524,7 +557,6 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
             source = data.by_name(item.base_name)
             flavor = source.text(VAR_FLAVOR) if source else None
 
-    appearance = data.appearance_for(item) if data is not None else None
     # The base file's word is not always the one the player is shown: the game
     # gives a Normal item a green name the moment there is magic on it.  The
     # collection list comes through here for its tier too, so the two cannot

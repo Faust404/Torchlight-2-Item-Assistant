@@ -37,6 +37,7 @@ from tl2stash.dat import (  # noqa: E402
     VAR_SET,
     VAR_SLOT_BASE,
     VAR_UNITTYPE,
+    VAR_UNITTYPES,
     VAR_UNIT_GUID,
     DatFile,
 )
@@ -265,6 +266,65 @@ def install(tmp_path: Path) -> Path:
         ],
     )
 
+    # Gem affixes.  A socketable's own file does not say which host each of its
+    # bonuses is for -- it is one bonus *per* host, and the halves are separate
+    # files -- so the hosts are read off these.  One file per way the archive
+    # states it, because it is the *file's name* that states it on the newer
+    # embers: each of these is a file rather than a node in a list, as in the
+    # archive, and each carries the host node and then the effect node that the
+    # real ones do.
+    def gem_file(stem: str, grants: str, *hosts: tuple[int, str]) -> None:
+        """One ``MEDIA/AFFIXES/GEMS/<stem>.DAT``.
+
+        ``hosts`` pairs the field with its value rather than taking values
+        alone, because the archive spells the field two ways -- ``UNITTYPE``
+        on the newer files and ``UNITTYPES`` on the older gems -- and both
+        spellings are read.
+        """
+        files[f"MEDIA/AFFIXES/GEMS/{stem}.DAT"] = write_dat(
+            strings,
+            [
+                {
+                    "vars": {VAR_NAME: (TEXT, string(stem))},
+                    "kids": [
+                        {"vars": {var: (TEXT, string(host))}} for var, host in hosts
+                    ]
+                    + [{"vars": {VAR_AFFIX_EFFECT: (TEXT, string(grants))}}],
+                }
+            ],
+        )
+
+    # A name that says nothing, so the children decide -- and like the older
+    # gems it states the field under the plural spelling.
+    gem_file("GEM_TEST", "DAMAGE BONUS", (VAR_UNITTYPES, "WEAPON"))
+    # A name that says it, with children that agree.
+    gem_file("GEM_TEST_ARMOR", "FIRE DEFENSE", (VAR_UNITTYPE, "TRINKET"))
+    # The newer embers: the name says one host and the children say both.  The
+    # name is the one that is right -- the reference database files dodge in
+    # its Armor/Trinket pool -- so this is what tells the two apart.
+    gem_file(
+        "GEM_TEST_ARMOR_DODGE",
+        "DODGE CHANCE BONUS",
+        (VAR_UNITTYPE, "TRINKET"),
+        (VAR_UNITTYPE, "WEAPON"),
+    )
+    # The mirror of it: a weapon affix whose children claim the other host.
+    gem_file("GEM_TEST_WEAPON_CRIT", "PERCENT CRITICAL DAMAGE", (VAR_UNITTYPE, "TRINKET"))
+    # One effect, two gems, two hosts -- and here the two claims are both from
+    # children, so there is nothing to choose between them.  The second is a
+    # named one so that a claim made by a name can be told from one made by a
+    # child: the fish's attack speed is a trinket bonus and the ember's is a
+    # weapon one, and only the second of those affixes says so itself.
+    gem_file("GEM_TEST_DEVIL", "PERCENT ATTACK SPEED", (VAR_UNITTYPES, "TRINKET"))
+    gem_file("GEM_TEST_WEAPON_HASTE", "PERCENT ATTACK SPEED", (VAR_UNITTYPE, "WEAPON"))
+    # Both hosts on the children of one file, and no name to break the tie.
+    gem_file(
+        "GEM_TEST_UNIQUE",
+        "PERCENT LIFE STOLEN",
+        (VAR_UNITTYPE, "TRINKET"),
+        (VAR_UNITTYPE, "WEAPON"),
+    )
+
     # Sets.  The first is shaped like the ones that made the rules: a rung per
     # piece count, one count asked for twice, and a level per rung.  The
     # second exists for the one case the first cannot show -- a rung whose
@@ -380,9 +440,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Eleven parse; the twelfth is a DAT that will not, and the thirteenth is
-    not a DAT at all."""
-    assert game.files_read == 11
+    """Eighteen parse; the nineteenth is a DAT that will not, and the twentieth
+    is not a DAT at all."""
+    assert game.files_read == 18
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -558,6 +618,79 @@ def test_precision_is_read_and_defaulted(game):
         write_dat({}, [{"vars": {VAR_NAME: (TEXT, 0)}}])
     ).root
     assert game.display_precision(quiet) == DEFAULT_PRECISION
+
+
+# --------------------------------------------------------------------------
+# Which host a socketable's bonus is granted to
+# --------------------------------------------------------------------------
+#
+# A gem is not one bonus but one per host, and the item's own file names only
+# one of the two affixes -- so the host is read off the affixes, and the two
+# words that come out are the game's own: WEAPON and TRINKET.
+
+
+def test_a_gem_affix_that_names_its_host_is_read(game):
+    """``GEM_TEST_ARMOR``'s fire defence is a trinket bonus, and says so.
+
+    The commonest shape in the archive, and the one the older gems have: the
+    affix's name carries ``_ARMOR`` and its children agree.
+    """
+    assert game.socket_target("FIRE DEFENSE") == "TRINKET"
+
+
+def test_an_affix_whose_name_says_nothing_is_asked_through_its_children(game):
+    """``GEM_TEST`` carries no marker, so what its children state is the answer.
+
+    That is how every older gem works -- and they spell the field
+    ``UNITTYPES``, the plural, which is why both spellings are read.  A file
+    carrying no host at all then has no target, which is what ``None`` says.
+    """
+    assert game.socket_target("DAMAGE BONUS") == "WEAPON"
+    assert game.socket_target("NO SUCH EFFECT") is None
+
+
+def test_the_name_outranks_the_children_that_contradict_it(game):
+    """The newer embers' affixes state *both* hosts and belong to one pool.
+
+    ``GEM_TEST_ARMOR_DODGE`` calls itself armor and its children say TRINKET
+    and WEAPON; ``GEM_TEST_WEAPON_CRIT`` is the mirror, a weapon affix whose
+    children claim the other host.  Measured over the archive, all 69 affixes
+    whose name and children disagree are embers, and the reference database
+    files every one of them by the name -- dodge in its Armor/Trinket pool,
+    critical damage in its weapon pool -- so the name is what is believed.
+    """
+    assert game.socket_target("DODGE CHANCE BONUS") == "TRINKET"
+    assert game.socket_target("PERCENT CRITICAL DAMAGE") == "WEAPON"
+
+
+def test_a_name_is_believed_over_another_affix_s_children(game):
+    """Two gems grant attack speed and only one of them says to which host.
+
+    ``GEM_TEST_DEVIL`` says TRINKET through its children and
+    ``GEM_TEST_WEAPON_HASTE`` says WEAPON in its name.  A stated host is a
+    better answer than a defaulted one, so the effect is a weapon bonus --
+    which is also what the reference says of the chaos ember's attack speed.
+    """
+    assert game.socket_target("PERCENT ATTACK SPEED") == "WEAPON"
+
+
+def test_an_effect_two_affixes_claim_equally_has_no_host(game):
+    """A unique gem that grants percent life steal in either host.
+
+    Both claims come from children, one per host, so nothing chooses between
+    them -- and the honest answer is that the line is true wherever it is
+    socketed, which is what not naming a host says.  An effect no gem affix
+    grants at all answers the same way, since only a socketable's lines are
+    written with a host.
+    """
+    assert game.socket_target("PERCENT LIFE STOLEN") is None
+    assert game.socket_target("MAX MANA") is None
+    assert game.socket_target("") is None
+
+
+def test_a_host_is_found_whatever_case_the_record_names_it_in(game):
+    """The save file and the archive do not agree on case."""
+    assert game.socket_target("fire defense") == "TRINKET"
 
 
 # --------------------------------------------------------------------------
@@ -992,6 +1125,80 @@ def test_an_ember_reads_as_the_socketable_it_is(real_game):
 
     assert stated in ("BLOOD EMBER", "CHAOS EMBER", "IRON EMBER", "VOID EMBER")
     assert appearance.type_name == "Socketable"
+
+
+#: The embers' two pools, as the reference database's socketables page writes
+#: them: an ``Armor / Trinket`` column and a ``Weapon`` column, each bonus by
+#: the name the archive's own affix carries for it.  Nothing else in the world
+#: states the pairing -- the game's files disagree with *themselves* about it,
+#: 69 of the 177 gem affixes naming both hosts on their children and one of
+#: them naming the ember rather than a host -- which is why the reference is
+#: what this is measured against.  Its pools are also what makes the two words
+#: the card writes, ``Armor/Trinket`` and ``Weapon``, the right two.
+_EMBER_POOLS = {
+    "TRINKET": (
+        "POTION EFFICIENCY",
+        "DODGE CHANCE BONUS",
+        "MISSILE REFLECT",
+        "PERCENT ARMOR BONUS",
+        "PERCENT DAMAGE TAKEN",
+        "PERCENT KNOCK BACK RESISTANCE",
+        "PERCENT PET ARMOR",
+        "PERCENT PET DAMAGE",
+        "PERCENT SPEED",
+        "MAX HP",
+        "HP RECHARGE PLAYER",
+        "DAMAGE REFLECTION",
+        "MELEEDAMAGEBONUS",
+        "RANGEDDAMAGEBONUS",
+        "MAX MANA",
+        "MANA RECHARGE PLAYER",
+    ),
+    "WEAPON": (
+        "PERCENT ATTACK SPEED",
+        "PERCENT CAST SPEED",
+        "CRITICAL CHANCE",
+        "PERCENT CRITICAL DAMAGE",
+        "DUAL WIELDING BONUS",
+        "PERCENT DUAL WIELDING ATTACK",
+        "KNOCK BACK",
+        "MISSILE RANGE BONUS",
+        "SILENCE",
+        "DAMAGE BONUS SECONDARY",
+        "DEGRADE ARMOR",
+        "DAMAGE BONUS",
+        "LIFE STEAL",
+        "MANA STEAL",
+        "DAMAGE",
+    ),
+}
+
+
+@needs_game
+def test_the_embers_effects_land_in_the_pool_the_reference_files_them_in(real_game):
+    """All four shards and the flame ember, effect by effect.
+
+    The two pools are the point of the whole reading: a Chaos Ember is ``+8%
+    Potion effectiveness`` in a ring and ``+?`` either way in a weapon, and
+    which of the two a line is could not be read off the item's own file.  The
+    effects come out of the archive's affixes, so a name the archive does not
+    know would read as ``None`` here and fail rather than pass quietly.
+    """
+    for host, effects in _EMBER_POOLS.items():
+        for effect in effects:
+            assert real_game.socket_target(effect) == host, effect
+
+
+@needs_game
+def test_an_effect_both_hosts_get_is_not_given_one_of_them(real_game):
+    """A unique gem's percent life steal is granted in a weapon *and* in a ring.
+
+    Its affix states both hosts, and no other affix states either, so there is
+    nothing to choose between them -- and naming one would be a fabrication
+    the player could act on.  Measured over the archive: it is the only effect
+    left without a host, every other one being claimed by a single pool.
+    """
+    assert real_game.socket_target("PERCENT LIFE STOLEN") is None
 
 
 @needs_game

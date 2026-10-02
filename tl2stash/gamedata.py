@@ -72,6 +72,7 @@ from .dat import (
     VAR_SLOT_BASE,
     VAR_SPEED_DMG_MOD,
     VAR_UNITTYPE,
+    VAR_UNITTYPES,
     VAR_UNIT_GUID,
     DatFile,
     DatNode,
@@ -97,6 +98,7 @@ __all__ = [
 #: of the archive is models, textures, sounds and UI layouts.
 WANTED = (
     "MEDIA/AFFIXES/ITEMS/",
+    "MEDIA/AFFIXES/GEMS/",
     "MEDIA/SKILLS/",
     "MEDIA/UNITS/ITEMS/",
     "MEDIA/TRIGGERABLES/",
@@ -129,6 +131,14 @@ ITEMS_DIR = "MEDIA/UNITS/ITEMS/"
 #: ``U_TRUE_NORTH`` for ``MEDIA/SETS/U_TRUE_NORTH.DAT``.  What one of these
 #: holds is the ladder: the set's name, and a rung per bonus.
 SETS_DIR = "MEDIA/SETS/"
+
+#: A socketable's affixes, and the one thing about a socketable that its own
+#: file does not say.  A gem is not one bonus, it is one bonus *per host*: the
+#: Flame Ember is ``+29 Fire Damage`` in a weapon and ``+58 Fire Armor`` in a
+#: ring, and the item's file names only the affix for one of the two -- so
+#: which bonus goes where is read here, off the affixes, into
+#: :meth:`GameData.socket_target`.
+GEMS_DIR = "MEDIA/AFFIXES/GEMS/"
 
 #: The damage types, as the four letters a data file writes them in, against
 #: the number the save file's effect record uses.  All six words in the
@@ -320,6 +330,52 @@ def _appearance(stated: dict[int, DatNode]) -> Appearance:
     )
 
 
+#: Where a gem affix says which host it is for, in its own file name, against
+#: the word the game's files write that host in.  The name is read first and
+#: the children only when it says nothing -- see :func:`_gem_hosts`.
+_HOST_MARKERS = (("_ARMOR", "TRINKET"), ("_WEAPON", "WEAPON"))
+
+
+def _gem_hosts(stem: str, data: DatFile) -> tuple[set[str], set[str], bool]:
+    """A gem affix's hosts, what it grants, and whether its *name* said so.
+
+    The effect and the host sit on different children -- ``GEM_RUBY.DAT``
+    states ``WEAPON`` on one and ``DAMAGE BONUS`` on the next -- so the
+    pairing is the *file's* and not the child's: everything an affix grants,
+    it grants to every host that affix is for.  Measured over the archive's
+    177 gem affixes: 302 children state a host as ``UNITTYPE`` and 20 as
+    ``UNITTYPES``, and not one states both.
+
+    The file's *name* is asked first, because on the newer embers it is the
+    one that is right.  Those affixes state both hosts on their children and
+    still belong to one pool: ``GEM_CHAOSEMBER_ARMOR_POTIONEFFICIENCY`` calls
+    itself armor and its children say ``TRINKET`` and ``WEAPON``;
+    ``GEM_VOIDEMBER_ARMOR_MANA`` says ``VOID EMBER``, which is not a host at
+    all.  The reference database settles it -- potion efficiency, dodge and
+    the rest of the ``_ARMOR`` family are its "one of 9" Armor/Trinket pool,
+    and the ``_WEAPON`` family its "one of 11" weapon pool.  Over all 177
+    names every ``_ARMOR`` one is in the first pool and every ``_WEAPON`` one
+    in the second; the 69 where the name and the children disagree are all
+    embers, and the children are the ones that are wrong.
+
+    The older gems carry neither marker -- ``GEM_RUBY``, ``GEM_FISH_DEVIL``
+    -- and there the children are what says it.  Which of the two spoke is
+    the third thing returned, because the two are not worth the same at the
+    lookup: see :meth:`GameData.socket_target`.
+    """
+    hosts: set[str] = set()
+    granted: set[str] = set()
+    for node in data.root.children:
+        host = node.text(VAR_UNITTYPE) or node.text(VAR_UNITTYPES)
+        if host:
+            hosts.add(host.upper())
+        effect = node.text(VAR_AFFIX_EFFECT)
+        if effect:
+            granted.add(effect.upper())
+    named = {host for marker, host in _HOST_MARKERS if marker in stem.upper()}
+    return (named or hosts), granted, bool(named)
+
+
 def read_unit_type(unit_type: str) -> tuple[str, str]:
     """``'UNIQUE 1HSWORD'`` into its tier and its kind.
 
@@ -480,6 +536,7 @@ class GameData:
         "_item_files",
         "_item_guids",
         "_sets",
+        "_socket_targets",
         "_stash_tabs",
         "_weapon_curve",
     )
@@ -501,6 +558,7 @@ class GameData:
         weapon_curve: dict[int, float],
         armor_curve: dict[int, float],
         effect_curves: dict[str, dict[int, float]],
+        socket_targets: dict[str, str],
     ) -> None:
         self.install = install
         self._by_name = by_name
@@ -517,6 +575,7 @@ class GameData:
         self._item_guids = item_guids
         self._weapon_curve = weapon_curve
         self._armor_curve = armor_curve
+        self._socket_targets = socket_targets
         self._stash_tabs: list[int] | None = None
 
     def __repr__(self) -> str:
@@ -552,6 +611,8 @@ class GameData:
         item_guids: dict[int, DatFile] = {}
         curves: dict[str, dict[int, float]] = {}
         effect_curves: dict[str, dict[int, float]] = {}
+        socket_hosts: dict[str, set[str]] = {}
+        socket_named: dict[str, set[str]] = {}
         read = 0
 
         with PakFile(pak_path, index) as pak:
@@ -604,6 +665,15 @@ class GameData:
                     if found is not None:
                         containers[found[0]] = found[1]
 
+                if path.startswith(GEMS_DIR):
+                    # The two shelves again, one per kind of claim: what the
+                    # affix's own name states, and what only its children do.
+                    stem = path.rsplit("/", 1)[-1][: -len(DATA_SUFFIX)]
+                    hosts, granted, stated = _gem_hosts(stem, data)
+                    shelf = socket_named if stated else socket_hosts
+                    for effect in granted:
+                        shelf.setdefault(effect, set()).update(hosts)
+
                 if path.startswith(SETS_DIR):
                     # A set's file, kept whole: the root *is* the set, and its
                     # children are the rungs of its ladder.  Filed under both
@@ -647,6 +717,28 @@ class GameData:
                                     granted.upper()
                                 )
 
+        # Which of the two hosts each gem-granted effect belongs to.  An
+        # affix that states its host in its own *name* is believed over one
+        # that leaves it to its children, because the marker-named children
+        # are the ones measured wrong: all 69 affixes whose name and children
+        # disagree are embers, and the children are wrong in every one of them
+        # -- naming both hosts, or naming the ember itself.  So PERCENT
+        # ATTACK SPEED is a weapon bonus, the chaos ember's `_WEAPON` affix
+        # saying so and a fish's children saying otherwise.
+        #
+        # An effect every host gets is not a fact about a host, and one that
+        # two affixes claim for two *different* hosts with nothing to choose
+        # between them -- PERCENT LIFE STOLEN -- is not a fact about the
+        # effect.  Neither gets a target, so what comes out is only the
+        # splits: the effects a socketable grants to exactly one of the two.
+        socket_targets: dict[str, str] = {}
+        for effect in socket_named.keys() | socket_hosts.keys():
+            # `or` and not a plain get: a named claim is the one that decides,
+            # and the children are only heard where no name speaks at all.
+            hosts = socket_named.get(effect) or socket_hosts.get(effect, set())
+            if len(hosts) == 1:
+                socket_targets[effect] = next(iter(hosts))
+
         # Which curve each effect's numbers scale with, resolved once here
         # rather than on every rung lookup.  Read after the loop, so it does
         # not matter whether the manifest lists the effects or the graphs
@@ -679,6 +771,7 @@ class GameData:
             curves.get(GRAPH_WEAPON_DAMAGE, {}),
             curves.get(GRAPH_ARMOR, {}),
             effect_curves,
+            socket_targets,
         )
 
     # -- looking things up ------------------------------------------------
@@ -767,6 +860,24 @@ class GameData:
     @property
     def effect_count(self) -> int:
         return len(self._effect_order)
+
+    def socket_target(self, node_name: str) -> str | None:
+        """Which host a socketable's effect is granted to, or ``None``.
+
+        ``'WEAPON'`` and ``'TRINKET'`` are the game's own words, as its gem
+        affixes spell them; what the player is shown for them is
+        :mod:`tl2stash.tooltip`'s business, the way every other wording is.
+
+        ``None`` covers the cases that have one answer here: an effect no gem
+        affix describes at all -- every effect on every other kind of item --
+        one the affixes' own *children* claim for two hosts at once, and one
+        two affixes claim for two different hosts with nothing to choose
+        between them.  A line with no target is true wherever it is socketed,
+        which is what not naming a host says.
+        """
+        if not node_name:
+            return None
+        return self._socket_targets.get(node_name.upper())
 
     def effect_template(self, node: DatNode, description_type: int) -> str | None:
         """The sentence this effect is written with, or ``None``.

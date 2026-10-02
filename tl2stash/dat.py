@@ -80,6 +80,7 @@ __all__ = [
     "VAR_SPEED_DMG_MOD",
     "VAR_UNIDENTIFIED_NAME",
     "VAR_UNITTYPE",
+    "VAR_UNITTYPES",
     "VAR_UNIT_GUID",
     "DatFile",
     "DatNode",
@@ -168,6 +169,14 @@ VAR_ICON = field_hash("ICON")
 #: ``'SWORD'`` and ``'POTION'`` are types with no tier in front of them.  The
 #: archive has no ``RARE``: the blue tier is the game's ``MAGIC``.
 VAR_UNITTYPE = field_hash("UNITTYPE")
+
+#: The same thing under its plural name, and the second spelling is the
+#: game's, not a guess: the hash of ``UNITTYPES`` is exactly the bare number
+#: the gem affixes write.  Measured over the archive's 177 gem affix files,
+#: 302 children state the host as ``UNITTYPE`` and 20 as this, and not one
+#: states both -- so whichever a file happens to carry, reading the two in
+#: turn reads every host there is.
+VAR_UNITTYPES = field_hash("UNITTYPES")
 
 #: The set an item belongs to, as ``'U_TRUE_NORTH'`` -- the *internal* name,
 #: which is what ``MEDIA/SETS/U_TRUE_NORTH.DAT`` is filed under and what its

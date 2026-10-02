@@ -537,11 +537,79 @@ class _SocketGame:
             "TRINKET_ICEDEFENSE": "+[VALUE] Ice Armor",
         }[node.name]
 
+    #: Which host each of its effects is granted to.  Only one of the two has
+    #: a host: the other is granted to both, which is the case a line with no
+    #: host to name is about.
+    _HOSTS = {"TRINKET_ICEDEFENSE": "TRINKET"}
+
+    def socket_target(self, name):
+        return self._HOSTS.get(name)
+
     def display_precision(self, node):
         return 0
 
     def display_name(self, name):
         return None
+
+
+class _Kind:
+    """What an item *is*, as the host prefix reads it.
+
+    Only one attribute is ever asked for, and it is the gate on the whole
+    feature: a socketable's bonuses are granted *to a host*, one each, and the
+    card is the only place the two can be read side by side -- whereas the
+    same effect node on a sword is that sword's own, wherever it is worn.
+    """
+
+    def __init__(self, type_name: str):
+        self.type_name = type_name
+
+
+def test_a_socketable_s_line_names_the_host_it_is_granted_to():
+    """A gem is one bonus per host, and the card says which is which.
+
+    ``+120 Ice Armor`` in a ring is the same affix as ``+58 Ice Armor`` in a
+    weapon, at the number that host gets -- so a line with no host on it is
+    half a fact.  The two words are the reference database's, which writes
+    ``Armor/Trinket`` where the game's files write ``TRINKET``: a gem in a
+    ring and a gem in a breastplate are granted the same bonus, and the game
+    spells the host the one way for both.
+    """
+    gem = item("Ice Ember", level=0)
+    gem.effects = [effect("", value=120.0, index=_SocketGame.SOCKET)]
+
+    own, socketed = _effect_lines(gem, _SocketGame(), _Kind("Socketable"))
+    assert own == ["Armor/Trinket: +120 Ice Armor"]
+    assert socketed == []
+
+
+def test_the_same_effect_on_anything_else_is_named_to_no_host():
+    """The gate, and the reason it is there: a sword is not worn two ways.
+
+    *Armor* on a breastplate is the breastplate's armour and on a ring the
+    ring's, but a weapon's damage bonus is the weapon's, and writing a host on
+    it would be a claim about a thing that has only one.
+    """
+    sword = item("Test Sword", level=1)
+    sword.effects = [effect("", value=120.0, index=_SocketGame.SOCKET)]
+
+    own, socketed = _effect_lines(sword, _SocketGame(), _Kind("Sword"))
+    assert own == ["+120 Ice Armor"]
+    assert socketed == []
+
+
+def test_an_effect_both_hosts_get_is_left_without_a_host():
+    """Which is the honest line for a unique gem that works in either.
+
+    ``socket_target`` answers ``None`` for an effect no affix claims for one
+    host, and the line stands as it was -- true wherever the gem is put, which
+    is what saying nothing says.
+    """
+    gem = item("Unique Gem", level=0)
+    gem.effects = [effect("", value=82.0, index=_SocketGame.OWN)]
+
+    own, socketed = _effect_lines(gem, _SocketGame(), _Kind("Socketable"))
+    assert own == ["+82 Health"]
 
 
 def test_a_socket_s_line_is_read_out_of_the_item_s_own_list():
@@ -646,6 +714,43 @@ def test_a_real_socket_s_line_is_shown_apart_from_the_item_s_own(game):
     # And the gem under it is a card of its own, with the gem's own number.
     assert [gem.name for gem in card.gems] == ["Ice Ember"]
     assert any("+58 Ice Armor" in line for line in lines(card.gems[0]))
+
+
+def _effect_index(game, name: str) -> int:
+    """Where ``EFFECTSLIST`` keeps an effect, found by the name it is filed
+    under rather than by a number copied out of the archive."""
+    for index in range(game.effect_count):
+        node = game.effect(index)
+        if node is not None and (node.name or "").upper() == name.upper():
+            return index
+    raise AssertionError(f"the archive files no effect called {name!r}")
+
+
+@needs_game
+def test_a_real_socketable_s_two_halves_are_named_on_the_card(game):
+    """The Flame Ember: ``+29 Fire Damage`` in a weapon, ``+58 Fire Armor``
+    anywhere else.
+
+    The ember's own card in the collection, as the player reads it -- and the
+    numbers and the two indices are the ones its own records carry, read out of
+    the archive's ``EFFECTSLIST`` here rather than from the tool.  It is the
+    game's files that cannot answer which half is which: the effect nodes
+    ``DAMAGE BONUS`` and ``FIRE DEFENSE`` are the flame ember's weapon and
+    armor affixes, and neither the ember nor either affix file says so.
+    """
+    ember = item("Flame Ember", level=0)
+    ember.effects = [
+        # The damage type is part of the record, which is why the weapon line
+        # reads 'Fire' and the armour one does not: the armor template names
+        # its element in the sentence.
+        effect("", value=29.0, index=_effect_index(game, "DAMAGE BONUS"), damage_type=2),
+        effect("", value=58.0, index=_effect_index(game, "FIRE DEFENSE"), damage_type=1),
+    ]
+
+    own, socketed = _effect_lines(ember, game, _Kind("Socketable"))
+
+    assert own == ["Weapon: +29 Fire Damage", "Armor/Trinket: +58 Fire Armor"]
+    assert socketed == []
 
 
 @needs_game
