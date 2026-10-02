@@ -21,6 +21,15 @@ palette to derive it from -- and a control has to be the brightest thing on a
 dark screen, or a box the player ticks reads as a decoration rather than as
 something to press.
 
+**The types.**  The site sets its page in 13px ``"Segoe UI", Roboto, Helvetica,
+Arial, sans-serif`` and its stat lines in Bitter, which it ships; this sets the
+same two, and :func:`apply_theme` loads the face out of ``app/fonts/`` before
+any window exists, so a stat line cannot come out in a fallback the machine
+happened to have.  Both carry the site's tabular figures, which is what keeps
+the numbers in its columns and its stat lines in line with each other.  What is
+*not* copied is the site's line height -- Qt has no ``line-height``, and a
+font's own metrics are what it lays a label out with.
+
 **The style matters as much as the palette.**  On Windows the default style
 draws much of a widget out of the system theme and consults the palette only
 for what the theme does not say, so setting colours alone gives a light window
@@ -41,12 +50,32 @@ set afterwards does not reach what is already on screen.
 
 from __future__ import annotations
 
-from PySide6.QtGui import QColor, QPalette
+from pathlib import Path
+
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
-from .card import BODY, DIM, DIV, GROUND, HEAD, LABEL, LINE, PANEL, TILE_BG
+from .card import (
+    BODY,
+    DIM,
+    DIV,
+    GROUND,
+    HEAD,
+    LABEL,
+    LINE,
+    PANEL,
+    TABULAR,
+    TABULAR_ON,
+    TILE_BG,
+)
 
 __all__ = ["WHITE", "apply_theme"]
+
+#: Where the faces that travel with the tool live.  Beside this file when the
+#: tool runs out of a checkout, and under the bundle's own root when it is a
+#: packaged executable -- PyInstaller points a frozen module's ``__file__`` at
+#: the extracted copy, so the two layouts resolve the same way.
+FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 #: A button, and anything else that sits *on* the ground rather than in a
 #: panel.  The palette has no raised neutral -- the site's cards are flat and
@@ -71,6 +100,61 @@ SHADOW = "#0c0b0a"
 #: is what these were drawn in -- is a control the eye has to find before it
 #: can use it.
 WHITE = "#ffffff"
+
+#: The site's own body font -- ``body{font:13px/1.45 "Segoe UI",Roboto,...}``
+#: in its stylesheet -- with the same stack behind it.  It is what every line
+#: the card does not size itself is set in: a stat line, a set rung, a tooltip,
+#: a row of the collection.  Segoe UI is the first family on Windows and is
+#: what the site's readers see there too; the rest are what the platform has if
+#: it is not.
+SANS = ("Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif")
+#: And its size.  Qt's own default on Windows is the system's 9pt, which is
+#: 12px at the 96dpi the site's own 13px is measured at, so this is one step up
+#: rather than a different scheme.
+BODY_PX = 13
+
+
+def _load_fonts() -> tuple[str, ...]:
+    """Register the faces that travel with the tool, before anything is drawn.
+
+    A face has to be added to the application's own database rather than named
+    in a stylesheet: the stylesheet asks for a *family*, and a family is only
+    there once the file behind it has been registered.  ``addApplicationFont``
+    is what registers it, and it has to happen before the first widget is
+    built, because a widget resolves its font once.
+
+    A missing or unreadable file is not an error here.  The tool would then be
+    drawn in the fallbacks the stack already names, which is what it did before
+    the face was shipped -- a worse card, not a broken one.
+
+    Returns the families it registered.  A variable font answers with its named
+    instances as well as its own name -- Bitter's ``wght`` axis is exposed as
+    Thin, ExtraLight, Light, Regular and so on -- so the names are deduplicated
+    and the family itself is always first.
+    """
+    families: dict[str, None] = {}
+    for face in sorted(FONT_DIR.glob("*.ttf")):
+        registered = QFontDatabase.addApplicationFont(str(face))
+        for family in QFontDatabase.applicationFontFamilies(registered):
+            families.setdefault(family, None)
+    return tuple(families)
+
+
+def _base_font() -> QFont:
+    """The application's font: the site's body voice.
+
+    Tabular figures as well, because the site asks for them wherever a number
+    is lifted and a lifted number is most of what this window shows: the
+    levels, counts and slots down the collection's columns, and any card line
+    the card's own serif does not set.  Qt has no
+    ``font-variant-numeric`` -- see :data:`app.card.TABULAR` -- and a face
+    without such a figure set ignores the request.
+    """
+    font = QFont()
+    font.setFamilies(list(SANS))
+    font.setPixelSize(BODY_PX)
+    font.setFeature(TABULAR, TABULAR_ON)
+    return font
 
 
 def _palette() -> QPalette:
@@ -232,12 +316,17 @@ QSpinBox {{
 def apply_theme(app: QApplication) -> None:
     """Make the application dark, once, before any window exists.
 
-    Fusion first, then the palette, then the stylesheet: the style decides
-    which roles it consults, so a palette set under a style that ignores it
-    would be a colour scheme that never arrives.
+    The faces first, then the style, the palette and the font, then the
+    stylesheet: the style decides which roles it consults, so a palette set
+    under a style that ignores it would be a colour scheme that never arrives,
+    and a font set before the faces are registered would be resolved against a
+    database that did not have them yet.
     """
+    _load_fonts()
+
     style = QStyleFactory.create("Fusion")
     if style is not None:  # pragma: no cover -- Fusion ships with every Qt
         app.setStyle(style)
     app.setPalette(_palette())
+    app.setFont(_base_font())
     app.setStyleSheet(_STYLE)

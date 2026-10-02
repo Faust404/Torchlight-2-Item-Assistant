@@ -43,12 +43,14 @@ from app.card import (  # noqa: E402
     MAGIC,
     MARK,
     MUTED,
+    STYLE,
     TIER_INK,
     ChipRow,
     Hairline,
     IconCache,
     IconTile,
     ItemCard,
+    _dps,
     element_of,
     emphasis,
     mark,
@@ -346,7 +348,7 @@ def test_a_weapon_leads_with_its_output_over_its_own_stats(qapp):
     )
 
     assert texts(drawn, "lead") == [
-        plain("326 Damage per Second", GOLD),
+        _dps("326 Damage per Second"),
         emphasis("Very Fast attack speed (0.48 seconds)", DIM),
         emphasis("Weapon Range 0.5", DIM),
     ]
@@ -399,6 +401,26 @@ def test_the_number_a_weapon_is_chosen_for_is_the_one_in_gold(qapp):
     assert not any(GOLD in text for text in elsewhere)
 
 
+def test_the_number_a_weapon_leads_with_is_set_apart_from_its_name(qapp):
+    """The dps line is the one line on the card set at two sizes.
+
+    The site writes it as a number and the name of the number -- ``.dps`` at
+    15px and 600, the span inside it at 12.5px -- and it is the same reason the
+    line takes no lift: a number drawn half again as large as the words around
+    it is already the brightest thing in the line, and lifting it out of the
+    gold would only take it out of the colour the line is.  Both halves keep
+    the gold, which is what makes this line the card's one verdict, and the
+    number keeps the first place the model writes it in.
+    """
+    (lead,) = texts(ItemCard(card(weapon_lead=("326 Damage per Second",))), "lead")
+
+    assert "font-size:15px" in lead and "font-weight:600" in lead
+    assert "font-size:12.5px" in lead
+    assert lead.index("326") < lead.index("Damage per Second")
+    assert lead.count(GOLD) == 2, "one colour for the number and its name"
+    assert HEAD not in lead
+
+
 def test_the_line_that_leads_is_read_off_the_text_and_not_beside_it(qapp):
     """The model is one list of strings, so which line is the dps is the line's
     own tail -- the same bargain :func:`element_of` makes with an element."""
@@ -423,7 +445,7 @@ def test_what_a_weapon_will_become_is_drawn_as_a_promise_and_not_a_stat(qapp):
     )
 
     assert texts(drawn, "augtask") == [plain("Kill 50 Ezrohir to Upgrade", GOLD)]
-    assert texts(drawn, "auglock") == [AUGMENT_LOCKED]
+    assert texts(drawn, "auglock") == [AUGMENT_LOCKED.upper()]
     assert texts(drawn, "augfx") == [plain(gain, LOCKED) for gain in GAINS]
     assert not any(MAGIC in text for text in texts(drawn, "augfx"))
 
@@ -446,6 +468,31 @@ def test_a_task_with_nothing_left_to_grant_is_still_a_task(qapp):
     assert texts(drawn, "augtask") == [plain("Kill 5 Ratlins to Upgrade", GOLD)]
     assert texts(drawn, "auglock") == []
     assert texts(drawn, "augfx") == []
+
+
+def test_a_label_is_set_the_way_the_site_sets_one(qapp):
+    """Four labels, one treatment: small, tracked, and never bolded.
+
+    ``.rhead``, ``.fxh``, ``.cond`` and ``.ror`` are the site's four -- a
+    section's heading, a socketable's slot, the note under a task, and the word
+    between the requirement chips -- and all four take the same two
+    declarations on top of their size: letter-spacing of a tenth of that size
+    or more, and no weight of their own.  A label's job is to be found and then
+    read past, so the thing under it is what is meant to be read; a heading in
+    bold competes with the stats it introduces.
+
+    The third part of the treatment is not in the sheet and cannot be: Qt's
+    stylesheet language has no ``text-transform``, so the capitals are applied
+    to the word the label is built with (``app.card._as_a_label``) and are
+    asserted where those words are -- ``REQUIREMENTS`` and ``OR`` in the test
+    below, ``SOCKETED`` further down.
+    """
+    for selector in ("#rhead", "#socketed", "#auglock", "#ror"):
+        rule = STYLE[STYLE.index(selector) :]
+        rule = rule[: rule.index("}")]
+
+        assert "letter-spacing" in rule, selector
+        assert "font-weight: 600" not in rule, selector
 
 
 def test_what_the_item_asks_of_the_character_is_drawn_at_the_foot(qapp):
@@ -472,7 +519,7 @@ def test_what_the_item_asks_of_the_character_is_drawn_at_the_foot(qapp):
         )
     )
 
-    assert texts(drawn, "rhead") == ["Requirements"]
+    assert texts(drawn, "rhead") == ["REQUIREMENTS"]
     assert texts(drawn, "rchip") == [
         emphasis("Player Level 51", DIM),
         emphasis("Strength 81", DIM),
@@ -480,7 +527,7 @@ def test_what_the_item_asks_of_the_character_is_drawn_at_the_foot(qapp):
     ]
     # The word between the groups is not a chip: it is written plainly so that
     # it cannot be read as a third thing to be.
-    assert texts(drawn, "ror") == ["or"]
+    assert texts(drawn, "ror") == ["OR"]
     # One rule between the item's two blocks and one above the gate.
     assert len(drawn.findChildren(Hairline)) == 2
 
@@ -513,7 +560,7 @@ def test_nothing_is_drawn_under_the_chips(qapp):
         card(level=45, requires=Requirements(51, False, (("Strength", 81),)))
     )
 
-    assert texts(drawn, "rhead") == ["Requirements"]
+    assert texts(drawn, "rhead") == ["REQUIREMENTS"]
     assert texts(drawn, "rchip") == [
         emphasis("Player Level 51", DIM),
         emphasis("Strength 81", DIM),
@@ -564,13 +611,13 @@ def test_a_real_item_s_requirements_are_drawn_from_its_own_file(qapp, real_game)
     """
     drawn = ItemCard(build(_bashdrill(), real_game))
 
-    assert texts(drawn, "rhead") == ["Requirements"]
+    assert texts(drawn, "rhead") == ["REQUIREMENTS"]
     assert texts(drawn, "rchip") == [
         emphasis("Player Level 51", DIM),
         emphasis("Strength 81", DIM),
         emphasis("Dexterity 40", DIM),
     ]
-    assert texts(drawn, "ror") == ["or"]
+    assert texts(drawn, "ror") == ["OR"]
     assert texts(drawn, "pill") == ["Level 45", "1 Socket"]
 
     # At the foot: the flavour line is the only thing under it.
@@ -669,7 +716,7 @@ def test_what_is_in_a_socket_is_drawn_under_its_own_heading(qapp):
         )
     )
 
-    assert texts(drawn, "socketed") == ["Socketed"]
+    assert texts(drawn, "socketed") == ["SOCKETED"]
     assert texts(drawn, "gem") == ["Ice Ember"]
 
     body = [label.text() for label in drawn.findChildren(QLabel) if label.objectName() == ""]

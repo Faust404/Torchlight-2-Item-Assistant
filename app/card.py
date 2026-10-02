@@ -182,25 +182,85 @@ def emphasis(text: str, ink: str) -> str:
 def plain(text: str, ink: str) -> str:
     """A whole line of the card in ``ink``, with nothing lifted out of it.
 
-    For a line that is already the emphasis: a weapon's Damage per Second is
-    written in the one gold the card has, number and words together, so
-    lifting its number would lift it out of the colour -- the brightest thing
-    in the line would be the words that name the number rather than the
-    number.  The site writes this line the same way, in one colour, with the
-    words a shade quieter than the number beside them.
+    For a line that is already the emphasis, or one whose numbers are not the
+    item's: an augment's task takes the card's gold and has no number in it to
+    lift, and the stats that task would grant keep their numbers in the grey
+    they are written in, because they are the one block on the card that is not
+    about the item as it stands.
+
+    A weapon's Damage per Second is the other line drawn without a lift, and it
+    is set at two sizes instead: see :func:`_dps`.
     """
     return f'<span style="color:{ink}">{html.escape(text)}</span>'
+
+
+def _as_a_label(text: str) -> str:
+    """A section word, in the case the card prints section words in.
+
+    The site keeps these words in sentence case in its markup and uppercases
+    them in the stylesheet -- ``text-transform:uppercase`` on ``.rhead``,
+    ``.fxh``, ``.cond`` and ``.ror`` -- which Qt's stylesheet language does not
+    have at all.  So the case is applied here, at the four labels that have it,
+    and the model's wording stays the sentence the game and the site both
+    write: the same words, in the two presentations they are read in.
+    """
+    return text.upper()
+
+
+def _dps(text: str) -> str:
+    """A weapon's Damage per Second, at the site's two sizes.
+
+    The site writes this line as a number and the name of the number, and the
+    two are not the same size: 15px at 600 for the number, 12.5px for what it
+    is a number *of* -- ``.dps`` and ``.dps span``, and the only line on the
+    card that is set at two sizes.  It is the whole reason this line takes no
+    lift: a number drawn half again as large as the words around it is already
+    the brightest thing in the line, and lifting it out of the gold would only
+    take it out of the colour the line is.
+
+    Split at the first space rather than by :data:`_NUMBER`, because the model
+    writes the line the way the game does -- the number, then its unit -- and
+    the words can carry numbers of their own.
+    """
+    number, _, words = text.partition(" ")
+    # The site fades the unit a little further as well (``opacity:.82`` on the
+    # span); the size is what carries the distinction here, so that the line
+    # stays the one thing on the card written in the one gold.
+    return (
+        f'<span style="color:{GOLD};font-size:15px;font-weight:600">'
+        f"{html.escape(number)}</span>"
+        f'<span style="color:{GOLD};font-size:12.5px"> {html.escape(words)}</span>'
+    )
+
+
+#: The site's rule for every number it lifts -- ``font-variant-numeric:
+#: tabular-nums`` on ``.aff .n``, ``.ln b``, ``.rchip b`` and the collection's
+#: own counts -- as the font feature it really is.  Bitter's figures are
+#: proportional by default, so without this a column of stat lines steps in and
+#: out of alignment; the numbers are what a card is scanned for, and they line
+#: up down the card.  Qt has no ``font-variant-numeric``, so the request goes
+#: to the face instead, and a fallback with no such figure set ignores it.  A
+#: font feature is switched on by asking for it at a value of 1, so this is the
+#: tag and :data:`TABULAR_ON` is the request.
+TABULAR = QFont.Tag("tnum")
+TABULAR_ON = 1
 
 
 def _serif() -> QFont:
     """The card's stat voice.
 
-    The site sets its affix lines and its chips in Bitter, which it embeds.
-    Nothing here ships a font, so this is the site's own fallback stack and Qt
-    takes the first family that exists.
+    The site sets its affix lines and its chips in Bitter, which it embeds; the
+    face travels with this tool for the same reason, and :mod:`app.theme`
+    registers it before any card is built.  The stack behind it is the site's
+    own, so a machine whose copy of the file cannot be read falls back the way
+    the site does.
+
+    Tabular figures, which is the site's rule for a lifted number and not a
+    choice made here -- see :data:`TABULAR`.
     """
     font = QFont()
     font.setFamilies(["Bitter", "Georgia", "Times New Roman", "serif"])
+    font.setFeature(TABULAR, TABULAR_ON)
     return font
 
 
@@ -808,7 +868,7 @@ class ItemCard(QFrame):
         brightest thing in its line.
         """
         if text.endswith(DAMAGE_PER_SECOND):
-            label = QLabel(plain(text, GOLD))
+            label = QLabel(_dps(text))
         else:
             label = QLabel(emphasis(text, DIM))
         label.setObjectName("lead")
@@ -838,7 +898,7 @@ class ItemCard(QFrame):
         """
         said = requirements_lines(card)
         if said:
-            heading = QLabel(REQUIREMENTS)
+            heading = QLabel(_as_a_label(REQUIREMENTS))
             heading.setObjectName("rhead")
             column.addWidget(heading)
             column.addWidget(ChipRow([self._chip(text) for text in said]))
@@ -855,7 +915,7 @@ class ItemCard(QFrame):
         misread, so it is padded and spaced rather than made faint.
         """
         if text == THE_ALTERNATIVE:
-            label = QLabel(THE_ALTERNATIVE)
+            label = QLabel(_as_a_label(THE_ALTERNATIVE))
             label.setObjectName("ror")
             return label
 
@@ -881,7 +941,7 @@ class ItemCard(QFrame):
         ``+58 Ice Armor`` the ember in it grants is on the ember's card here,
         which is the only place that number exists.
         """
-        heading = QLabel("Socketed")
+        heading = QLabel(_as_a_label("Socketed"))
         heading.setObjectName("socketed")
         column.addWidget(heading)
         for gem in card.gems:
@@ -924,11 +984,12 @@ class ItemCard(QFrame):
         acting on.  It is not drawn as a chip here, because the card has no
         other chip on it and one would be a device rather than a word.
 
-        The caption between the two is the site's, and on the site it is the
-        same gold, uppercase, with a dashed rule either side of it.  Here it is
-        a side-note in the dim the card writes those in, because the two lines
-        are told apart by their colour rather than by their furniture and a
-        second gold line would only compete with the first.
+        The caption between the two is the site's, at the site's size and
+        tracking, and on the site it is the same gold as the task with a dashed
+        rule either side of it.  Here it is a side-note in the dim the card
+        writes those in, because the two lines are told apart by their colour
+        rather than by their furniture and a second gold line would only
+        compete with the first.
         """
         if augment.task:
             label = QLabel(plain(augment.task, GOLD))
@@ -939,7 +1000,7 @@ class ItemCard(QFrame):
 
         if not augment.gains:
             return
-        caption = QLabel(AUGMENT_LOCKED)
+        caption = QLabel(_as_a_label(AUGMENT_LOCKED))
         caption.setObjectName("auglock")
         caption.setWordWrap(True)
         column.addWidget(caption)
@@ -1021,14 +1082,22 @@ STYLE = f"""
     border-radius: 3px;
     padding: 1px 6px;
     color: {LABEL};
-    font-size: 11px;
+    font-size: 11.5px;
 }}
 #gem {{ color: {HEAD}; font-size: 12.5px; font-weight: 600; }}
+/* The card's labels -- a section heading, a socketable's slot, the note under a
+   task, the word between the requirement chips -- are one treatment, and it is
+   the site's own (``.rhead``, ``.fxh``, ``.cond``, ``.ror``): small, tracked, at
+   weight 400, so that a label is found and then read past rather than competing
+   with the thing under it.  The tracking is the site's letter-spacing over its
+   own size (and Qt sizes in whole pixels, so the site's 9.5 is drawn at 10),
+   and the capitals are the one part of the treatment Qt cannot take from a
+   sheet -- see ``_as_a_label``. */
 #rhead {{
     color: {LABEL};
     font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 1px;
+    font-weight: 400;
+    letter-spacing: 1.33px;
 }}
 #rchip {{
     border: 1px solid {DIV};
@@ -1040,13 +1109,18 @@ STYLE = f"""
 #ror {{
     color: {DIM};
     font-size: 10px;
-    letter-spacing: 2px;
+    letter-spacing: 1.6px;
 }}
-#socketed {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
-#setname {{ font-size: 13px; font-weight: 600; }}
+#socketed {{
+    color: {LABEL};
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 1.3px;
+}}
+#setname {{ font-size: 12.5px; font-weight: 600; }}
 #rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #augtask {{ font-size: 12.5px; }}
-#auglock {{ color: {DIM}; font-size: 10px; letter-spacing: 1px; }}
+#auglock {{ color: {DIM}; font-size: 10px; letter-spacing: 1.4px; }}
 #augfx {{ font-size: 12.5px; }}
 #flav {{ color: {FLAVOUR}; font-size: 12px; font-style: italic; }}
 #hint {{ color: {DIM}; font-size: 12.5px; }}

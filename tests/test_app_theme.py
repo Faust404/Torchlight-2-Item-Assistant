@@ -27,11 +27,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtGui import QColor, QPalette  # noqa: E402
+from PySide6.QtGui import QColor, QFont, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleFactory  # noqa: E402
 
-from app.card import BODY, GROUND, LABEL  # noqa: E402
-from app.theme import WHITE, apply_theme  # noqa: E402
+from app.card import BODY, GROUND, LABEL, TABULAR, _serif  # noqa: E402
+from app.theme import BODY_PX, SANS, WHITE, _load_fonts, apply_theme  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -47,9 +47,12 @@ def themed(qapp):
     # The style is remembered by *name* rather than by object: setting a style
     # hands it to Qt, which deletes the one it replaced -- so the style this
     # found is gone the moment the theme lands, and putting it back means
-    # building that style again.
+    # building that style again.  The font is remembered the same way a palette
+    # is, because ``apply_theme`` now sets one and every other GUI test in the
+    # suite shares this application.
     name = qapp.style().objectName()
     palette = QPalette(qapp.palette())
+    font = QFont(qapp.font())
     sheet = qapp.styleSheet()
     apply_theme(qapp)
     try:
@@ -59,6 +62,7 @@ def themed(qapp):
         if restored is not None:
             qapp.setStyle(restored)
         qapp.setPalette(palette)
+        qapp.setFont(font)
         qapp.setStyleSheet(sheet)
 
 
@@ -185,3 +189,66 @@ def test_the_search_box_is_outlined_by_name(themed):
 
     assert "QLineEdit#search" in sheet
     assert "QLineEdit {" not in sheet, "the search box is the only line edit here"
+
+
+def test_the_window_is_set_in_the_site_s_own_voice(themed):
+    """The body font is the site's, in the size it sets its page at.
+
+    The site's stylesheet opens with ``body{font:13px/1.45 "Segoe UI",Roboto,
+    Helvetica,Arial,sans-serif}``, and every line its card does not size itself
+    -- a stat, a set rung, a row of its list -- is set in that.  Qt's own
+    default on Windows is the system's 9pt, which is 12px at the 96dpi the
+    site's 13 is measured at, so the tool was one step short of it everywhere
+    it had not named a size itself.
+    """
+    font = themed.font()
+
+    assert tuple(font.families()[: len(SANS)]) == SANS
+    assert font.pixelSize() == BODY_PX
+
+
+def test_a_number_is_set_in_figures_that_line_up(themed):
+    """The site asks for tabular figures wherever it lifts a number, and this
+    window lifts numbers in columns -- the levels and counts down the
+    collection, the stats down a card.
+
+    Qt's stylesheet language has no ``font-variant-numeric``, so the request is
+    made to the face instead, and both of the voices the window draws numbers
+    in carry it: the body font the window is set in and the card's own serif.
+    A face without such figures ignores the request rather than failing on it,
+    which is why this is a claim about what was asked for and not about what
+    the glyphs did.
+    """
+    assert themed.font().featureTags() == [TABULAR]
+    assert _serif().featureTags() == [TABULAR]
+
+
+def test_the_face_the_card_sets_its_stats_in_travels_with_the_tool():
+    """Bitter is registered from ``app/fonts/``, not hoped for.
+
+    The stack in ``app.card._serif`` names Bitter first and Georgia second, and
+    Georgia is what every machine that has not installed the face would give --
+    a different letterform, silently, with nothing on screen to say the card
+    had fallen back.  So the face is shipped and registered at startup, and
+    this is the registration rather than the drawing: the family the file
+    answers to has to be there before any stylesheet can ask for it.
+
+    A variable font answers with its named instances as well as its own name,
+    which is why the question is whether the *family* is among them and not
+    what the whole list is.
+    """
+    assert "Bitter" in _load_fonts()
+
+
+def test_the_serif_face_the_card_asks_for_is_the_one_that_was_loaded():
+    """And the two names are the same, read from their own sides.
+
+    A registration that produced ``Bitter Pro`` or ``Bitter Regular`` would
+    pass the test above and change nothing on the card: the stack names a
+    family, and a family that is not the one the file answers to is a family
+    that is not found.  So the first name in the card's own stack is compared
+    with what the file registered.
+    """
+    (asked,) = _serif().families()[:1]
+
+    assert asked in _load_fonts()

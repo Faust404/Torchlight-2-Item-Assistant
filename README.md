@@ -64,6 +64,7 @@ slot.
       __main__.py  entry point: python -m app
       window.py    the main window
       models.py    the two tables' models
+      fonts/       Bitter, and the licence it travels under
     tools/
       dump_stash.py   validate the crypto and list a stash's contents
       scan.py         scan stashes into the registry
