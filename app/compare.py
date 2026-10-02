@@ -47,7 +47,7 @@ from .card import (
     Hairline,
     IconCache,
 )
-from .theme import PALE, WALL, WHITE
+from .theme import CHALK, PALE, WALL
 from .tiles import MARGIN, TILE_WIDTH, CardFrame, CardWall, TileRow
 
 __all__ = ["CompareOverlay", "ReplicaCard", "inset_for"]
@@ -82,7 +82,7 @@ _STYLE = STYLE + f"""
     padding: 2px 8px;
     font-size: 11px;
 }}
-#transfer:hover {{ color: {WHITE}; border-color: {WHITE}; }}
+#transfer:hover {{ color: {CHALK}; border-color: {CHALK}; }}
 #ctitle {{
     color: {BODY};
     font-size: 15px;

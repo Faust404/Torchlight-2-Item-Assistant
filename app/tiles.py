@@ -57,7 +57,7 @@ from .card import (
     IconCache,
     ItemCard,
 )
-from .theme import PALE, WALL, WHITE
+from .theme import CHALK, PALE, WALL
 
 __all__ = ["CardFrame", "CardWall", "ItemTile", "TileGrid", "TileRow"]
 
@@ -101,8 +101,8 @@ _STYLE = STYLE + f"""
     font-size: 11px;
 }}
 #compare:hover, #transfer:hover, #transferall:hover {{
-    color: {WHITE};
-    border-color: {WHITE};
+    color: {CHALK};
+    border-color: {CHALK};
 }}
 #empty {{ color: {DIM}; font-size: 13px; padding: 6px; }}
 """

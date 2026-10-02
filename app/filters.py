@@ -9,12 +9,12 @@ has a path (a sword is a one-handed weapon) and a tree is the only control
 that says so, while a tree drawn across the top of a window is a tree nobody
 reads.
 
-The rarities and the levels are each in a box of their own, outlined in white
-like every other control the player operates (:data:`app.theme.WHITE` says
-why).  Five pills reading ``Unique 4`` in a row are legible; a pair of number
-boxes saying ``0`` and ``100`` beside them are not, and two white rectangles
-are what tells a reader where the rarity chips stop and the level range
-starts.
+The rarities and the levels are each in a box of their own, in the window's own
+control ink like every other control the player operates
+(:data:`app.theme.CHALK` says why).  Five pills reading ``Unique 4`` in a row
+are legible; a pair of number boxes saying ``0`` and ``100`` beside them are
+not, and two outlined rectangles are what tells a reader where the rarity chips
+stop and the level range starts.
 
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
@@ -47,13 +47,13 @@ from PySide6.QtWidgets import (
 from tl2stash.card import TIER_INK
 
 from .models import LEVEL_MAX, TIER_CHIPS
-from .theme import WHITE
+from .theme import CHALK
 
 __all__ = ["FilterBar", "SpinBox"]
 
 #: How much of a tier's colour a ticked pill is filled with, of 255.  A wash
-#: rather than the colour itself, so that the white word on it stays the
-#: brightest thing in the chip.
+#: rather than the colour itself, so that the word on it stays the brightest
+#: thing in the chip.
 WASH = 77
 
 #: The two white steppers: six pixels across at the base and three rows deep,
@@ -70,7 +70,7 @@ STEP_ROWS = 3
 class SpinBox(QSpinBox):
     """A number box whose two steppers are drawn here rather than by the style.
 
-    Qt will give a spin box a white frame or keep the style's own stepper
+    Qt will give a spin box an outlined frame or keep the style's own stepper
     arrows, and not both.  The moment a rule touches the box's frame, the
     stylesheet style takes the whole control over and draws the two buttons as
     flat blocks -- with no arrows at all, because an arrow in Qt's stylesheet
@@ -88,7 +88,7 @@ class SpinBox(QSpinBox):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(WHITE))
+        painter.setBrush(QColor(CHALK))
         painter.drawPolygon(self._triangle(QStyle.SubControl.SC_SpinBoxUp))
         painter.drawPolygon(self._triangle(QStyle.SubControl.SC_SpinBoxDown))
         painter.end()
@@ -114,33 +114,35 @@ class SpinBox(QSpinBox):
 
 
 def _wash(ink: str) -> str:
-    """A tier's colour as a fill a white word can be written on."""
+    """A tier's colour as a fill the chip's own word can be written on."""
     colour = QColor(ink)
     return f"rgba({colour.red()}, {colour.green()}, {colour.blue()}, {WASH})"
 
 
 def _chip_style(ink: str) -> str:
-    """A rarity chip: a white word over the tier's own colour, in a pill.
+    """A rarity chip: the window's light ink over the tier's own colour, in a
+    pill.
 
-    The word is white in *both* states and the tier is what the pill is
+    The word is the light in *both* states and the tier is what the pill is
     *filled* with, which is the other way round from how this started: the word
     used to be inked in the tier and dimmed to a grey while unticked, and that
     grey was the thing the user could not read -- five words a shade off the
     ground they were drawn on, blending into the bar they sit on.  A word the
-    player has to read is white here, as every other word on a control is.
+    player has to read is in the window's control ink here, as every other word
+    on a control is.
 
     So what a tick changes is the fill: a washed pill for a rarity that is in
-    play, the bare ground for one that is not, and the white outline either
-    way.  The wash is what says *on* at a glance down the bar, and the colour
-    it is a wash of says which rarity the chip is.
+    play, the bare ground for one that is not, and the outline either way.  The
+    wash is what says *on* at a glance down the bar, and the colour it is a
+    wash of says which rarity the chip is.
 
     The indicator is collapsed to nothing and the pill itself is the control --
     a checkbox's box beside a coloured pill is two things saying one thing.
     """
     return (
         "QCheckBox {"
-        f" color: {WHITE};"
-        f" border: 1px solid {WHITE};"
+        f" color: {CHALK};"
+        f" border: 1px solid {CHALK};"
         " border-radius: 9px; padding: 3px 8px;"
         f" background: {_wash(ink)};"
         "}"
@@ -150,13 +152,14 @@ def _chip_style(ink: str) -> str:
 
 
 def _box(title: str, controls: Iterable[QWidget]) -> QGroupBox:
-    """A group of controls in its own white-bordered box.
+    """A group of controls in its own outlined box.
 
     A ``QGroupBox`` rather than a frame with a label over it, because its title
     is drawn in the window's own label colour and in the same place as the
     three panes' titles -- so a box here and a pane there are the same kind of
     thing at two sizes, which is what they are.  What tells them apart is the
-    outline: white for a box the player operates, a hairline for a region.
+    outline: the control ink for a box the player operates, a hairline for a
+    region.
     """
     box = QGroupBox(title)
     box.setObjectName("filterbox")

@@ -12,11 +12,13 @@ item is *compared against*, so its colours are the site's and are not the
 window's to move: ``PANEL`` is the surface of every card in the tool, and it
 stays that.  The window's own surfaces are a shade up from it, which is the
 change the user asked for and the reason it was asked for: what the player
-*operates* is outlined in :data:`WHITE` (:data:`WHITE` alone -- a web page has
+*operates* is outlined in :data:`CHALK` (:data:`CHALK` alone -- a web page has
 no controls to outline, so there is nothing in the card palette to derive it
-from), and a white hairline on near-black is glare rather than contrast.  The
-buttons that stand *on* a card are the same argument one step down -- see
-:data:`PALE` -- because a card's footer is a word at 11px.  One surface goes
+from), and a hairline on near-black is glare rather than contrast.  That is one
+complaint with two ends, and both have now been moved: the ground came up, and
+then the hairline came down.  The buttons that stand *on* a card are the same
+argument one step down -- see :data:`PALE` -- because a card's footer is a word
+at 11px.  One surface goes
 the other way, and it goes further: :data:`WALL` is what the tool's cards are
 drawn on, and it is darker than the cards, so that an item lying in the tool
 reads as a card in a drawer rather than as a panel in a panel.
@@ -70,7 +72,7 @@ from .card import (
     TABULAR_ON,
 )
 
-__all__ = ["EDGE", "FIELD", "PALE", "SHELL", "WALL", "WHITE", "apply_theme"]
+__all__ = ["CHALK", "EDGE", "FIELD", "PALE", "SHELL", "WALL", "apply_theme"]
 
 #: Where the faces that travel with the tool live.  Beside this file when the
 #: tool runs out of a checkout, and under the bundle's own root when it is a
@@ -89,9 +91,9 @@ FONT_DIR = Path(__file__).resolve().parent / "fonts"
 WALL = "#0b0a09"
 
 #: The window itself, and every pane in it.  A shade *up* from the cards rather
-#: than level with them: what the player operates is outlined in :data:`WHITE`
-#: (below), and a white hairline on a near-black ground is glare rather than
-#: contrast -- the reason the user asked for the lightening, and what it buys.
+#: than level with them: what the player operates is outlined in :data:`CHALK`
+#: (below), and a hairline on a near-black ground is glare rather than contrast
+#: -- the reason the user asked for the lightening, and what it buys.
 SHELL = "#1e1c19"
 
 #: A field: a table's rows, the box a value is typed into.  The palette's
@@ -129,23 +131,35 @@ SELECT = "#453a29"
 SHADOW = "#0c0b0a"
 
 #: What everything the player operates is outlined in -- the check boxes in the
-#: rail, the search box, the two filter boxes over the collection and the
-#: number boxes in them.  The one colour in the window that is not a shade of
-#: anything: nothing in a dark warm ramp is close enough to read as *contrast*,
-#: and a hairline in ``EDGE`` or ``DIV`` -- which is what these were drawn in --
-#: is a control the eye has to find before it can use it.
-WHITE = "#ffffff"
+#: rail, the search box, the two filter boxes over the collection, the number
+#: boxes in them and the word on every chip.  The one colour in the window that
+#: is not a shade of *anything*: nothing in a dark warm ramp is close enough to
+#: read as contrast, and a hairline in ``EDGE`` or ``DIV`` -- which is what
+#: these were drawn in -- is a control the eye has to find before it can use it.
+#:
+#: Chalk rather than white, and the user's second thought about it rather than
+#: their first.  A control here is an *outline*: this is not one bright thing
+#: on a dark screen but a dozen of them, in a row across the top of the
+#: collection and a column down the side of it, and at 255 each is the
+#: brightest pixel the window can draw -- a glare the eye reads as a fault
+#: rather than as contrast, which is the same complaint the lightening of
+#: :data:`SHELL` answered from the other end.  Down a step, it is still the
+#: lightest ink here, which is the whole of the job it has to do; what it stops
+#: being is the only thing on the screen.
+CHALK = "#e8e2d8"
 
 #: The word on a button that stands *on* a card -- "Compare & Transfer",
 #: "Transfer to Stash", "Transfer all" -- and the hairline that draws it.  The
 #: one control the window draws on something the site owns, and the same
-#: argument as :data:`WHITE` one step down: the card under it is near-black and
+#: argument as :data:`CHALK` one step down: the card under it is near-black and
 #: the button has to read as an action rather than as another line of the item,
 #: which is what the tan it was drawn in -- the card's own ``LABEL`` -- failed
-#: to do; but a white word at 11px, on every card of a wall, is glare.  So the
-#: word and its outline are :data:`WHITE` let down one step, and the hover is
-#: what takes them the whole way.
-PALE = "#eae4da"
+#: to do; but a word at 11px, on every card of a wall, is not where the
+#: lightest ink in the window belongs either.  So the word and its outline are
+#: :data:`CHALK` let down one step, and the hover is what takes them back up to
+#: it.  One step and not two: the ink under it is the card's own ``BODY``, and
+#: a button that landed on that would be a line of the item again.
+PALE = "#dad4ca"
 
 #: The site's own body font -- ``body{font:13px/1.45 "Segoe UI",Roboto,...}``
 #: in its stylesheet -- with the same stack behind it.  It is what every line
@@ -266,10 +280,10 @@ def _palette() -> QPalette:
 #: answers to that, and this is where they are spent.
 #:
 #: And what a palette cannot say *at all*: which control is a control.  Every
-#: rule below that carries :data:`WHITE` is one of those -- the rail's check
+#: rule below that carries :data:`CHALK` is one of those -- the rail's check
 #: boxes, the search box, the two filter boxes and the number boxes in them --
 #: and they are here together rather than in the widgets that draw them,
-#: because they are one decision: the controls are the only white in the
+#: because they are one decision: the controls are the only *light* in the
 #: window.  The two boxes are found by object name because the three panes are
 #: group boxes too, and a pane is a region rather than a control.
 _STYLE = f"""
@@ -287,7 +301,7 @@ QGroupBox::title {{
     color: {LABEL};
 }}
 QGroupBox#filterbox {{
-    border: 1px solid {WHITE};
+    border: 1px solid {CHALK};
 }}
 QHeaderView::section {{
     background-color: {RAISED};
@@ -315,16 +329,16 @@ QTreeView {{
 QTreeView::indicator {{
     width: 13px;
     height: 13px;
-    border: 1px solid {WHITE};
+    border: 1px solid {CHALK};
     border-radius: 3px;
     background: transparent;
 }}
 QTreeView::indicator:checked {{
-    background: {WHITE};
+    background: {CHALK};
 }}
 QTreeView::indicator:indeterminate {{
     background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-        stop: 0 {WHITE}, stop: 0.5 {WHITE},
+        stop: 0 {CHALK}, stop: 0.5 {CHALK},
         stop: 0.5 rgba(255, 255, 255, 0), stop: 1 rgba(255, 255, 255, 0));
 }}
 QSplitter::handle {{
@@ -349,12 +363,12 @@ QToolTip {{
    own, and a rule on ``QLineEdit`` would reach inside it and draw a second
    border a few pixels from the first. */
 QLineEdit#search {{
-    border: 1px solid {WHITE};
+    border: 1px solid {CHALK};
     border-radius: 3px;
     padding: 3px 6px;
 }}
 QSpinBox {{
-    border: 1px solid {WHITE};
+    border: 1px solid {CHALK};
     border-radius: 3px;
     padding: 1px 3px;
 }}

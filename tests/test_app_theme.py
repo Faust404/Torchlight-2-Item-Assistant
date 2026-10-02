@@ -34,10 +34,17 @@ from PySide6.QtWidgets import QApplication, QStyleFactory  # noqa: E402
 from app.card import BODY, GROUND, LABEL, PANEL, TABULAR, _serif  # noqa: E402
 from app.theme import (  # noqa: E402
     BODY_PX,
+    CHALK,
+    EDGE,
+    FIELD,
+    PALE,
+    RAISED,
     SANS,
+    SELECT,
+    SHADOW,
     SHELL,
+    STRIPE,
     WALL,
-    WHITE,
     _load_fonts,
     apply_theme,
 )
@@ -80,9 +87,9 @@ def test_the_window_is_dark(themed):
 
     And it is dark from *above*: the shell sits a shade higher than the cards
     do, which is the lightening the user asked for and the reason they asked
-    for it -- what the player operates is outlined in :data:`app.theme.WHITE`,
-    and a white hairline on the cards' own near-black ground is glare rather
-    than contrast.
+    for it -- what the player operates is outlined in :data:`app.theme.CHALK`,
+    and a hairline on the cards' own near-black ground is glare rather than
+    contrast.
     """
     palette = themed.palette()
     window = palette.color(QPalette.ColorRole.Window)
@@ -160,15 +167,23 @@ def test_applying_it_twice_changes_nothing(themed):
     assert themed.styleSheet() == sheet
 
 
-def test_the_controls_are_outlined_in_white(themed):
-    """The one colour in the window that is not the card palette's.
+def test_the_controls_are_chalk_and_not_white(themed):
+    """The one colour in the window that is not the card palette's -- and the
+    one the user asked to have toned down.
 
     Everything the player *operates* -- the check boxes down the rail, the
-    search box, the two boxes over the collection and the number boxes in them
-    -- is outlined in white, and nothing else in the window is.  A hairline in
-    the palette's own greys does not read as a control against a ground this
-    dark: the rail's check boxes were there to be found before they could be
-    ticked.
+    search box, the two boxes over the collection, the number boxes in them and
+    the word on every chip -- is outlined in :data:`app.theme.CHALK`, and
+    nothing else in the window is.  A hairline in the palette's own greys does
+    not read as a control against a ground this dark: the rail's check boxes
+    were there to be found before they could be ticked.
+
+    It started at 255 and the second request took it down a step, which is the
+    claim here: a *dozen* of these outlines is a dozen of the brightest pixels
+    the window can draw, and the two ends of that complaint are the lightening
+    of the ground and this.  So it is the lightest ink in the window and it is
+    not white -- both halves matter, because what it does is contrast and what
+    it was doing too much of was glare.
 
     The panes are group boxes too, and they are *not* in this rule -- a pane
     is a region and a box over the collection is a control -- which is why
@@ -176,8 +191,15 @@ def test_the_controls_are_outlined_in_white(themed):
     """
     sheet = themed.styleSheet()
 
-    assert QColor(WHITE).lightness() == 255, "the point of it is that it is white"
-    assert WHITE in sheet
+    assert QColor(CHALK).lightness() < QColor("#ffffff").lightness(), (
+        "the point of it is that it is not white"
+    )
+    assert QColor(CHALK).lightness() > QColor(PALE).lightness(), (
+        "the lightest ink in the window is the controls', not the cards'"
+    )
+    for shade in (WALL, SHELL, STRIPE, FIELD, RAISED, EDGE, SELECT, SHADOW, BODY):
+        assert QColor(CHALK).lightness() > QColor(shade).lightness(), shade
+    assert CHALK in sheet
     for selector in (
         "QTreeView::indicator",
         "QGroupBox#filterbox",
@@ -191,8 +213,8 @@ def test_a_check_box_says_which_way_it_is(themed):
     """A box that is on has to look different from one that is off.
 
     Qt's stylesheet language can draw a check box's frame and its fill but not
-    a check mark, which is an image file.  So a ticked box is a *filled* one:
-    white box, or a solid one, which at 13px is the reading a glance gets --
+    a check mark, which is an image file.  So a ticked box is a *filled* one: an
+    outlined box, or a solid one, which at 13px is the reading a glance gets --
     and half filled for a group row, which is neither on nor off.
     """
     sheet = themed.styleSheet()
@@ -205,8 +227,8 @@ def test_the_search_box_is_outlined_by_name(themed):
     """By name, because a spin box holds a line edit of its own.
 
     ``QLineEdit`` as a selector matches subclasses, and the field inside a
-    number box is one -- so a rule on it would draw a second white rectangle a
-    few pixels inside the first.
+    number box is one -- so a rule on it would draw a second rectangle a few
+    pixels inside the first.
     """
     sheet = themed.styleSheet()
 

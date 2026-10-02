@@ -47,7 +47,7 @@ from app.compare import (  # noqa: E402
     ReplicaCard,
     inset_for,
 )
-from app.theme import PALE, WHITE  # noqa: E402
+from app.theme import CHALK, PALE  # noqa: E402
 from tl2stash.card import AFFIX, Block  # noqa: E402
 
 from test_app_card import card  # noqa: E402
@@ -170,9 +170,10 @@ def test_a_copy_s_button_is_the_collection_s_own_control(qapp):
     the ink is what makes that visible, because the two are never on screen
     together.  It is the window's own light for a button standing on a card
     (:data:`app.theme.PALE`), not a colour of this module's, and the hover is
-    the step up from it rather than the card's title colour it used to be --
-    a hover that went *dimmer* than the resting state is what a shared colour
-    turns into when only one of the two sheets is moved.
+    the step up from it -- to the window's control ink,
+    :data:`app.theme.CHALK` -- rather than the card's title colour it used to
+    be: a hover that went *dimmer* than the resting state is what a shared
+    colour turns into when only one of the two sheets is moved.
     """
     _, overlay = opened()
     panel = overlay.findChild(QWidget, "cpanel")
@@ -181,7 +182,7 @@ def test_a_copy_s_button_is_the_collection_s_own_control(qapp):
 
     assert f"color: {PALE}" in sheet
     assert f"border: 1px solid {PALE}" in sheet
-    assert f"color: {WHITE}" in sheet, "the hover is the step up from the light"
+    assert f"color: {CHALK}" in sheet, "the hover is the step up from the light"
 
 
 def test_a_copy_does_not_say_where_it_was_last_seen(qapp):

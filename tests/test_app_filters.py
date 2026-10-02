@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
 from app.filters import WASH, FilterBar  # noqa: E402
-from app.theme import WHITE, apply_theme  # noqa: E402
+from app.theme import CHALK, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
@@ -756,14 +756,16 @@ def test_a_box_is_as_wide_as_what_is_in_it_and_no_wider(themed):
         assert box.sizeHint().width() == inside + margins.left() + margins.right() + 2
 
 
-def test_a_chip_is_a_white_word_whichever_way_it_is_ticked(qapp):
-    """The word is white; the rarity is what the pill is *filled* with.
+def test_a_chip_s_word_is_the_windows_own_whichever_way_it_is_ticked(qapp):
+    """The word is the window's control ink; the rarity is what the pill is
+    *filled* with.
 
     Which is the other way round from how this started, and the user's own
     complaint is why: the word used to be inked in the tier and dimmed to a
     grey while unticked, and those greys sat so close to the bar they were
     drawn on that the row read as five words blending into it.  So both the
-    outline and the word are white in both states, and what a tick changes is
+    outline and the word are that ink in both states, and what a tick changes
+    is
     the fill -- a wash of the tier's colour for a rarity in play, the bare
     ground for one that is not.
     """
@@ -771,8 +773,8 @@ def test_a_chip_is_a_white_word_whichever_way_it_is_ticked(qapp):
 
     for chip in bar.chips.values():
         sheet = chip.styleSheet()
-        assert f"color: {WHITE}" in sheet, "the word is white in both states"
-        assert f"border: 1px solid {WHITE}" in sheet
+        assert f"color: {CHALK}" in sheet, "the word is the ink in both states"
+        assert f"border: 1px solid {CHALK}" in sheet
         unticked = sheet.split("QCheckBox:!checked")[1]
         assert "border" not in unticked, (
             "the outline changes with the tick, so an unticked chip loses it"
@@ -791,13 +793,13 @@ def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
     Read off the pill's pixels rather than off the sheet, because a sheet is
     where a mistake about ``rgba()`` would live in silence: an alpha the parser
     does not understand is a declaration that is dropped, and a chip that was
-    meant to be washed comes out as the ground with a white outline.  So the
+    meant to be washed comes out as the ground with an outline.  So the
     ground and the wash are both measured, and the wash is checked against the
     arithmetic the sheet states -- the tier's colour at :data:`app.filters.
     WASH` over what was underneath.
 
-    The white is counted in the *middle* of the pill, clear of the outline at
-    both ends, because the outline is white in both states: what is being
+    The ink is counted in the *middle* of the pill, clear of the outline at
+    both ends, because the outline carries it in both states: what is being
     counted there is the word, which is the thing the user could not read.
     """
     bar = _bar()
@@ -812,14 +814,14 @@ def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
     rect = QRect(chip.mapTo(bar, chip.rect().topLeft()), chip.size())
 
     def probe() -> tuple[QColor, int]:
-        """The fill at the pill's left end, and the white in the middle."""
+        """The fill at the pill's left end, and the ink in the middle."""
         image = bar.grab().toImage()
         middle = rect.center()
         word = sum(
             1
             for y in range(middle.y() - 4, middle.y() + 5)
             for x in range(rect.left() + 3, rect.right() - 2)
-            if image.pixelColor(x, y).name() == WHITE
+            if image.pixelColor(x, y).name() == CHALK
         )
         return image.pixelColor(rect.left() + 4, middle.y()), word
 
@@ -828,8 +830,8 @@ def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
     themed.processEvents()
     washed, word_on = probe()
 
-    assert word_off > 0, "an unticked chip's word is not white"
-    assert word_on > 0, "a ticked chip's word is not white"
+    assert word_off > 0, "an unticked chip's word is not in the ink"
+    assert word_on > 0, "a ticked chip's word is not in the ink"
 
     ink = QColor(TIER_INK["unique"])
     share = WASH / 255
@@ -843,12 +845,12 @@ def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
     ), "the tick's fill is not the tier's colour over the ground"
 
 
-def test_the_rails_boxes_are_outlined_in_white_and_fill_when_ticked(themed):
+def test_the_rails_boxes_are_outlined_and_fill_when_ticked(themed):
     """The first clause of the request, drawn rather than read off the sheet.
 
     A ticked box is a *filled* one: Qt's stylesheet language draws a check
     box's frame and its fill but not a check mark, which is an image file this
-    application does not ship.  So what is counted here is white pixels in the
+    application does not ship.  So what is counted here is ink pixels in the
     box itself -- a box that is off has to be visible, and one that is on has
     to be more of it -- which is also the check that the indicator rule
     reaches a ``QTreeWidget`` at all, a tree view being what it is.
@@ -862,7 +864,7 @@ def test_the_rails_boxes_are_outlined_in_white_and_fill_when_ticked(themed):
     boots = panel.tree.topLevelItem(0).child(0)
 
     def ink() -> int:
-        """The white in the front of that row, where the box is and the words
+        """The ink in the front of that row, where the box is and the words
         are not."""
         rect = panel.tree.visualItemRect(boots)
         image = panel.tree.grab().toImage()
@@ -870,7 +872,7 @@ def test_the_rails_boxes_are_outlined_in_white_and_fill_when_ticked(themed):
             1
             for y in range(rect.top(), rect.bottom() + 1)
             for x in range(rect.left(), rect.left() + 24)
-            if image.pixelColor(x, y).name() == WHITE
+            if image.pixelColor(x, y).name() == CHALK
         )
 
     off = ink()
@@ -895,14 +897,14 @@ def _stepper_boxes(spin):
 
 
 def test_the_number_boxes_draw_their_own_steppers(themed):
-    """Qt will frame a spin box in white or keep its stepper arrows, not both.
+    """Qt will outline a spin box or keep its stepper arrows, not both.
 
     The moment a rule touches the box's frame the stylesheet style takes the
     whole control over and draws the two buttons as flat blocks -- with no
     arrows at all, because an arrow in that language is an *image file* and
     this application ships none.  So the frame is the sheet's and the
     triangles are painted by :class:`app.filters.SpinBox`, and this is the
-    check that they arrive: twelve white pixels in each button, six across at
+    check that they arrive: twelve ink pixels in each button, six across at
     the base and three rows deep, narrowing towards the end the arrow points
     at -- which is the whole of what says which of the two is which.
     """
@@ -920,7 +922,7 @@ def test_the_number_boxes_draw_their_own_steppers(themed):
                 sum(
                     1
                     for x in range(button.left(), button.right() + 1)
-                    if image.pixelColor(x, y).name() == WHITE
+                    if image.pixelColor(x, y).name() == CHALK
                 )
                 for y in range(button.top(), button.bottom() + 1)
             ]
