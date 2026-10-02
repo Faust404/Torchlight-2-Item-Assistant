@@ -63,7 +63,6 @@ from tl2stash.card import (
     Augment,
     Card,
     TIER_INK,
-    level_range_lines,
     requirements_lines,
 )
 from tl2stash.icons import ELEMENT_MARKS, IconLibrary, Placement
@@ -772,7 +771,7 @@ class ItemCard(QFrame):
         # two lines are the only ones about the reader.  The same order
         # ``tl2stash.card.lines`` flattens them in, because the drawing and
         # the flat list are the same card.
-        if requirements_lines(card) or level_range_lines(card):
+        if requirements_lines(card):
             first = self._part(column, first)
             self._requires(column, card)
 
@@ -828,10 +827,11 @@ class ItemCard(QFrame):
         looked for, and a rule over them says they are their own part of the
         card rather than a footnote to the stats.
 
-        The gates are chips and the band under them is plain text, which is the
-        site's distinction and worth keeping: a requirement is something the
-        character must be, and the band is where the item comes from.  Box the
-        band and it reads as a third way in.
+        The gates are chips, which is the site's treatment and worth keeping: a
+        requirement is something the character must be, and the one thing that
+        used to be drawn under them -- the band the item drops in -- is off the
+        card altogether, so that the only boxed numbers on it are the ones it
+        actually asks for.
 
         The card cannot know whether the character meets any of it -- this is a
         collection, not a character sheet -- so the game's other colour for a
@@ -843,13 +843,6 @@ class ItemCard(QFrame):
             heading.setObjectName("rhead")
             column.addWidget(heading)
             column.addWidget(ChipRow([self._chip(text) for text in said]))
-
-        for text in level_range_lines(card):
-            label = QLabel(emphasis(text, DIM))
-            label.setObjectName("band")
-            label.setTextFormat(Qt.TextFormat.RichText)
-            label.setWordWrap(True)
-            column.addWidget(label)
 
     def _chip(self, text: str) -> QWidget:
         """One of the ways in -- or the word between the two groups.
@@ -1052,7 +1045,6 @@ STYLE = f"""
     font-size: 10px;
     letter-spacing: 2px;
 }}
-#band {{ color: {DIM}; font-size: 11.5px; }}
 #socketed {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #setname {{ font-size: 13px; font-weight: 600; }}
 #rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}

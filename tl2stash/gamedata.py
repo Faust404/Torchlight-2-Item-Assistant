@@ -72,9 +72,7 @@ from .dat import (
     VAR_LEVEL_REQUIRED,
     VAR_MAGIC_REQUIRED,
     VAR_MAXDAMAGE,
-    VAR_MAXLEVEL,
     VAR_MINDAMAGE,
-    VAR_MINLEVEL,
     VAR_RANGE,
     VAR_RARITY_DMG_MOD,
     VAR_SET,
@@ -98,7 +96,6 @@ __all__ = [
     "Appearance",
     "Derived",
     "GameData",
-    "MAX_LEVEL_CEILING",
     "Requirements",
     "SetBonus",
     "SetRung",
@@ -444,40 +441,19 @@ class Requirements:
     ``stats`` is the other half, in the order the game lists them -- Strength,
     Dexterity, Focus, Vitality -- and empty for an item that asks for none.
 
-    ``min_level`` and ``max_level`` are not gates and are the reason this class
-    is not called *a gate*: they are the band the item drops in, which is a
-    fact about where it comes from rather than something the character must
-    be.  They live here anyway because they are read out of the same file by
-    the same walk, and because an item that cannot be traced to a file has
-    neither -- so the one answer being absent is the other being absent too.
-    The card keeps them apart on the page, which is where it matters: the
-    gates are chips and the band is a line of plain text under them, because a
-    band given the chip treatment would read as a third way in.
-
-    Both are 0 for a field the file does not carry, and ``min_level`` is 0 for
-    the 145 files that state a zero -- a floor of zero is no floor.  A ceiling
-    the file states as one of its five spellings of "no ceiling" is
-    :data:`MAX_LEVEL_CEILING` by the time it gets here.
+    The item's own drop band -- the ``MINLEVEL`` and ``MAXLEVEL`` its file
+    states -- is deliberately not here.  It was read by the same walk and
+    drawn as a line of plain text under the gates, and it is a fact about
+    where the item comes from rather than something the character must be;
+    it is off the card because the item already says the number a reader
+    wants -- its level, on the pill beside its name -- and the band said it a
+    second time, in two numbers, where it could be mistaken for a third way
+    in.
     """
 
     level: int
     socketing: bool
     stats: tuple[tuple[str, int], ...]
-    min_level: int = 0
-    max_level: int = 0
-
-
-#: What :data:`VAR_MAXLEVEL` is collapsed to when it says "no ceiling".  The
-#: files say it five different ways -- across the archive's 6,262 item files,
-#: 999999 happens 135 times, 9999999 112, 9999 nine, 99999 four, and 1299 once
-#: -- and a reader should not have to recognise all five to read one idea.
-#: 999 is also the highest ceiling any item states in earnest, and the
-#: reference database's own value, so the collapse loses nothing.
-#:
-#: :data:`VAR_MINLEVEL` is deliberately *not* collapsed: 26 files state 777,
-#: which marks gear only monsters carry.  That is a fact about the item rather
-#: than a missing number, so it is shown as the data has it.
-MAX_LEVEL_CEILING = 999
 
 
 #: The words the game puts in front of an item's kind to say how good it is,
@@ -1418,10 +1394,9 @@ class GameData:
         return seconds if seconds <= MAX_SWING else None
 
     def requirements_for(self, item) -> Requirements | None:
-        """What the item's own file says it asks of a character, and the band
-        it drops in.
+        """What the item's own file says it asks of a character.
 
-        Two rules, because the five fields are two kinds of number.
+        Two rules, because the fields are two kinds of number.
 
         The level is taken as the file states it.  Most items state nothing --
         the field is authored only where the level is meant to depart from the
@@ -1437,17 +1412,10 @@ class GameData:
         curve at level 70.  An item that states none asks for no attribute at
         all, which is not zero of one -- a zero is the same as no line.
 
-        The two band fields scale by nothing and read the nearest statement
-        the same way the rest do, which is not a formality here: 378 of the
-        2,668 files that resolve a ceiling do not state one themselves, and a
-        read that stopped at the item's own file would call those unbounded.
-        The floor is the commoner half -- 2,564 files resolve one, 26 of them
-        the 777 that marks gear only monsters carry.
-
         ``None`` when the item cannot be traced back to a file at all: a
         modded item, or a machine whose install has moved on.  A caller
         without an answer falls back to the level the save file records rather
-        than showing nothing, and shows no band at all.
+        than showing nothing.
         """
         data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
         if data is None:
@@ -1464,10 +1432,6 @@ class GameData:
             level=self._gate_level(stated, level, appearance),
             socketing=appearance.type_name == "Socketable",
             stats=self._gate_stats(stated, level),
-            min_level=int(_number(stated, VAR_MINLEVEL) or 0),
-            max_level=min(
-                int(_number(stated, VAR_MAXLEVEL) or 0), MAX_LEVEL_CEILING
-            ),
         )
 
     def _gate_level(

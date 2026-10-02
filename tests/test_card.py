@@ -31,7 +31,6 @@ from tl2stash.card import (  # noqa: E402
     Rung,
     carried_magic,
     display_tier,
-    level_range_lines,
     lines,
     requirements_lines,
 )
@@ -43,7 +42,6 @@ from test_dat import needs_game, real_game  # noqa: E402
 from test_gamedata import (  # noqa: E402
     _a_set_item,
     _an_item_of_tier,
-    _an_item_with_an_inherited_ceiling,
     _bashdrill,
 )
 from test_tooltip import effect, item, word  # noqa: E402
@@ -483,81 +481,24 @@ def test_a_real_item_s_gate_reaches_the_card(real_game):
 
 
 # --------------------------------------------------------------------------
-# The band the item drops in
+# The foot of the card
 # --------------------------------------------------------------------------
 #
-# Not a gate, and the reference is pointed about it: a band is a fact about
-# where the item comes from, so it is written plainly under the chips rather
-# than given a box that would file it as a third way in.  It is on
-# ``Requirements`` because the same file walk answers both and an item that
-# cannot be traced has neither -- not because the two are one thing.
+# The gates and nothing else.  The band the item drops in -- the ``MINLEVEL``
+# and ``MAXLEVEL`` its file states -- used to be drawn plainly under the chips,
+# and it is off the card altogether now: the item already says the level a
+# reader wants on the pill beside its name, and the band said it a second time,
+# in two numbers, where it could be mistaken for a third way in.
 
 
-def test_the_band_is_one_line_under_the_gates():
-    """``Min Level 45 · Max Level 55`` -- the reference's two labels and its
-    separator, on one line, because they are one idea.
-    """
-    card = _a_card(requires=Requirements(0, False, (), min_level=45, max_level=55))
-    assert level_range_lines(card) == ["Min Level 45 · Max Level 55"]
-
-
-def test_each_end_of_the_band_stands_on_its_own():
-    """Only the fields the file carries: 641 of the game's 6,262 item files
-    state a ceiling and no floor, and 392 the other way round, and neither
-    half should print a zero for the half it has not got.
-    """
-    assert level_range_lines(
-        _a_card(requires=Requirements(0, False, (), max_level=30))
-    ) == ["Max Level 30"]
-    assert level_range_lines(
-        _a_card(requires=Requirements(0, False, (), min_level=12))
-    ) == ["Min Level 12"]
-
-
-def test_a_band_of_zeros_is_no_band_at_all():
-    """A floor of zero is no floor -- 145 of the files state one -- and most
-    items state neither end, so most cards have no line here.
-    """
-    assert level_range_lines(_a_card(requires=Requirements(0, False, ()))) == []
-
-
-def test_the_band_is_not_on_the_save_file_and_is_not_invented_without_one():
-    """``requires=None`` has no band either, and the level the save file
-    records is no substitute: it is the level the *item* is, which sits inside
-    the band rather than at either end of it.
-    """
-    assert level_range_lines(_a_card(level=45)) == []
-
-
-@needs_game
-def test_a_real_item_s_band_is_not_read_from_the_item_s_own_file_alone(real_game):
-    """378 of the 2,668 files that resolve a ceiling do not state one: they
-    inherit it, and a read that stopped at the item's own file would call them
-    unbounded.  The archive's clockwork amulets are those -- walked out of the
-    archive directly, so which item this is cannot come from the tool.
-
-    What is pinned is the route rather than the number: the line is built at
-    all, and both ends of it are whole numbers.
-    """
-    guid = _an_item_with_an_inherited_ceiling(real_game)
-    card = build(item("Test Amulet", guid=guid), real_game)
-
-    assert len(level_range_lines(card)) == 1
-    line = level_range_lines(card)[0]
-    assert line.startswith("Min Level ") or line.startswith("Max Level ")
-    assert all(part.split()[-1].isdigit() for part in line.split(" · "))
-
-
-def test_the_band_stands_under_the_requirements_on_the_flat_card():
-    """The order the reference draws and the reason for it: the two numbers are
-    both levels, and a reader who met them side by side would take the band
-    for a second gate.
+def test_the_gates_stand_at_the_foot_of_the_flat_card():
+    """The order the reference draws and the reason for it: everything above
+    the heading is a number belonging to the item, and the gates are the only
+    lines on the card that are about the reader.
     """
     card = _a_card(
         level=45,
-        requires=Requirements(
-            51, False, (("Strength", 81),), min_level=45, max_level=55
-        ),
+        requires=Requirements(51, False, (("Strength", 81),)),
         flavor="A remark.",
     )
 
@@ -567,7 +508,6 @@ def test_the_band_stands_under_the_requirements_on_the_flat_card():
         "Player Level 51",
         "or",
         "Strength 81",
-        "Min Level 45 · Max Level 55",
         "A remark.",
     ]
 

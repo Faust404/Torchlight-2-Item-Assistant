@@ -502,17 +502,27 @@ def test_what_the_item_asks_of_the_character_is_drawn_at_the_foot(qapp):
     assert texts(ItemCard(card(requires=Requirements(0, False, ()))), "rhead") == []
 
 
-def test_the_band_is_drawn_plain_under_the_chips(qapp):
-    """The reference's own distinction, and the reason for it: a requirement is
-    something the player has to be or do, and the band is a fact about where
-    the item comes from -- so the one is boxed and the other is not, and a box
-    round the band would file it as a third gate."""
+def test_nothing_is_drawn_under_the_chips(qapp):
+    """The foot of the card is the gates and no more.
+
+    The band the item drops in -- ``Min Level 45 · Max Level 55`` -- used to be
+    drawn under the chips in plain text, and it is gone: the item's own level
+    is already on the pill beside its name, and a second pair of level numbers
+    at the foot is one a reader has to work out the meaning of.
+    """
     drawn = ItemCard(
-        card(requires=Requirements(0, False, (), min_level=45, max_level=55))
+        card(level=45, requires=Requirements(51, False, (("Strength", 81),)))
     )
 
-    assert texts(drawn, "band") == [emphasis("Min Level 45 · Max Level 55", DIM)]
-    assert texts(drawn, "rhead") == [], "a band is not a gate and takes no heading"
+    assert texts(drawn, "rhead") == ["Requirements"]
+    assert texts(drawn, "rchip") == [
+        emphasis("Player Level 51", DIM),
+        emphasis("Strength 81", DIM),
+    ]
+    assert not any(
+        label.text().startswith(("Min Level", "Max Level"))
+        for label in drawn.findChildren(QLabel)
+    ), "the band survived at the foot of the card"
 
 
 def test_the_chips_wrap_when_the_card_is_narrow(qapp):

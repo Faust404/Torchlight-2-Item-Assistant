@@ -308,9 +308,10 @@ VAR_MAXDAMAGE = field_hash("MAXDAMAGE")
 
 #: The band the item drops in, as opposed to the level it *is*: MINLEVEL is the
 #: floor and MAXLEVEL the ceiling, and neither is a gate on the character --
-#: the gate is ``LEVEL_REQUIRED`` below.  Both are stated as the data has them
-#: and read through :func:`~tl2stash.gamedata.level_range_for`, which is where
-#: the two ways the files spell "no ceiling" are collapsed.
+#: the gate is ``LEVEL_REQUIRED`` below.  Named for the format's sake and not
+#: read: the tool drew the band under the requirements for a while and does
+#: not any more, because the level the reader wants is already the item's own
+#: and the band said it a second time in two numbers.
 VAR_MINLEVEL = field_hash("MINLEVEL")
 VAR_MAXLEVEL = field_hash("MAXLEVEL")
 

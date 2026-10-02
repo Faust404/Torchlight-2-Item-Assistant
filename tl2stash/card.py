@@ -33,8 +33,6 @@ __all__ = [
     "DAMAGE",
     "DAMAGE_PER_SECOND",
     "ITEM_LEVEL_TO_SOCKET",
-    "MAX_LEVEL",
-    "MIN_LEVEL",
     "PLAYER_LEVEL",
     "REQUIREMENTS",
     "Rung",
@@ -43,10 +41,8 @@ __all__ = [
     "TIER_MAGIC",
     "TIER_NONE",
     "THE_ALTERNATIVE",
-    "THE_SEPARATOR",
     "carried_magic",
     "display_tier",
-    "level_range_lines",
     "lines",
     "requirements_lines",
 ]
@@ -324,15 +320,6 @@ ITEM_LEVEL_TO_SOCKET = "Required Item Level to Socket"
 #: word as its own element rather than as part of either chip.
 THE_ALTERNATIVE = "or"
 
-#: The drop band's two labels, and the dot the reference joins them with.  Not
-#: chips and not a heading: the band is a fact about where the item comes from
-#: rather than a gate on the reader, and the reference states it in the same
-#: plain voice as the item's other small print so that it cannot be read as a
-#: third way in.
-MIN_LEVEL = "Min Level"
-MAX_LEVEL = "Max Level"
-THE_SEPARATOR = " · "
-
 #: The tail of a weapon's headline line -- ``110 Damage per Second``.  Named
 #: here because two modules need it: :mod:`tl2stash.tooltip` writes the line
 #: with it, and ``app.card`` picks the line out by it to draw the one number
@@ -384,33 +371,6 @@ def requirements_lines(card: Card) -> list[str]:
     return out
 
 
-def level_range_lines(card: Card) -> list[str]:
-    """The band the item drops in, as one line, and none for an item with no
-    band to show.
-
-    Last of the card's small print and under the requirements, which is the
-    reference's own argument for the two being two blocks rather than one: the
-    numbers are both levels and a reader who met them side by side would take
-    the band for a second gate.  It is written plainly for the same reason --
-    a box drawn round this would file it as a third way in.
-
-    Only the fields the file carries, so an item with a floor and no ceiling
-    reads ``Min Level 12`` and nothing more.  ``0`` and ``0`` is no line at
-    all, which is most items: a floor of zero is no floor.  A card with no
-    answer from the game's data has no band, because the band is not on the
-    save file -- the level it records is the item's own, not the band's.
-    """
-    requires = card.requires
-    if requires is None:
-        return []
-    said = []
-    if requires.min_level:
-        said.append(f"{MIN_LEVEL} {requires.min_level}")
-    if requires.max_level:
-        said.append(f"{MAX_LEVEL} {requires.max_level}")
-    return [THE_SEPARATOR.join(said)] if said else []
-
-
 def lines(card: Card) -> list[str]:
     """The card as the flat list of lines the game shows.
 
@@ -458,13 +418,12 @@ def lines(card: Card) -> list[str]:
     # everything the item *is* -- after its own stats, its sockets, what it
     # would become and what more of its set would give it.  That is where the
     # reference draws it and the reason is the card's own shape: everything
-    # above this is a number belonging to the item, and these two lines are
-    # the only ones that are about the reader.
+    # above this is a number belonging to the item, and these lines are the
+    # only ones that are about the reader.
     said = requirements_lines(card)
     if said:
         out.append(REQUIREMENTS)
         out.extend(said)
-    out.extend(level_range_lines(card))
     if card.flavor:
         out.append(card.flavor)
     return out

@@ -2077,34 +2077,6 @@ def _a_socketable_with_a_gate(game) -> tuple[int, str]:
     raise AssertionError("the archive has no socketable with a level any more")
 
 
-def _an_item_with_an_inherited_ceiling(game) -> int:
-    """The guid of a real item whose ``MAXLEVEL`` comes off a base file.
-
-    378 of the 2,668 files that resolve a ceiling do not state one themselves,
-    and the band is the one place a read that stopped at the item's own file
-    would go wrong quietly: the item would simply have no ceiling, which is a
-    card with a line missing rather than a card with a wrong number on it.
-    Walked out of the archive directly, the way the helper above is, so which
-    item this is cannot come from the tool.
-    """
-    from tl2stash.dat import VAR_MAXLEVEL
-    from tl2stash.gamedata import _number, _text
-
-    for key, data in game._item_files.items():
-        if not key.startswith("MEDIA/UNITS/ITEMS/"):
-            continue
-        if data.root.variables.get(VAR_MAXLEVEL) is not None:
-            continue
-        inherited = game._inherited(data)
-        if _number(inherited, VAR_MAXLEVEL) is None:
-            continue
-        guid = _text(inherited, VAR_UNIT_GUID)
-        if guid:
-            return int(guid) & 0xFFFFFFFFFFFFFFFF
-
-    raise AssertionError("the archive has no item with an inherited ceiling")
-
-
 def _a_set_item(game, tier_word: str) -> tuple[int, str, str, str]:
     """``(guid, UNITTYPE, SET id, the set's display name)`` for a real one.
 
