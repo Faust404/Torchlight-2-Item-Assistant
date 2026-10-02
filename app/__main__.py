@@ -63,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Torchlight 2 Item Assistant")
 
+    # Dark, before the window exists: a style or a palette set after a widget
+    # is built does not reach what is already on screen, and this window is
+    # built of hundreds of widgets in its constructor.
+    from .theme import apply_theme
+
+    apply_theme(app)
+
     window = MainWindow(db_path=db_path, source=source, game=game)
     window.show()
     return app.exec()

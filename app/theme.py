@@ -1,0 +1,180 @@
+"""The window's own colours: dark, by default.
+
+The things the eye spends its time on here are the cards, and a card is dark --
+it is the game's own look, taken from the reference site's stylesheet, and
+:mod:`app.card` says why.  An application that drew those cards on the
+platform's light chrome would be arguing with itself about which of the two is
+the screen.  So the window is built out of the card's own palette, which is to
+say out of the reference stylesheet's colours under the names it gives them,
+and the whole of the window is one surface rather than a document with cards
+pasted onto it.
+
+Three colours the card palette cannot supply, because a web page has no
+buttons, no rows to select and nothing below a rule.  Each is derived here
+rather than invented, one step from a colour that is already in the palette --
+and each says which, so the next person who moves the palette can move these
+with it.
+
+**The style matters as much as the palette.**  On Windows the default style
+draws much of a widget out of the system theme and consults the palette only
+for what the theme does not say, so setting colours alone gives a light window
+with dark corners.  Fusion is the one Qt style that draws all of it out of the
+palette on every platform, which is the whole reason it is chosen here.
+
+And a palette cannot say everything either -- there is no role for a group
+box's title or a header's sections -- so a small stylesheet covers what is
+left.  It is deliberately short: everything it does not mention is the palette's
+job, and every rule it does carry is a colour that is a *border*, a *title* or
+an idle sentence rather than a fill.
+
+This is applied once, to the application, before any window is built: a style
+set afterwards does not reach what is already on screen.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication, QStyleFactory
+
+from .card import BODY, DIM, DIV, GROUND, HEAD, LABEL, LINE, PANEL, TILE_BG
+
+__all__ = ["apply_theme"]
+
+#: A button, and anything else that sits *on* the ground rather than in a
+#: panel.  The palette has no raised neutral -- the site's cards are flat and
+#: its buttons are its links -- so this is ``DIV`` (the chip border) with just
+#: enough light added to read as a surface.
+RAISED = "#232220"
+
+#: A selected row.  The same step again from ``DIV``: the tile a click lands on
+#: is outlined in ``HEAD``, and a table row has no outline to give, so it takes
+#: the fill instead.  ``HEAD`` written on it is legible; ``BODY`` would not be.
+SELECT = "#3a3227"
+
+#: The bevels below every rule.  The darkest the palette goes, so that a
+#: shadowed edge reads as an edge and not as dirt.
+SHADOW = "#0c0b0a"
+
+
+def _palette() -> QPalette:
+    """The card palette, as Qt's roles.
+
+    The mapping is the obvious one wherever the palette has a counterpart:
+    the ground is the window, a panel is a table's background, the hairline is
+    every border.  The rest are the roles Qt fills in from nothing, and each
+    is chosen from the card palette rather than defaulted, because a default
+    is a light-theme value.
+    """
+    role = QPalette.ColorRole
+    group = QPalette.ColorGroup
+    palette = QPalette()
+
+    palette.setColor(role.Window, QColor(GROUND))
+    palette.setColor(role.WindowText, QColor(BODY))
+    #: A table's rows and an input's field: the card's panel, which is what a
+    #: panel is.  Its alternate is the darker of the two grounds the site has,
+    #: so alternating rows read as two shades of the same thing rather than as
+    #: a stripe.
+    palette.setColor(role.Base, QColor(PANEL))
+    palette.setColor(role.AlternateBase, QColor(TILE_BG))
+    palette.setColor(role.Text, QColor(BODY))
+    palette.setColor(role.PlaceholderText, QColor(DIM))
+    palette.setColor(role.Button, QColor(RAISED))
+    palette.setColor(role.ButtonText, QColor(BODY))
+    palette.setColor(role.BrightText, QColor(HEAD))
+    palette.setColor(role.Highlight, QColor(SELECT))
+    palette.setColor(role.HighlightedText, QColor(HEAD))
+    palette.setColor(role.ToolTipBase, QColor(RAISED))
+    palette.setColor(role.ToolTipText, QColor(BODY))
+    palette.setColor(role.Link, QColor(LABEL))
+    palette.setColor(role.Light, QColor(RAISED))
+    palette.setColor(role.Midlight, QColor(DIV))
+    palette.setColor(role.Mid, QColor(DIV))
+    palette.setColor(role.Dark, QColor(LINE))
+    palette.setColor(role.Shadow, QColor(SHADOW))
+
+    # Disabled, said out loud.  Qt's own greys for this group are the light
+    # theme's -- mid-grey on a dark ground, which is *brighter* than the text
+    # around it.  The point of a disabled control here is that it recedes.
+    for text in (role.WindowText, role.Text, role.ButtonText):
+        palette.setColor(group.Disabled, text, QColor(DIM))
+    palette.setColor(group.Disabled, role.Base, QColor(GROUND))
+    palette.setColor(group.Disabled, role.Button, QColor(GROUND))
+    palette.setColor(group.Disabled, role.Highlight, QColor(LINE))
+    palette.setColor(group.Disabled, role.HighlightedText, QColor(DIM))
+    return palette
+
+
+#: What a palette cannot say.  A group box's title, a header view's sections,
+#: the handle between two panes, and the two idle sentences -- the status line
+#: and a missing item's placeholder -- are all drawn in a colour the palette
+#: has no role for, and all of them are the same kind of thing: a word that is
+#: there to be read second.  ``DIM`` and ``LABEL`` are the palette's own two
+#: answers to that, and this is where they are spent.
+_STYLE = f"""
+QGroupBox {{
+    border: 1px solid {LINE};
+    border-radius: 4px;
+    margin-top: 9px;
+    padding-top: 8px;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 8px;
+    padding: 0 4px;
+    color: {LABEL};
+}}
+QHeaderView::section {{
+    background-color: {RAISED};
+    color: {DIM};
+    border: 0;
+    border-bottom: 1px solid {LINE};
+    padding: 3px 6px;
+}}
+QTableView {{
+    border: 1px solid {LINE};
+    gridline-color: {LINE};
+    selection-background-color: {SELECT};
+    selection-color: {HEAD};
+}}
+QTreeView {{
+    border: 1px solid {LINE};
+}}
+QSplitter::handle {{
+    background-color: {LINE};
+}}
+QSplitter::handle:horizontal {{
+    width: 3px;
+}}
+QStatusBar {{
+    color: {DIM};
+}}
+QStatusBar::item {{
+    border: 0;
+}}
+QToolTip {{
+    background-color: {RAISED};
+    color: {BODY};
+    border: 1px solid {LINE};
+    padding: 4px;
+}}
+#banner {{
+    color: {LABEL};
+    font-size: 12px;
+}}
+"""
+
+
+def apply_theme(app: QApplication) -> None:
+    """Make the application dark, once, before any window exists.
+
+    Fusion first, then the palette, then the stylesheet: the style decides
+    which roles it consults, so a palette set under a style that ignores it
+    would be a colour scheme that never arrives.
+    """
+    style = QStyleFactory.create("Fusion")
+    if style is not None:  # pragma: no cover -- Fusion ships with every Qt
+        app.setStyle(style)
+    app.setPalette(_palette())
+    app.setStyleSheet(_STYLE)
