@@ -117,8 +117,20 @@ class SidePanel(QWidget):
         tree.setUniformRowHeights(True)
         tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # The last section stretches unless it is told not to, and the last
+        # section here is the *count* -- so the numbers were being given the
+        # width and the kinds were left with whatever was over, which in a rail
+        # this narrow is nothing: the tree drew a column of counts with no
+        # words beside them.  The first section stretches instead, and the
+        # count takes exactly what its digits need.
+        tree.header().setStretchLastSection(False)
         tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        # The platform's 20px a level is a step wide enough that the words in
+        # a three-level rail run out of column before they run out of name:
+        # at 12 the path still reads as a path and "Socketable" fits under its
+        # group rather than eliding to an ellipsis.
+        tree.setIndentation(12)
         tree.setToolTip(
             "Tick what to show.  A group ticks everything under it,\n"
             "and only the counts move as you narrow."
@@ -254,6 +266,14 @@ class SidePanel(QWidget):
     def _leaf(self, place: Place, parent: QTreeWidgetItem) -> None:
         item = QTreeWidgetItem(parent, [place[2] or UNCLASSIFIED, "0"])
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+        # The rail is narrow on purpose, so the longest kinds are drawn short
+        # of their last letter or two -- and what is cut is the end of the
+        # name, which is the part that tells one apart from another.  The whole
+        # path on hover is what makes that a smaller word rather than a lost
+        # one.
+        item.setToolTip(
+            0, " / ".join(word for word in (place[0], place[1], place[2] or UNCLASSIFIED) if word)
+        )
         # A place that was ticked and is still here keeps its tick; the one the
         # collection no longer has is simply gone.
         item.setCheckState(

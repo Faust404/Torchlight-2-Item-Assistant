@@ -458,6 +458,35 @@ def test_a_tick_on_a_kind_the_collection_has_lost_goes_with_it(qapp):
     assert panel.places() == set()
 
 
+def test_the_rail_gives_its_width_to_the_kinds_rather_than_to_the_counts(qapp):
+    """The count is the rail's last column, and Qt stretches the last one.
+
+    Which is how the rail came to draw a column of numbers with no words
+    beside them: the counts were given the width and the kinds were left with
+    what was over.  The kinds stretch and the counts take what their digits
+    need, so what the rail spends its width on is the thing being chosen.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, HELMET, SWORD, QUEST])
+    panel.set_counts({BOOTS: 2, HELMET: 1, SWORD: 7, QUEST: 3})
+    panel.resize(180, 400)
+    panel.show()
+    qapp.processEvents()
+
+    tree = panel.tree
+    assert tree.columnWidth(0) > tree.columnWidth(1)
+    assert tree.columnWidth(0) > 60
+
+
+def test_a_kind_whose_name_does_not_fit_says_all_of_it_on_hover(qapp):
+    """A narrow rail elides, and what it cuts is the end of the name."""
+    panel = _panel()
+    panel.set_shape([SWORD, QUEST])
+
+    assert panel._leaves[SWORD].toolTip(0) == "Weapons / One-Handed / Sword"
+    assert panel._leaves[QUEST].toolTip(0) == "Misc / Unclassified"
+
+
 # --------------------------------------------------------------------------
 # The bar, which is everything else
 # --------------------------------------------------------------------------

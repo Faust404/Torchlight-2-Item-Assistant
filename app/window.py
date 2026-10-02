@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
         # under its group -- and every pixel past that goes to the cards, which
         # are the thing here worth looking at.  The handle is the player's;
         # this is only where it starts.
-        splitter.setSizes([165, 300, 935])
+        splitter.setSizes([180, 300, 920])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
