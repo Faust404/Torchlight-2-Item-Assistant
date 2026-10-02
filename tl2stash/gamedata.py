@@ -146,6 +146,13 @@ SETS_DIR = "MEDIA/SETS/"
 #: :meth:`GameData.socket_target`.
 GEMS_DIR = "MEDIA/AFFIXES/GEMS/"
 
+#: The other shelf a socketable's affixes are kept on.  Only the gems live
+#: under ``GEMS``: a *unique* socketable -- Vyrax's Heartfire, the Eyes of
+#: Gallo -- keeps its affixes here among the ordinary ones, one file per host,
+#: and states the host list the same way.  It is the directory :data:`WANTED`
+#: already reads, named here because it is read for the same reason a gem's is.
+ITEM_AFFIX_DIR = "MEDIA/AFFIXES/ITEMS/"
+
 #: The damage types, as the four letters a data file writes them in, against
 #: the number the save file's effect record uses.  All six words in the
 #: archive's set ladders are here; the numbers are the ones
@@ -451,6 +458,57 @@ def _gem_hosts(stem: str, data: DatFile) -> tuple[set[str], set[str], bool]:
     return (named or hosts), granted, bool(named)
 
 
+#: The host words, as an affix's applicability list spells them against the
+#: word :mod:`tl2stash.tooltip` writes.  ``ARMOR`` and ``TRINKET`` are *one*
+#: host there: a gem in a ring and a gem in a breastplate are granted the same
+#: bonus, and the game spells the host the one way for both, so the archive's
+#: two words for it fold into one.
+_SOCKET_HOST_WORDS = {"WEAPON": "WEAPON", "TRINKET": "TRINKET", "ARMOR": "TRINKET"}
+
+
+def _applicability_hosts(data: DatFile) -> tuple[set[str], set[str]]:
+    """An item affix's hosts and what it grants, read off its own children.
+
+    A gem's affixes are filed by host in their *names*, and on the newer embers
+    those names are the only thing that is right -- see :func:`_gem_hosts`.  An
+    item affix has no such name to go on: ``UNIQUE_DEGRADE_ARMOR2`` wears
+    ``_ARMOR`` and is a weapon affix, so applying the name-marker shortcut here
+    would tag it with the opposite host.  What is read instead is the list the
+    file itself states -- the one the reference database reads -- which is the
+    child whose node id is ``UNITTYPES``, holding the unit types the affix may
+    be applied to.  ``WEAPON`` and ``ARMOR`` are the two that name a host.
+
+    Everything else in such a list is a *unit type* and is dropped: an affix
+    for studs states ``STUD``, one for a unique socketable states ``UNIQUE
+    SOCKETABLE``, and a unit type is not a place a bonus is granted to.  That
+    is most of what is written there -- measured over the archive, 1,390 of the
+    1,688 item affixes state an applicability list and the commonest word on
+    them is ``UNIQUE SOCKETABLE`` at 636, against 451 weapons and 989 of the
+    two armor words -- and 1,136 of those lists hold more than one entry, so it
+    is also the reason the entries have to be read as a list rather than as the
+    one value a mapping would have kept.
+
+    Both host words are kept when both are stated, which is what makes the one
+    ambiguous case fall out of :meth:`GameData.socket_target` on its own: an
+    affix for either host grants its bonus to both, and there is no one of them
+    to name.
+    """
+    hosts: set[str] = set()
+    granted: set[str] = set()
+    for node in data.root.children:
+        if node.node_id == VAR_UNITTYPES:
+            # Both spellings, as the gems' lists use both, and every entry of
+            # them: see :meth:`DatNode.texts`.
+            for word in node.texts(VAR_UNITTYPE) + node.texts(VAR_UNITTYPES):
+                host = _SOCKET_HOST_WORDS.get(word.upper())
+                if host is not None:
+                    hosts.add(host)
+        effect = node.text(VAR_AFFIX_EFFECT)
+        if effect:
+            granted.add(effect.upper())
+    return hosts, granted
+
+
 def read_unit_type(unit_type: str) -> tuple[str, str]:
     """``'UNIQUE 1HSWORD'`` into its tier and its kind.
 
@@ -691,6 +749,7 @@ class GameData:
         effect_curves: dict[str, dict[int, float]] = {}
         socket_hosts: dict[str, set[str]] = {}
         socket_named: dict[str, set[str]] = {}
+        socket_items: dict[str, set[str]] = {}
         read = 0
 
         with PakFile(pak_path, index) as pak:
@@ -752,6 +811,17 @@ class GameData:
                     for effect in granted:
                         shelf.setdefault(effect, set()).update(hosts)
 
+                if path.startswith(ITEM_AFFIX_DIR):
+                    # A unique socketable's affixes, which are read the way the
+                    # reference database reads them -- off the applicability
+                    # list -- and filed apart from the gems': what a gem affix
+                    # says is the answer for an effect, and an item affix is
+                    # only heard where no gem has one.
+                    hosts, granted = _applicability_hosts(data)
+                    if hosts:
+                        for effect in granted:
+                            socket_items.setdefault(effect, set()).update(hosts)
+
                 if path.startswith(SETS_DIR):
                     # A set's file, kept whole: the root *is* the set, and its
                     # children are the rungs of its ladder.  Filed under both
@@ -810,11 +880,25 @@ class GameData:
         # effect.  Neither gets a target, so what comes out is only the
         # splits: the effects a socketable grants to exactly one of the two.
         socket_targets: dict[str, str] = {}
-        for effect in socket_named.keys() | socket_hosts.keys():
+        gem_effects = socket_named.keys() | socket_hosts.keys()
+        for effect in gem_effects:
             # `or` and not a plain get: a named claim is the one that decides,
             # and the children are only heard where no name speaks at all.
             hosts = socket_named.get(effect) or socket_hosts.get(effect, set())
             if len(hosts) == 1:
+                socket_targets[effect] = next(iter(hosts))
+
+        # And then the item affixes, which are what a *unique* socketable's
+        # lines are read off -- its own file names the two affixes and says
+        # nothing else about them.  They are heard only where no gem affix
+        # mentions the effect at all, and a tie the gems left is not such a
+        # place: naming one host for an effect the gems grant to both would
+        # write the wrong word on the gem's own line.  39 effects come out of
+        # here -- 'CAST SKILL ON KILL AT TARGET', 'IMMOBILIZE', 'POISON' --
+        # every one of them a socketable's own, and not one of them an effect
+        # any gem affix states.
+        for effect, hosts in socket_items.items():
+            if len(hosts) == 1 and effect not in gem_effects:
                 socket_targets[effect] = next(iter(hosts))
 
         # Which curve each effect's numbers scale with, resolved once here
@@ -953,16 +1037,21 @@ class GameData:
     def socket_target(self, node_name: str) -> str | None:
         """Which host a socketable's effect is granted to, or ``None``.
 
-        ``'WEAPON'`` and ``'TRINKET'`` are the game's own words, as its gem
-        affixes spell them; what the player is shown for them is
+        ``'WEAPON'`` and ``'TRINKET'`` are the game's own words, as its affix
+        files spell them; what the player is shown for them is
         :mod:`tl2stash.tooltip`'s business, the way every other wording is.
 
-        ``None`` covers the cases that have one answer here: an effect no gem
-        affix describes at all -- every effect on every other kind of item --
-        one the affixes' own *children* claim for two hosts at once, and one
-        two affixes claim for two different hosts with nothing to choose
-        between them.  A line with no target is true wherever it is socketed,
-        which is what not naming a host says.
+        Both shelves are read: a gem's affixes, filed by host in their names,
+        and the item affixes a *unique* socketable's bonuses come off, whose
+        host is the applicability list.  A gem's answer is the one that stands
+        where the two have one between them.
+
+        ``None`` covers the cases that have one answer here: an effect no
+        socketable's affix describes at all -- every effect on every other kind
+        of item -- one claimed for two hosts at once, and one two affixes claim
+        for two different hosts with nothing to choose between them.  A line
+        with no target is true wherever it is socketed, which is what not
+        naming a host says.
         """
         if not node_name:
             return None

@@ -36,6 +36,8 @@ from tl2stash.dat import (  # noqa: E402
     VAR_NAME,
     VAR_SLOT_BASE,
     VAR_UNIDENTIFIED_NAME,
+    VAR_UNITTYPE,
+    VAR_UNITTYPES,
     DatFile,
     DatNode,
     field_hash,
@@ -62,6 +64,9 @@ def write_dat(dictionary: dict[int, str], nodes: list[dict], *, version: int = 2
 
     ``nodes`` is a list of ``{"id": int, "vars": {id: (type, value)}, "kids":
     [...]}``; a value for a TEXT or TRANSLATE variable is the dictionary index.
+    ``vars`` may also be a *list* of ``(id, (type, value))`` pairs, which is
+    what a DAT list needs: its entries all carry the one field id, and a
+    mapping cannot hold two of those.
     """
     out = bytearray()
     out += struct.pack("<I", version)
@@ -73,8 +78,9 @@ def write_dat(dictionary: dict[int, str], nodes: list[dict], *, version: int = 2
     def emit(node: dict):
         out.extend(struct.pack("<I", node.get("id", 0)))
         variables = node.get("vars", {})
-        out.extend(struct.pack("<I", len(variables)))
-        for var_id, (var_type, value) in variables.items():
+        listed = variables if isinstance(variables, list) else list(variables.items())
+        out.extend(struct.pack("<I", len(listed)))
+        for var_id, (var_type, value) in listed:
             out.extend(struct.pack("<II", var_id, var_type))
             if var_type in (INT, WORD):
                 # Masked because it is the same four bytes either way -- that
@@ -180,6 +186,78 @@ def test_walk_visits_every_node_parents_first(sample):
     assert len(visited) == 2
     assert visited[0] is sample.root
     assert visited[1].text(0x00000005) == "translated"
+
+
+# --------------------------------------------------------------------------
+# A list, which is a node whose variables repeat
+# --------------------------------------------------------------------------
+
+
+def test_a_list_keeps_every_entry_not_only_the_last():
+    """An affix's applicability list is a node with one entry per unit type.
+
+    The bytes are a node's: a count, then that many field-id-and-value pairs,
+    then a child count of zero.  Nothing distinguishes it from a node that
+    happens to state the same field three times, and the game's files carry
+    1,136 of them -- ``UNIQUE_DEFENSE_BONUS`` may be applied to armor, to
+    trinkets and to unique socketables, and a mapping of ids to values keeps
+    only the third of those.  So the entries are kept beside it, in file order.
+    """
+    dictionary = {0: "ARMOR", 1: "TRINKET", 2: "UNIQUE SOCKETABLE"}
+    data = write_dat(
+        dictionary,
+        [
+            {
+                "kids": [
+                    {
+                        "id": VAR_UNITTYPES,
+                        "vars": [
+                            (VAR_UNITTYPE, (TEXT, 0)),
+                            (VAR_UNITTYPE, (TEXT, 1)),
+                            (VAR_UNITTYPE, (TEXT, 2)),
+                        ],
+                    }
+                ]
+            }
+        ],
+    )
+
+    node = DatFile.parse(data).root.children[0]
+
+    assert node.node_id == VAR_UNITTYPES
+    assert node.texts(VAR_UNITTYPE) == ("ARMOR", "TRINKET", "UNIQUE SOCKETABLE")
+    assert node.values(VAR_UNITTYPE) == ("ARMOR", "TRINKET", "UNIQUE SOCKETABLE")
+    # The mapping is still there and still holds the last one -- it is what an
+    # affix file's *name* is read through, and it is not wrong, only partial.
+    assert node.text(VAR_UNITTYPE) == "UNIQUE SOCKETABLE"
+
+
+def test_a_node_that_does_not_repeat_answers_the_same_way():
+    """One entry is a list of one, so every caller has one shape to read.
+
+    ``GEM_TEST_ARMOR``'s children state a host once each, and the four older
+    gems' state theirs under the other spelling; both come back through this.
+    """
+    data = write_dat(
+        {0: "WEAPON"},
+        [
+            {
+                "kids": [
+                    {"vars": {VAR_UNITTYPE: (TEXT, 0)}},
+                    {"vars": [(VAR_UNITTYPES, (TEXT, 0))]},
+                    {"vars": {0x01: (INT, 7)}},
+                ]
+            }
+        ],
+    )
+    first, second, third = DatFile.parse(data).root.children
+
+    assert first.texts(VAR_UNITTYPE) == ("WEAPON",)
+    assert second.texts(VAR_UNITTYPES) == ("WEAPON",)
+    # Nothing stated under it is an empty answer rather than an error, and not
+    # the one value every node would otherwise have.
+    assert third.values(VAR_UNITTYPE) == ()
+    assert third.texts(VAR_UNITTYPE) == ()
 
 
 # --------------------------------------------------------------------------

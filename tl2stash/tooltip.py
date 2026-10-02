@@ -94,6 +94,14 @@ PERMANENT = -1000.0
 #: agree, spelling the host ``TRINKET`` for both.
 _SOCKET_HOSTS = {"WEAPON": "Weapon", "TRINKET": "Armor/Trinket"}
 
+#: The order a socketable's lines are written in, by the game's own word for
+#: the host: what it grants to *every* host first (which names no host, and so
+#: is not in here), then the Armor/Trinket bonus, then the weapon one.  The
+#: reference database's order is ``b, a, w`` and this is that order read the
+#: one way it can be here -- a line true of every host is not a host's line,
+#: so it stands above the two that are.
+_SOCKET_ORDER = {"TRINKET": 1, "WEAPON": 2}
+
 #: Which of an effect's four wordings a set's bonus is written with when it
 #: lasts for no time at all: the timeless positive one, which is the wording an
 #: effect record asks for with a description type of zero.  A set bonus that
@@ -312,9 +320,19 @@ def _effect_lines(
     the question has answered itself.  Only a socketable is written this way:
     the same effect node on a sword is that sword's own damage bonus, which is
     a fact about the sword and not about where it is worn.
+
+    The host's half of it decides the order the lines are written in, which is
+    the reference database's: everything granted to both hosts, then the
+    Armor/Trinket bonus, then the weapon's.  A gem's save records are in no
+    order of their own -- the Flame Ember's weapon half is recorded first --
+    so without this the card would lead with the wrong one of the two.
     """
     lines: list[str] = []
     socketed: list[str] = []
+    # One per line of ``lines``, in the same order: 0 for a line that names no
+    # host, which is every line of everything that is not a socketable.
+    hosts: list[int] = []
+    socketable = appearance is not None and appearance.type_name == "Socketable"
     from_socket = _socketed_indices(item)
     for effect in list(item.effects) + list(item.effects2):
         # The record's index is a position in EFFECTSLIST.DAT, and that is
@@ -328,6 +346,7 @@ def _effect_lines(
             # A record with no name either has nothing to show.
             if effect.name:
                 lines.append(effect.name)
+                hosts.append(0)
             continue
 
         if _INNATE_DEFENSE.match(node.name or ""):
@@ -346,6 +365,7 @@ def _effect_lines(
         if not template:
             if effect.name:
                 lines.append(effect.name)
+                hosts.append(0)
             continue
 
         # A template is a display string and carries the game's colour markup:
@@ -371,16 +391,27 @@ def _effect_lines(
         # Where the bonus goes, when the thing granting it is socketed rather
         # than worn.  An effect no affix claims for one host -- one both hosts
         # get, or one two affixes claim for two different hosts -- has none to
-        # name, and is left as it stands.
-        if appearance is not None and appearance.type_name == "Socketable":
-            host = _SOCKET_HOSTS.get(data.socket_target(node.name) or "")
+        # name, and is left as it stands, which is also what puts its line
+        # above the two that do name one.
+        rank = 0
+        if socketable:
+            target = data.socket_target(node.name)
+            host = _SOCKET_HOSTS.get(target or "")
             if host:
                 line = f"{host}: {line}"
+            rank = _SOCKET_ORDER.get(target or "", 0)
 
         if effect.index in from_socket:
             socketed.append(line)
         else:
             lines.append(line)
+            hosts.append(rank)
+
+    if any(hosts):
+        # A stable sort, and only when a host is named: a socketable's two
+        # halves come out of the save file in the order the game recorded them
+        # and nothing else orders them.  Everything else keeps file order.
+        lines = [line for _, line in sorted(zip(hosts, lines), key=lambda pair: pair[0])]
     return lines, socketed
 
 

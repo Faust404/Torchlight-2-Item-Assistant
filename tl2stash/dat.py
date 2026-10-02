@@ -21,6 +21,15 @@ the dictionary is read first and the strings are resolved as the tree is
 built -- nothing downstream has to carry the dictionary around to make sense
 of a value.
 
+A *list* is written as a node is, and there is nothing in the bytes to tell
+one from the other: a list field's entries are encoded exactly as a node's
+variables are, one entry per line, except that a list's entries all carry the
+same field id where a node's carry their own.  So a list arrives here as a
+node whose variables repeat -- an affix's applicability list is a node with
+three ``UNITTYPES`` entries and an item's ``AFFIXES`` is a node with one
+``AFFIX`` entry per affix.  The mapping can hold only the last of a repeated
+id, so the repeats are kept alongside it; see :attr:`DatNode.entries`.
+
 Variable ids are opaque 32-bit constants -- they are *not* the names written
 out.  The same id means the same thing in every file: ``0x00660DE5`` holds
 ``'Djinn Fire Sword'`` on an item, ``'MELEEDAMAGEBONUS'`` on an effect and
@@ -338,19 +347,27 @@ class DatNode:
     is how they are used: a caller knows the variable it wants and asks for
     it.  Keeping the type alongside would only invite callers to branch on it
     when they already know what they are reading.
+
+    The mapping holds one value per id, which is what a *node* has.  A list is
+    the exception, and a list is written as a node: see :attr:`entries`.
     """
 
-    __slots__ = ("node_id", "variables", "children")
+    __slots__ = ("node_id", "variables", "children", "entries")
 
     def __init__(
         self,
         node_id: int,
         variables: dict[int, int | float | str],
         children: list["DatNode"],
+        entries: list[tuple[int, int | float | str]] | None = None,
     ) -> None:
         self.node_id = node_id
         self.variables = variables
         self.children = children
+        # Only when a name repeats, which is only ever a list: everywhere else
+        # the mapping already holds every entry, in file order, and a copy of
+        # it would double the memory of the twelve thousand files kept here.
+        self.entries = tuple(entries) if entries is not None else None
 
     def __repr__(self) -> str:
         name = self.variables.get(VAR_NAME)
@@ -378,6 +395,28 @@ class DatNode:
     def text(self, var_id: int) -> str | None:
         value = self.variables.get(var_id)
         return value if isinstance(value, str) else None
+
+    def values(self, var_id: int) -> tuple[int | float | str, ...]:
+        """Everything this node states under ``var_id``, in file order.
+
+        Usually one thing, and then this is :meth:`variable` in a tuple.  It is
+        a tuple for the case a node has more than one, which happens on a
+        *list*: a DAT list field is written exactly as a node is, so an affix's
+        applicability list arrives here as a node whose entries are each named
+        ``UNITTYPES`` -- and the mapping in :attr:`variables` can hold only the
+        last of them.  Reading that mapping is how a three-entry list silently
+        becomes a one-entry list.
+
+        Empty for a node that states nothing under ``var_id``.
+        """
+        if self.entries is not None:
+            return tuple(value for key, value in self.entries if key == var_id)
+        value = self.variables.get(var_id)
+        return () if value is None else (value,)
+
+    def texts(self, var_id: int) -> tuple[str, ...]:
+        """The same, for the variables that hold text."""
+        return tuple(value for value in self.values(var_id) if isinstance(value, str))
 
     # -- the tree ---------------------------------------------------------
 
@@ -430,16 +469,21 @@ def _read_node(
     node_id = reader.u32()
 
     variables: dict[int, int | float | str] = {}
+    entries: list[tuple[int, int | float | str]] = []
+    repeated = False
     for _ in range(reader.count()):
         var_id_ = reader.u32()
         var_type = reader.u32()
-        variables[var_id_] = _read_value(reader, var_type, dictionary)
+        value = _read_value(reader, var_type, dictionary)
+        repeated = repeated or var_id_ in variables
+        variables[var_id_] = value
+        entries.append((var_id_, value))
 
     children = [
         _read_node(reader, dictionary, depth + 1)
         for _ in range(reader.count())
     ]
-    return DatNode(node_id, variables, children)
+    return DatNode(node_id, variables, children, entries if repeated else None)
 
 
 def _read_value(

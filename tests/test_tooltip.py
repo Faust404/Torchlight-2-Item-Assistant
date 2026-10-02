@@ -575,6 +575,27 @@ class _SocketGame:
         return None
 
 
+class _TwoHostGame(_SocketGame):
+    """The same game with a bonus on each host, and a third on neither.
+
+    What a real socketable is: one affix per host, so two lines, plus whatever
+    it grants to both.  Its records reach the card in the order the game wrote
+    them and in no other order -- the Flame Ember's weapon half is first -- so
+    which line leads is the card's to decide.
+    """
+
+    _NAMES = {26: "MAX HP", 38: "TRINKET_ICEDEFENSE", 40: "WEAPON_DAMAGEBONUS"}
+
+    def effect_template(self, node, description_type):
+        return {
+            "MAX HP": "+[VALUE] Health",
+            "TRINKET_ICEDEFENSE": "+[VALUE] Ice Armor",
+            "WEAPON_DAMAGEBONUS": "+[VALUE] Fire Damage",
+        }[node.name]
+
+    _HOSTS = {"TRINKET_ICEDEFENSE": "TRINKET", "WEAPON_DAMAGEBONUS": "WEAPON"}
+
+
 class _Kind:
     """What an item *is*, as the host prefix reads it.
 
@@ -603,6 +624,32 @@ def test_a_socketable_s_line_names_the_host_it_is_granted_to():
 
     own, socketed = _effect_lines(gem, _SocketGame(), _Kind("Socketable"))
     assert own == ["Armor/Trinket: +120 Ice Armor"]
+    assert socketed == []
+
+
+def test_a_socketable_leads_with_the_half_that_is_not_the_weapon_s():
+    """The reference database's order: neither host, then Armor/Trinket, then
+    Weapon.
+
+    A socketable's two halves are recorded in whichever order the game wrote
+    them -- the Flame Ember's weapon half comes first in its own record -- so
+    the card is what puts them in the order a player reads them in.  The line
+    granted to *both* hosts is not a host's line and so leads.
+    """
+    gem = item("Ice Ember", level=0)
+    gem.effects = [
+        effect("", value=26.0, index=40),  # the weapon half, recorded first
+        effect("", value=120.0, index=_SocketGame.SOCKET),
+        effect("", value=50.0, index=_SocketGame.OWN),  # granted to both
+    ]
+
+    own, socketed = _effect_lines(gem, _TwoHostGame(), _Kind("Socketable"))
+
+    assert own == [
+        "+50 Health",
+        "Armor/Trinket: +120 Ice Armor",
+        "Weapon: +26 Fire Damage",
+    ]
     assert socketed == []
 
 
@@ -760,6 +807,10 @@ def test_a_real_socketable_s_two_halves_are_named_on_the_card(game):
     game's files that cannot answer which half is which: the effect nodes
     ``DAMAGE BONUS`` and ``FIRE DEFENSE`` are the flame ember's weapon and
     armor affixes, and neither the ember nor either affix file says so.
+
+    The ember's own records are in the other order -- the weapon half is the
+    first of the two in its item file -- so this is also what pins the order
+    the two are written in.
     """
     ember = item("Flame Ember", level=0)
     ember.effects = [
@@ -772,7 +823,7 @@ def test_a_real_socketable_s_two_halves_are_named_on_the_card(game):
 
     own, socketed = _effect_lines(ember, game, _Kind("Socketable"))
 
-    assert own == ["Weapon: +29 Fire Damage", "Armor/Trinket: +58 Fire Armor"]
+    assert own == ["Armor/Trinket: +58 Fire Armor", "Weapon: +29 Fire Damage"]
     assert socketed == []
 
 

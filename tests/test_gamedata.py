@@ -420,6 +420,43 @@ def install(tmp_path: Path) -> Path:
         (VAR_UNITTYPE, "WEAPON"),
     )
 
+    # Item affixes that state the unit types they may be applied to, which is
+    # where a *unique* socketable's hosts are read from -- its affixes live in
+    # this directory, not under GEMS, and their names say nothing about a host.
+    # Each is a file of its own, as in the archive: the root carries the name
+    # and the children carry the list and then the effect it grants.
+    def hosted_file(stem: str, grants: str, *words: str) -> None:
+        files[f"MEDIA/AFFIXES/ITEMS/{stem}.DAT"] = write_dat(
+            strings,
+            [
+                {
+                    "vars": {VAR_NAME: (TEXT, string(stem))},
+                    "kids": [
+                        # The list, as the archive writes it: a child whose
+                        # *node id* is the field's own hash -- a DAT list is a
+                        # node whose variables repeat, and this is that node.
+                        {"id": VAR_UNITTYPES, "vars": {VAR_UNITTYPE: (TEXT, string(w))}}
+                        for w in words
+                    ]
+                    + [{"vars": {VAR_AFFIX_EFFECT: (TEXT, string(grants))}}],
+                }
+            ],
+        )
+
+    # A weapon one, with the unit type the archive puts beside the host.
+    hosted_file("UNIQUE_TEST_WEAPON", "SET PROC", "UNIQUE SOCKETABLE", "WEAPON")
+    # An armor one: the two words the game uses for the one host.
+    hosted_file("UNIQUE_TEST_ARMOR", "SET BURN", "ARMOR", "TRINKET")
+    # A unit type and nothing else, which is not a host to name.
+    hosted_file("UNIQUE_TEST_STUD", "SET DAMAGE BONUS", "STUD")
+    # Two files claiming one effect for two hosts, as the archive's own do.
+    hosted_file("UNIQUE_TEST_CLASH_ARMOR", "MELEEDAMAGEBONUS", "TRINKET")
+    hosted_file("UNIQUE_TEST_CLASH_WEAPON", "MELEEDAMAGEBONUS", "WEAPON")
+    # A single host for an effect a gem already answers for, and one for an
+    # effect two gems claim between them.
+    hosted_file("UNIQUE_TEST_RUBY", "DAMAGE BONUS", "TRINKET")
+    hosted_file("UNIQUE_TEST_STEAL", "PERCENT LIFE STOLEN", "WEAPON")
+
     # Sets.  The first is shaped like the ones that made the rules: a rung per
     # piece count, one count asked for twice, and a level per rung.  The
     # second exists for the one case the first cannot show -- a rung whose
@@ -535,9 +572,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Thirty-one parse; the thirty-second is a DAT that will not, and the
-    thirty-third is not a DAT at all."""
-    assert game.files_read == 31
+    """Thirty-eight parse; the thirty-ninth is a DAT that will not, and the
+    fortieth is not a DAT at all."""
+    assert game.files_read == 38
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -786,6 +823,73 @@ def test_an_effect_two_affixes_claim_equally_has_no_host(game):
 def test_a_host_is_found_whatever_case_the_record_names_it_in(game):
     """The save file and the archive do not agree on case."""
     assert game.socket_target("fire defense") == "TRINKET"
+
+
+# --------------------------------------------------------------------------
+# Which host a *unique* socketable's bonus is granted to
+# --------------------------------------------------------------------------
+#
+# A gem's affixes are filed by host in their names.  A unique socketable's are
+# not: they live under ``MEDIA/AFFIXES/ITEMS`` among the ordinary ones and wear
+# names like ``UNIQUE_DEGRADE_ARMOR2``, which says ``_ARMOR`` and is a weapon
+# affix.  What they do carry is the list of unit types they may be applied to,
+# which is where the reference database reads the host from.
+
+
+def test_an_item_affix_s_host_is_read_off_its_applicability_list(game):
+    """``UNIQUE_TEST_WEAPON`` states ``WEAPON`` beside the unit type it is for.
+
+    Both of the words in the archive's lists are here: a unit type, which is
+    not a place, and the host, which is.
+    """
+    assert game.socket_target("SET PROC") == "WEAPON"
+
+
+def test_the_two_words_for_the_one_host_are_read_as_one(game):
+    """``ARMOR`` and ``TRINKET`` are one host, as the gems' are.
+
+    An affix stating both -- which is how the archive writes "a ring or a
+    breastplate" -- names the one host the card does, so the effect is a
+    trinket bonus rather than an ambiguity.
+    """
+    assert game.socket_target("SET BURN") == "TRINKET"
+
+
+def test_a_unit_type_in_the_list_is_not_a_host(game):
+    """``STUD`` says where the affix may go, not where its bonus is granted.
+
+    Most of what those lists hold is unit types -- ``COLLAR``, ``WAND``,
+    ``STUD`` and ``UNIQUE SOCKETABLE`` are the archive's commonest -- so a
+    reading that took every entry for a host would name hosts that do not
+    exist.
+    """
+    assert game.socket_target("SET DAMAGE BONUS") is None
+
+
+def test_two_item_affixes_claiming_one_effect_leave_it_without_a_host(game):
+    """The same rule the gems are held to: two claims are not one answer."""
+    assert game.socket_target("MELEEDAMAGEBONUS") is None
+
+
+def test_a_gem_s_answer_outranks_an_item_affix_s(game):
+    """``GEM_TEST`` says its damage bonus is a weapon one; this one says not.
+
+    The gem is what the card is showing two halves of, so an item affix is
+    heard only where no gem affix speaks -- and 39 of the effects the archive's
+    item affixes name are ones no gem affix states at all.
+    """
+    assert game.socket_target("DAMAGE BONUS") == "WEAPON"
+
+
+def test_an_item_affix_does_not_break_a_tie_the_gems_left(game):
+    """A tie is not a gap: nothing is known about the host, so none is named.
+
+    ``PERCENT LIFE STOLEN`` is granted to both hosts by the gems that carry it,
+    and one item affix claiming it for a weapon does not make it a weapon
+    bonus -- the effect is granted wherever either thing says, and the line
+    would be wrong for the other.
+    """
+    assert game.socket_target("PERCENT LIFE STOLEN") is None
 
 
 # --------------------------------------------------------------------------
@@ -1468,6 +1572,75 @@ def test_an_effect_both_hosts_get_is_not_given_one_of_them(real_game):
     left without a host, every other one being claimed by a single pool.
     """
     assert real_game.socket_target("PERCENT LIFE STOLEN") is None
+
+
+#: The two halves of a unique socketable, in the archive's own words: the
+#: effects ``Vyrax's Heartfire``'s two affixes grant.  A gem's halves are filed
+#: by host in their file names and a unique socketable's are not -- its affixes
+#: are ``UNIQUE_PROCKILL_...`` and ``UNIQUE_...`` files under
+#: ``MEDIA/AFFIXES/ITEMS`` -- so before the applicability list was read these
+#: four lines of the user's own two socketables came out with no host at all.
+_UNIQUE_SOCKETABLE_HALVES = {
+    "TRINKET": "CAST SKILL ON STRUCK",
+    "WEAPON": "CAST SKILL ON KILL AT TARGET",
+}
+
+
+@needs_game
+def test_a_unique_socketable_s_two_halves_are_named_like_a_gem_s(real_game):
+    """``Vyrax's Heartfire``: a chance to cast a spell when struck, and on kill.
+
+    One of the two the user's own stash holds, and the case the request was
+    made about: the embers were tagged and these were not.
+    """
+    for host, effect in _UNIQUE_SOCKETABLE_HALVES.items():
+        assert real_game.socket_target(effect) == host, effect
+
+
+@needs_game
+def test_every_socketable_in_the_archive_has_both_of_its_halves_named(real_game):
+    """Every socketable the game ships, affix by affix, out of its own files.
+
+    The reading is the reference database's: an affix's applicability list says
+    which hosts it is for, and every effect it grants is granted to them.  Six
+    effects are left unnamed, and they are the ones the archive grants to both
+    hosts *under one name* -- ``PERCENT DAMAGE BONUS`` is a weapon affix's and
+    an armor affix's alike -- so no one word is true of it; they are pinned
+    here rather than tolerated, because a seventh would mean a socketable whose
+    card is missing a word it should have.
+
+    The count is a floor and not the point: it is 105 unique socketables and 13
+    plain ones out of the archive's 118, and each of them is a card.
+    """
+    #: The effects two affixes claim for one host each, which is what the last
+    #: of the reading can do: the save file names the *effect*, so the two
+    #: halves of one of these are the same word on the card.
+    both_hosts = {
+        "PERCENT DAMAGE BONUS",
+        "PERCENT CHARGING BONUS",
+        "FUMBLE CHANCE REDUCTION",
+        "PERCENT MAGICAL DROP",
+        "XP GAIN BONUS",
+        "PERCENT GOLD DROP",
+    }
+
+    walked = 0
+    unnamed: set[str] = set()
+    for filed in real_game._item_files.values():
+        if "SOCKETABLE" not in (filed.root.text(VAR_UNITTYPE) or "").upper():
+            continue
+        walked += 1
+        for child in filed.root.children:
+            for affix in child.texts(VAR_AFFIX):
+                root = real_game.by_name(affix)
+                assert root is not None, f"the archive has no affix {affix}"
+                for granted in root.children:
+                    effect = granted.text(VAR_AFFIX_EFFECT)
+                    if effect and real_game.socket_target(effect) is None:
+                        unnamed.add(effect.upper())
+
+    assert walked > 100, "the socketables stopped being read"
+    assert unnamed == both_hosts
 
 
 @needs_game
