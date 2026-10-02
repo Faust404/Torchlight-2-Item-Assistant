@@ -185,6 +185,18 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.refresh_button)
 
         bar.addStretch(1)
+        return bar
+
+    def _build_absorb_row(self) -> QHBoxLayout:
+        """What decides which items leave the save file, over the list they leave.
+
+        These two used to sit in the bar at the top, beside the box naming the
+        save file -- which put them two panes away from the thing they act on.
+        ``Absorb everything`` empties the game's stash into the tool's, and
+        ``Automatic`` is whether that happens on its own every time the game
+        saves; both are about this one list, so both are over it.
+        """
+        row = QHBoxLayout()
 
         self.absorb_button = QPushButton("Absorb everything")
         self.absorb_button.setToolTip(
@@ -192,7 +204,7 @@ class MainWindow(QMainWindow):
             "The stash is the inbox: whatever is in it goes."
         )
         self.absorb_button.clicked.connect(self._absorb_all)
-        bar.addWidget(self.absorb_button)
+        row.addWidget(self.absorb_button)
 
         self.auto_absorb = QCheckBox("Automatic")
         self.auto_absorb.setChecked(True)
@@ -200,9 +212,10 @@ class MainWindow(QMainWindow):
             "Absorb on every save, and keep absorbed items out.\n"
             "This is what makes an item vanish when the game saves."
         )
-        bar.addWidget(self.auto_absorb)
+        row.addWidget(self.auto_absorb)
+        row.addStretch(1)
 
-        return bar
+        return row
 
     def _build_filters(self) -> FilterBar:
         """The controls that narrow the collection, over the cards they narrow."""
@@ -225,6 +238,7 @@ class MainWindow(QMainWindow):
 
         self.stash_group = QGroupBox("In the game")
         left = QVBoxLayout(self.stash_group)
+        left.addLayout(self._build_absorb_row())
         self.stash_view, self.stash_model = self._table(STASH_COLUMNS)
         left.addWidget(self.stash_view)
         splitter.addWidget(self.stash_group)

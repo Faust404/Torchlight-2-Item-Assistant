@@ -219,6 +219,22 @@ def test_the_filters_stand_over_the_pane_they_narrow(window):
     assert window.centralWidget().layout().indexOf(window.filters) == -1
 
 
+def test_the_absorb_controls_sit_over_the_list_they_empty(window):
+    """The button and the box move to the thing they act on.
+
+    They used to sit in the toolbar at the top, beside the box naming the save
+    file -- two panes away from the stash they empty.  Absorbing is a thing
+    done *to* the game's list, so both controls are over it, and neither is
+    left up in the toolbar.
+    """
+    assert window.absorb_button.parent() is window.stash_group
+    assert window.auto_absorb.parent() is window.stash_group
+
+    column = window.stash_group.layout()
+    assert column.indexOf(window.stash_view) > 0, "the controls are above the list"
+    assert window.centralWidget().layout().indexOf(window.absorb_button) == -1
+
+
 def test_the_collection_lists_only_what_the_tool_holds(window, monkeypatch):
     """The contract for the right-hand panel.
 
