@@ -34,7 +34,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QPalette  # noqa: E402
+from PySide6.QtGui import QFontMetrics, QKeyEvent, QMouseEvent, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QCheckBox,
@@ -700,22 +700,51 @@ def test_each_pair_of_requirements_is_named_by_the_word_beside_it(qapp):
         assert name.x() < pair.x(), f"{word} does not stand at the left of its boxes"
 
 
-def test_the_class_boxes_stand_at_the_edge_of_their_section(qapp):
+def test_the_class_boxes_line_up_with_the_names_above_them(qapp):
     """The user's *"the class section also doesn't need the 'For' text so all
-    the checkboxes can be moved a bit to the left"*.
+    the checkboxes can be moved a bit to the left"*, and then their second look
+    at the result: *"the class checkboxes are way too much to the left, just
+    make sure they align with the other sections like maybe the strength text
+    of the previous stat requirements section"*.
 
-    ``For`` was a word in the label column whose only job was to put the boxes
-    where the other sections' controls start.  With it gone they start at the
-    section's own edge, which is the reference's own reading of the same four
-    boxes -- and the note under them follows, since a hint is read against the
-    control it is about.
+    With ``For`` gone the boxes were flush with the section's own edge, which
+    is too far left to read as part of the form.  They are set back in to where
+    a *name* in the sections above begins -- measured here off the live
+    ``Strength`` label's own face rather than off the indent the panel chose,
+    so this reads as the alignment it is about and not as a restatement of the
+    arithmetic that produced it.
     """
     _, overlay = opened()
+    class_section = sections(overlay)["Class"]
+    requirements = sections(overlay)["Stat Requirements"]
+
+    strength = next(
+        label
+        for label in requirements.findChildren(QLabel)
+        if label.text() == "Strength"
+    )
+    # Through globals, because ``mapTo`` is defined for an ancestor and the
+    # requirements section is not one of the class section's.
+    name = class_section.mapFromGlobal(strength.mapToGlobal(QPoint(0, 0)))
+    names_begin = name.x() + strength.width() - QFontMetrics(
+        strength.font()
+    ).horizontalAdvance("Strength")
+
+    assert "For" not in [label.text() for label in class_section.findChildren(QLabel)]
+    first = next(iter(overlay.class_boxes.values())).mapTo(class_section, QPoint(0, 0))
+    assert first.x() == names_begin, "the boxes do not start where the names above start"
+
+
+def test_the_class_note_is_read_against_the_boxes_it_explains(qapp):
+    """The note is drawn on the one machine that needs it -- the one without a
+    reference database, where the boxes are dark and nothing else says why --
+    and it follows them in to the same line, since a hint is read against the
+    control it is about."""
+    _, overlay = opened(classes=())
     section = sections(overlay)["Class"]
 
-    assert "For" not in [label.text() for label in section.findChildren(QLabel)]
+    assert overlay.class_note.isVisible(), "nothing says why the boxes are dark"
     first = next(iter(overlay.class_boxes.values())).mapTo(section, QPoint(0, 0))
-    assert first.x() == 0, "the boxes are still set in by a name column"
     assert overlay.class_note.mapTo(section, QPoint(0, 0)).x() == first.x(), (
         "the note is not read against the boxes it explains"
     )

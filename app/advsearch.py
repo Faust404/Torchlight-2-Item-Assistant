@@ -35,8 +35,9 @@ import re
 from collections.abc import Sequence
 
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QCompleter,
     QFormLayout,
@@ -106,6 +107,12 @@ SUBGROUP_INDENT = 12
 #: four more lines on a screen that is already a form.
 PAD = 16
 
+#: The size a row's name is written at, and its note under it.  One spelling,
+#: because the Class section's indent is measured through it -- see
+#: :func:`_class_indent` -- and a size written twice is a measurement taken off
+#: the wrong one.
+NAME_PX = 11
+
 #: The column a row's label is written in.  Fixed, so that the sections'
 #: controls line up down the panel even though the longest word in them --
 #: "Vitality" -- is nothing like the longest in the Type grid.
@@ -170,7 +177,7 @@ def vocabulary(cards) -> list[str]:
 def _row_label(text: str) -> QLabel:
     """The name a row's controls are read against, right up against them."""
     label = QLabel(text)
-    label.setStyleSheet(f"color: {LABEL}; font-size: 11px;")
+    label.setStyleSheet(f"color: {LABEL}; font-size: {NAME_PX}px;")
     label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     label.setMinimumWidth(LABEL_PX)
     return label
@@ -185,9 +192,36 @@ def _note(text: str) -> QLabel:
     not a thing a row of boxes can say on its own.
     """
     label = QLabel(text)
-    label.setStyleSheet(f"color: {DIM}; font-size: 11px;")
+    label.setStyleSheet(f"color: {DIM}; font-size: {NAME_PX}px;")
     label.setWordWrap(True)
     return label
+
+
+def _class_indent() -> int:
+    """How far the Class section's row is set in from the section's own edge.
+
+    The row has nothing naming it.  Flush with the caption above it the boxes
+    read as a row that had fallen out of the form -- the user's own reading of
+    them there, and their own measure for where the row belongs: *"align with
+    the other sections like maybe the strength text of the previous stat
+    requirements section"*.  So the row begins where a name in the label column
+    begins, and ``Strength`` is the anchor because it is the longest of the
+    four requirement names written directly above this row.
+
+    Measured in the panel's own face rather than pinned as a number, so that
+    the row lines up with the names on any face the application is drawn in: a
+    name is right-aligned in :data:`LABEL_PX`, so it begins that column's width
+    back from its end.  The face is the one :func:`_row_label` writes in -- the
+    application's own family, taken from the application because that is where
+    the labels inherit it from, at :data:`NAME_PX`.
+
+    A column with no room left in it (a name as wide as :data:`LABEL_PX`) gives
+    up and starts at the edge: there is no name to line up under, and a
+    negative inset is a row drawn out of its own section.
+    """
+    face = QFont(QApplication.font())
+    face.setPixelSize(NAME_PX)
+    return max(0, LABEL_PX - QFontMetrics(face).horizontalAdvance("Strength"))
 
 
 def _spin(value: int, top: int, tip: str, step: int = 1) -> SpinBox:
@@ -272,6 +306,21 @@ def _chips(widgets: Sequence[QWidget]) -> QWidget:
     return row
 
 
+def _set_in(widget: QWidget, left: int) -> QWidget:
+    """A widget set in from the left edge it would otherwise be drawn at.
+
+    A holder and not a margin on the widget itself, so that it works the same
+    for a row of boxes and for a sentence that wraps: both are laid out at the
+    width the holder has left for them, and neither has to know it was moved.
+    """
+    holder = QWidget()
+    line = QHBoxLayout(holder)
+    line.setContentsMargins(left, 0, 0, 0)
+    line.setSpacing(0)
+    line.addWidget(widget)
+    return holder
+
+
 def _empty(layout) -> None:
     """Take every widget out of a layout, and take the widgets away with it.
 
@@ -338,7 +387,7 @@ class Section(QWidget):
         """A hint under the row above, against the field and not the label."""
         self.rows.addRow(_row_label(""), _note(text))
 
-    def wide(self, editor: QWidget) -> None:
+    def wide(self, editor: QWidget, left: int = 0) -> None:
         """A row with no name of its own, running the width of the section.
 
         Two of the sections are not a name and a control: the stat requirements
@@ -347,7 +396,15 @@ class Section(QWidget):
         flush with the section's own edge.  A row of the form would have set
         them a label's width in from that edge, which is what ``For`` was doing
         and what the user asked to have taken away.
+
+        ``left`` sets such a row back in from that edge by hand, for the one
+        row that has no name and still does not read as part of the caption
+        above it -- see :func:`_class_indent`.  It is a margin on a holder
+        rather than a label of its own, so that the row stays nameless: nothing
+        is written where a name would be.
         """
+        if left:
+            editor = _set_in(editor, left)
         self.rows.addRow(editor)
 
 
@@ -1171,15 +1228,18 @@ class AdvancedSearchOverlay(QWidget):
         return section
 
     def _classes(self) -> Section:
-        """The class boxes at the section's own edge, and the note under them.
+        """The class boxes lined up with the sections above, and the note under.
 
         Nothing names this row.  ``For`` was a word standing in the label
         column so that the boxes would start where every other row's controls
-        start, and the user asked for the boxes themselves instead -- which is
-        the reference's own reading of the same four boxes: they are the answer
-        to the section's caption and nothing more, so the caption's own edge is
-        where they belong.  The note follows them, since a hint is read against
-        the control it is about.
+        start, and the user asked for the boxes themselves instead -- but with
+        the word gone the boxes were flush with the caption's own edge, which
+        reads as a row that has fallen out of the form rather than as the
+        answer to it.  So they are set back in to where the sections above
+        begin their rows, the x a name in the label column starts at: the
+        reference's own reading of the same four boxes, at the user's own
+        measure -- see :func:`_class_indent`.  The note follows them, since a
+        hint is read against the control it is about.
         """
         section = Section("Class")
         self.class_boxes: dict[str, QCheckBox] = {}
@@ -1187,9 +1247,10 @@ class AdvancedSearchOverlay(QWidget):
             box = QCheckBox(word)
             box.setToolTip(f"Show the items only an {word} may use.")
             self.class_boxes[word] = box
-        section.wide(_chips(list(self.class_boxes.values())))
+        left = _class_indent()
+        section.wide(_chips(list(self.class_boxes.values())), left=left)
         self.class_note = _note(CLASSES_HINT)
-        section.wide(self.class_note)
+        section.wide(self.class_note, left=left)
         return section
 
     def _elements(self, title: str) -> tuple[Section, dict]:
