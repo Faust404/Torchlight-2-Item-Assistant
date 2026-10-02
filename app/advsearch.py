@@ -338,6 +338,18 @@ class Section(QWidget):
         """A hint under the row above, against the field and not the label."""
         self.rows.addRow(_row_label(""), _note(text))
 
+    def wide(self, editor: QWidget) -> None:
+        """A row with no name of its own, running the width of the section.
+
+        Two of the sections are not a name and a control: the stat requirements
+        are read as two pairs, each pair naming itself, and the class boxes are
+        a row of boxes with nothing to name them -- the reference draws both
+        flush with the section's own edge.  A row of the form would have set
+        them a label's width in from that edge, which is what ``For`` was doing
+        and what the user asked to have taken away.
+        """
+        self.rows.addRow(editor)
+
 
 class Body(QScrollArea):
     """The column of sections, as wide as the form that stands in it.
@@ -1104,20 +1116,38 @@ class AdvancedSearchOverlay(QWidget):
         return section
 
     def _requirements(self) -> Section:
-        """The four attribute rows, and nothing under them.
+        """The four attributes, two of them to a line, and nothing under them.
+
+        Two to a line is the reference's own reading of these four: they are
+        four short rows -- a name and two small numbers -- and a row each makes
+        the section twice as tall as it needs to be, on a panel that is already
+        the longest thing here.  So they stand in a two-column grid, each pair
+        naming itself in the label ink the rest of the form's rows name
+        themselves in, which is what makes the pairing readable: the second
+        column's pair is *Dexterity's* because ``Dexterity`` stands beside it,
+        not because of where it is in a line of four.
 
         The section used to carry a line saying that an item is worn either by
         the player level or by these attributes, so these rows narrow the stat
         half of that.  The user asked for the panel's sections to be rows and
         nothing else, so the sentence is on the low box of each row instead --
-        which is where the rest of that row's reading already is, and where a
-        reader who wonders what the number means will hover anyway.  Worth
-        writing down because the sentence is not lost and a later reader
-        should not put it back on the face of the panel.
+        which is where the rest of that reading already is, and where a reader
+        who wonders what the number means will hover anyway.  Worth writing
+        down because the sentence is not lost and a later reader should not put
+        it back on the face of the panel.
         """
         section = Section("Stat Requirements")
         self.req_spins: dict[str, tuple[SpinBox, SpinBox]] = {}
-        for word in REQ_WORDS:
+
+        cells = QWidget()
+        grid = QGridLayout(cells)
+        grid.setContentsMargins(0, 0, 0, 0)
+        # The form's own gaps, so that a pair reads the way every other row
+        # here does, and the two cells stand the same distance apart as a label
+        # does from its own controls.
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(7)
+        for index, word in enumerate(REQ_WORDS):
             low = _spin(
                 0,
                 REQ_MAX,
@@ -1129,19 +1159,37 @@ class AdvancedSearchOverlay(QWidget):
             )
             high = _spin(REQ_MAX, REQ_MAX, f"The {word.lower()} an item asks for, to.")
             self.req_spins[word] = (low, high)
-            section.row(word, _pair(low, high))
+            line, column = divmod(index, 2)
+            grid.addWidget(_row_label(word), line, column * 2)
+            grid.addWidget(_pair(low, high), line, column * 2 + 1)
+        # The two pairs split what is left of the line and the names stay at
+        # their own width, which is what keeps the second cell's name against
+        # the first cell's controls rather than halfway across the section.
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        section.wide(cells)
         return section
 
     def _classes(self) -> Section:
+        """The class boxes at the section's own edge, and the note under them.
+
+        Nothing names this row.  ``For`` was a word standing in the label
+        column so that the boxes would start where every other row's controls
+        start, and the user asked for the boxes themselves instead -- which is
+        the reference's own reading of the same four boxes: they are the answer
+        to the section's caption and nothing more, so the caption's own edge is
+        where they belong.  The note follows them, since a hint is read against
+        the control it is about.
+        """
         section = Section("Class")
         self.class_boxes: dict[str, QCheckBox] = {}
         for word in CLASSES:
             box = QCheckBox(word)
             box.setToolTip(f"Show the items only an {word} may use.")
             self.class_boxes[word] = box
-        section.row("For", _chips(list(self.class_boxes.values())))
+        section.wide(_chips(list(self.class_boxes.values())))
         self.class_note = _note(CLASSES_HINT)
-        section.row("", self.class_note)
+        section.wide(self.class_note)
         return section
 
     def _elements(self, title: str) -> tuple[Section, dict]:

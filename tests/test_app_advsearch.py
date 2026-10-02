@@ -33,7 +33,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtCore import QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
@@ -654,6 +654,70 @@ def test_what_the_removed_notes_said_is_on_the_controls_they_were_about(qapp):
     assert "first one" in row.low.toolTip(), "where the number is read from"
     assert "your collection actually shows" in row.text.toolTip(), (
         "where the words come from"
+    )
+
+
+def test_the_four_stat_requirements_stand_two_to_a_line(qapp):
+    """The user's *"stat requirements can have only 2 rows like tl2db"*.
+
+    The reference reads the four caps as a two-column grid of the same four
+    rows, and the pairs come out in the game's own order rather than in the
+    order the words happen to be long or short in.
+
+    Read off the geometry, because *two rows* is a statement about where the
+    boxes are drawn: a section holding four pairs in two lines and a section
+    holding them in four would be the same list of widgets.
+    """
+    _, overlay = opened()
+    section = sections(overlay)["Stat Requirements"]
+
+    lines: dict[int, list[str]] = {}
+    for word in REQ_WORDS:
+        where = overlay.req_spins[word][0].mapTo(section, QPoint(0, 0))
+        lines.setdefault(where.y(), []).append(word)
+
+    assert [
+        sorted(words, key=list(REQ_WORDS).index) for _, words in sorted(lines.items())
+    ] == [["Strength", "Dexterity"], ["Focus", "Vitality"]], (
+        "the four requirements are not two lines of two"
+    )
+
+
+def test_each_pair_of_requirements_is_named_by_the_word_beside_it(qapp):
+    """What makes the grid above readable: a pair is *Dexterity's* because
+    ``Dexterity`` stands at its left, in the ink every other row's name is
+    written in -- not because of where it falls in a line of four."""
+    _, overlay = opened()
+    section = sections(overlay)["Stat Requirements"]
+
+    for word in REQ_WORDS:
+        label = next(
+            label for label in section.findChildren(QLabel) if label.text() == word
+        )
+        name = label.mapTo(section, QPoint(0, 0))
+        pair = overlay.req_spins[word][0].mapTo(section, QPoint(0, 0))
+        assert name.y() == pair.y(), f"{word} is not on the line of its own boxes"
+        assert name.x() < pair.x(), f"{word} does not stand at the left of its boxes"
+
+
+def test_the_class_boxes_stand_at_the_edge_of_their_section(qapp):
+    """The user's *"the class section also doesn't need the 'For' text so all
+    the checkboxes can be moved a bit to the left"*.
+
+    ``For`` was a word in the label column whose only job was to put the boxes
+    where the other sections' controls start.  With it gone they start at the
+    section's own edge, which is the reference's own reading of the same four
+    boxes -- and the note under them follows, since a hint is read against the
+    control it is about.
+    """
+    _, overlay = opened()
+    section = sections(overlay)["Class"]
+
+    assert "For" not in [label.text() for label in section.findChildren(QLabel)]
+    first = next(iter(overlay.class_boxes.values())).mapTo(section, QPoint(0, 0))
+    assert first.x() == 0, "the boxes are still set in by a name column"
+    assert overlay.class_note.mapTo(section, QPoint(0, 0)).x() == first.x(), (
+        "the note is not read against the boxes it explains"
     )
 
 
