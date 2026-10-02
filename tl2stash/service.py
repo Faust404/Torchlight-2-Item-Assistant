@@ -24,6 +24,7 @@ never has to be faster than the game, only more patient than it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -112,10 +113,22 @@ class ItemService:
     Use as a context manager, or call :meth:`close`.
     """
 
-    def __init__(self, db_path: str | Path, location: SaveLocation) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        location: SaveLocation,
+        *,
+        slot_base: Callable[[int], int | None] | None = None,
+    ) -> None:
         self.registry = Registry(db_path)
         self.location = location
         self.source = Path(location.path)
+        #: Where a container's cells begin, by the game's own reckoning, or
+        #: ``None`` on a machine without the game -- see :meth:`first_slot`.
+        #: Taken as a callable rather than as the data itself so that reading
+        #: the game's files, which takes a second, stays where it is: behind
+        #: the window's first need for it.
+        self._slot_base = slot_base
         self._stash: Stash | None = None
 
     @property
@@ -239,6 +252,13 @@ class ItemService:
         :meth:`enforce` from snatching it straight back out, and it keeps the
         automatic vacuum off it, so an item the player put back stays put
         until they say otherwise.
+
+        Where each one lands is :func:`~tl2stash.archive.next_free_slot`'s
+        answer: the slot it had, if the tool saw it in one and the game is not
+        sitting in it, and otherwise the first empty slot of the tab.  Nothing
+        is written down on the way back -- which tab and which cell are the
+        game's business, and the player asked only that the item be in the
+        stash.
         """
         self.refresh()
         requests = []
@@ -247,11 +267,12 @@ class ItemService:
             if row is None:
                 continue
             place = self.registry.last_placement(print_, self.source_key)
+            container = place["container"] if place else DEFAULT_CONTAINER
             requests.append(
                 RestoreRequest(
                     raw=row["raw"],
-                    container=place["container"] if place else DEFAULT_CONTAINER,
-                    slot=place["slot"] if place else None,
+                    container=container,
+                    slot=place["slot"] if place else self.first_slot(container),
                     label=row["name"],
                 )
             )
@@ -261,3 +282,20 @@ class ItemService:
             self.registry.set_status(fingerprints, STATUS_RETURNED)
         self.refresh()
         return report
+
+    def first_slot(self, container: int) -> int | None:
+        """Where an item goes when the tool has no place of its own for it.
+
+        Two answers, in the order of how much they are worth.  The game's data
+        says where a container's cells begin -- the shared stash's first tab
+        starts at 3322, and the game's own files are what say so -- and
+        without the game on the machine, the lowest slot this save has ever
+        held in that container, which is the same number arrived at the long
+        way round.  ``None`` when neither can answer, which is the one case
+        the placement refuses to guess at.
+        """
+        if self._slot_base is not None:
+            base = self._slot_base(container)
+            if base is not None:
+                return base
+        return self.registry.first_slot(container, self.source_key)

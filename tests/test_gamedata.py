@@ -37,6 +37,7 @@ from tl2stash.dat import (  # noqa: E402
     VAR_NAME,
     VAR_SET,
     VAR_SLOT_BASE,
+    VAR_SLOT_NAME,
     VAR_UNITTYPE,
     VAR_UNITTYPES,
     VAR_UNIT_GUID,
@@ -260,11 +261,27 @@ def install(tmp_path: Path) -> Path:
     item_file("SWORDS/TEST_OFF_CURVE.DAT", "Test Off Curve", "SWORD", 50, 0x7006)
 
     # Containers: each names itself and declares the id the save file records.
-    for name, cid in (("ARMS", 24), ("SPELLS", 26)):
-        files[f"MEDIA/INVENTORY/CONTAINERS/SHARED_STASH_BAG_{name}.DAT"] = write_dat(
-            {0: f"SHARED_STASH_BAG_{name}"},
-            [{"vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, cid)}}],
-        )
+    # The ARMS tab also names the slot file its cells come from, which is how
+    # the game ties a container to the numbers its slots carry: the container
+    # says *which* file, and the file says *which number* the first cell has.
+    files["MEDIA/INVENTORY/CONTAINERS/SHARED_STASH_BAG_ARMS.DAT"] = write_dat(
+        {0: "SHARED_STASH_BAG_ARMS", 1: "BAG_ARMS_SLOT"},
+        [
+            {
+                "vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 24)},
+                "kids": [{"vars": {VAR_SLOT_NAME: (TEXT, 1)}}],
+            }
+        ],
+    )
+    files["MEDIA/INVENTORY/CONTAINERS/SHARED_STASH_BAG_SPELLS.DAT"] = write_dat(
+        {0: "SHARED_STASH_BAG_SPELLS"},
+        [{"vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 26)}}],
+    )
+    # The numbered half of that pair, beside the containers rather than in.
+    files["MEDIA/INVENTORY/BAG_ARMS_SLOT.DAT"] = write_dat(
+        {0: "BAG_ARMS_SLOT"},
+        [{"vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 3322)}}],
+    )
     # A slot file *beside* the containers: same idea, different space of
     # numbers, and its 0 is not container 0.
     files["MEDIA/INVENTORY/BAG.DAT"] = write_dat(
@@ -575,9 +592,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Thirty-eight parse; the thirty-ninth is a DAT that will not, and the
-    fortieth is not a DAT at all."""
-    assert game.files_read == 38
+    """Thirty-nine parse; the fortieth is a DAT that will not, and the
+    forty-first is not a DAT at all."""
+    assert game.files_read == 39
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -1039,6 +1056,51 @@ def test_a_container_the_data_does_not_name_has_no_name(game):
     assert game.container_name(999) is None
     assert game.stash_tab(999) is None
     assert game.stash_tab(21) is None
+
+
+def test_a_container_says_where_its_cells_begin(game):
+    """The join between a container and the numbers its cells carry.
+
+    A container file names the slot files its cells come from -- one entry in
+    its ``SLOTS`` list each, with a count of them -- and a slot file states the
+    number its own first cell has.  The container says *which* file and the
+    file says *which number*, so the two halves of an inventory's numbering
+    are read rather than assumed.
+    """
+    assert game.slot_base(24) == 3322
+
+
+def test_a_container_that_names_no_slot_file_has_no_base(game):
+    """Which is every container whose cells are not numbered consecutively
+    from one place, and the reason a caller has to be able to ask at all."""
+    assert game.slot_base(26) is None
+    assert game.slot_base(999) is None
+
+
+def test_a_slot_file_no_container_names_is_not_reachable(game):
+    """``MEDIA/INVENTORY/BAG.DAT`` declares 0 the way the containers do.
+
+    It is the answer for a container that names it and for nothing else: the
+    match is by name, so a slot file nobody names cannot settle a container's
+    numbering, and its 0 cannot leak into a container's answer.
+    """
+    assert game.slot_base(0) is None
+
+
+@needs_game
+def test_the_shared_stash_tabs_begin_where_the_game_says(real_game):
+    """The three tabs' first cells, read off the game's own files.
+
+    Measured against the live registry: every item ever placed in container 24
+    sits at 3322 or above, and the three tabs start 1000 apart -- 3322, 4322,
+    5322 -- which is what makes the number usable as a slot to put something
+    back into an empty tab.
+    """
+    assert [real_game.slot_base(tab) for tab in real_game.stash_tabs] == [
+        3322,
+        4322,
+        5322,
+    ]
 
 
 # --------------------------------------------------------------------------

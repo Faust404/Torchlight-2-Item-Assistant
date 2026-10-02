@@ -344,7 +344,7 @@ def test_a_filled_row_shows_its_tier_without_changing_its_text(qapp):
     catalog = Catalog(None)
     model = new_model(COLLECTION_COLUMNS)
 
-    fill_collection(model, [row], {}, catalog)
+    fill_collection(model, [row], catalog)
     cell = model.item(0, 0)
 
     assert cell.text() == "Demolishing War Mallet"
@@ -378,18 +378,18 @@ def test_a_row_keeps_the_gate_beside_the_item_s_own_level(qapp):
 
     # No game: nobody was asked, so the range falls back to the item's level
     # and the two roles agree.
-    fill_collection(model, [row], {}, Catalog(None))
+    fill_collection(model, [row], Catalog(None))
     cell = model.item(0, 0)
     assert (cell.data(LEVEL_ROLE), cell.data(GATE_ROLE)) == (45, 45)
 
     # The game answered, and with a number that is not the item's level.
     catalog = Catalog(_OneAnswer(Requirements(51, False, ())))
-    fill_collection(model, [row], {}, catalog)
+    fill_collection(model, [row], catalog)
     cell = model.item(0, 0)
     assert (cell.data(LEVEL_ROLE), cell.data(GATE_ROLE)) == (45, 51)
 
     # And a gate of nothing stays a zero rather than falling back: this is the
     # one value the filter has to be able to tell from "no answer".
     catalog = Catalog(_OneAnswer(Requirements(0, False, ())))
-    fill_collection(model, [row], {}, catalog)
+    fill_collection(model, [row], catalog)
     assert model.item(0, 0).data(GATE_ROLE) == 0

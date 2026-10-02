@@ -93,6 +93,7 @@ __all__ = [
     "VAR_RARITY_DMG_MOD",
     "VAR_SET",
     "VAR_SLOT_BASE",
+    "VAR_SLOT_NAME",
     "VAR_SPEED",
     "VAR_SPEED_DMG_MOD",
     "VAR_STRENGTH_REQUIRED",
@@ -226,6 +227,14 @@ VAR_DISPLAYPRECISION = field_hash("DISPLAYPRECISION")
 #: declares 3322, and the save file's container 24 holds items in slots 3322
 #: upwards; the two were matched on exactly that.
 VAR_SLOT_BASE = 0x173B97DF
+
+#: The slot file a container is made of.  A container's own file carries a
+#: ``SLOTS`` list -- one entry per part, each naming the file that part's
+#: cells come from (``SHARED_STASH_BAG_ARMS`` names ``BAG_ARMS_SLOT``) beside
+#: a count of them.  That name is the join between the two halves of the
+#: numbering: the container says which file, and the file says which slot its
+#: cells begin at (:data:`VAR_SLOT_BASE`).
+VAR_SLOT_NAME = field_hash("SLOTNAME")
 
 #: The name of the *effect* an affix grants.  The game's own name for this
 #: field is ``TYPE``.

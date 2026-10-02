@@ -300,3 +300,22 @@ class Registry:
             "SELECT * FROM placements WHERE fingerprint = ? AND source = ?",
             (print_, source),
         ).fetchone()
+
+    def first_slot(self, container: int, source: str) -> int | None:
+        """The lowest slot this save has ever held in this container.
+
+        Every item the tool has seen leaves a placement behind, present or
+        not, so this is the tab's own first cell even after everything in it
+        has been taken -- and a tab the player has swept out is exactly the
+        one they are putting something back into.  It is the long way round to
+        what the game's own files state outright; see
+        :meth:`tl2stash.gamedata.GameData.slot_base`.
+
+        ``None`` when this save has never held anything in that container,
+        which is the one case where the tool has nothing to go on.
+        """
+        row = self.conn.execute(
+            "SELECT MIN(slot) AS first FROM placements WHERE source = ? AND container = ?",
+            (source, container),
+        ).fetchone()
+        return row["first"]

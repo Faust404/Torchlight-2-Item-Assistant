@@ -63,14 +63,12 @@ def row(
     *,
     fingerprint: str = "fp-1",
     members: tuple[str, ...] | None = None,
-    found: str = "Tab 1 · slot 1",
 ) -> TileRow:
     """A tile's worth of one item, with the fields a test is not about filled."""
     return TileRow(
         fingerprint=fingerprint,
         name=held.name if isinstance(held, Card) else "Broken",
         members=members if members is not None else (fingerprint,),
-        found=found,
         card=held,
     )
 
@@ -118,11 +116,17 @@ def test_an_item_that_will_not_parse_is_a_sentence_rather_than_a_card(qapp):
     assert texts(tile, "hint") == ["Could not read this item: not enough bytes"]
 
 
-def test_the_footer_says_where_the_item_was_found(qapp):
-    """What the "Found in" column used to say, and there is room for it here:
-    the card no longer has to share its width with three other columns."""
-    tile = ItemTile(row(card(), found="Tab 1 · slot 5"))
-    assert texts(tile, "found") == ["Tab 1 · slot 5"]
+def test_a_tile_does_not_say_where_the_item_was(qapp):
+    """The tab and the slot are the game's fact about a stash this item is no
+    longer in.  A card here says what the item *is*; where it goes back to is
+    decided when it goes -- see
+    :meth:`tl2stash.service.ItemService.first_slot` -- and not read off the
+    card that is waiting to be sent."""
+    tile = ItemTile(row(card()))
+    labels = tile.findChildren(QLabel)
+
+    assert "found" not in {label.objectName() for label in labels}
+    assert not any("slot" in label.text().lower() for label in labels)
 
 
 def button_label(tile, name: str) -> str | None:
@@ -140,30 +144,32 @@ def button_label(tile, name: str) -> str | None:
 def test_one_copy_is_one_button_that_sends_it_back(qapp):
     """A comparison of one copy with itself is not worth a screen, so the
     single copy's card does not offer one: its whole action is the way back,
-    which is the same act the overlay would have taken two clicks for."""
-    one = ItemTile(row(card(), found="Tab 1 · slot 5"))
+    which is the same act the overlay would have taken two clicks for.
+
+    And that button is the whole of the footer: one of something has one thing
+    to do with it, and a corner saying so would be the same word twice.
+    """
+    one = ItemTile(row(card()))
 
     assert one.row.copies == 1
     assert button_label(one, "compare") is None, "one copy offered a comparison"
     assert button_label(one, "transfer") == "Transfer to Stash"
     assert button_label(one, "transferall") is None
-    # Where it was found is still what the left of the footer says: with one
-    # copy there is no count worth the corner.
-    assert texts(one, "found") == ["Tab 1 · slot 5"]
+    assert texts(one, "found") == []
 
 
 def test_several_copies_count_themselves_and_take_the_corner(qapp):
     """Two is the case the player has to be told about, because the card is
     both of them at once and the overlay is where they come apart.  The count
-    goes on the button that acts on all of them -- and takes the place of the
-    tab and slot, which is about one copy and cannot speak for several."""
-    two = ItemTile(row(card(), members=("fp-1", "fp-2"), found="Tab 1 · slot 5"))
+    goes on the button that acts on all of them, in the corner the single
+    copy's footer leaves empty, and the way in sits across from it."""
+    two = ItemTile(row(card(), members=("fp-1", "fp-2")))
 
     assert two.row.copies == 2
     assert button_label(two, "transferall") == "Transfer all (2)"
     assert button_label(two, "compare") == "Compare & Transfer"
     assert button_label(two, "transfer") is None
-    assert texts(two, "found") == [], "the tab and slot stayed beside the count"
+    assert texts(two, "found") == []
 
 
 def test_the_footer_button_hands_the_tile_s_row_up(qapp):
@@ -195,17 +201,16 @@ def test_the_same_row_drawn_again_touches_nothing(qapp):
 def test_a_row_that_changed_is_redrawn_in_place(qapp):
     """Same item, another copy of it: the card is the same card and the count
     is not -- and the selection must survive the redraw."""
-    held = row(card(), found="Tab 1 · slot 5")
+    held = row(card())
     tile = ItemTile(held)
     tile.set_selected(True)
 
-    tile.set_row(replace(held, found="Tab 2 · slot 9", members=("fp-1", "fp-2")))
+    tile.set_row(replace(held, members=("fp-1", "fp-2")))
 
     # A second copy is a different *footer*, not just different words in it:
-    # the count takes the corner and the place gives it up.
+    # the count arrives on its own button.
     assert button_label(tile, "transferall") == "Transfer all (2)"
     assert button_label(tile, "compare") == "Compare & Transfer"
-    assert texts(tile, "found") == []
     assert tile.is_selected()
 
 
@@ -248,12 +253,12 @@ def test_only_the_tile_whose_row_changed_is_redrawn(qapp):
     wall(grid, rows)
     built = [grid.tile(i) for i in range(3)]
 
-    grid.set_rows([rows[0], replace(rows[1], found="Tab 3 · slot 2"), rows[2]])
+    grid.set_rows([rows[0], replace(rows[1], members=("fp1", "fp1b")), rows[2]])
 
     assert grid.tile(0) is built[0]
     assert grid.tile(2) is built[2]
     assert grid.tile(1) is built[1], "the tile was not pooled by fingerprint"
-    assert texts(grid.tile(1), "found") == ["Tab 3 · slot 2"]
+    assert button_label(grid.tile(1), "transferall") == "Transfer all (2)"
 
 
 def test_a_tile_whose_item_is_gone_leaves_the_wall(qapp):

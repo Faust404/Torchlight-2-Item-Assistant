@@ -79,6 +79,7 @@ from .dat import (
     VAR_RARITY_DMG_MOD,
     VAR_SET,
     VAR_SLOT_BASE,
+    VAR_SLOT_NAME,
     VAR_SPEED,
     VAR_SPEED_DMG_MOD,
     VAR_STRENGTH_REQUIRED,
@@ -370,6 +371,11 @@ SLOWEST_BAND = "Very Slow"
 #: a container numbers its slots from, a different space of numbers that
 #: happens to overlap -- both have an entry 0.
 CONTAINERS_DIR = "MEDIA/INVENTORY/CONTAINERS/"
+
+#: Everything an inventory is made of: the containers above, and the slot
+#: files each of them names.  The second is what :meth:`GameData.slot_base`
+#: reads, and it is filed under this directory rather than the one above.
+INVENTORY_DIR = "MEDIA/INVENTORY/"
 
 #: The three bags of the shared stash, in the order the game shows them.
 SHARED_STASH = "SHARED_STASH_"
@@ -802,6 +808,7 @@ class GameData:
         "failed",
         "files_read",
         "install",
+        "slot_bases",
         "_affix_effects",
         "_armor_curve",
         "_augments",
@@ -828,6 +835,7 @@ class GameData:
         effect_order: list[DatNode],
         affix_effects: dict[str, set[str]],
         containers: dict[int, str],
+        slot_bases: dict[int, int],
         sets: dict[str, DatNode],
         failed: list[tuple[str, str]],
         files_read: int,
@@ -848,6 +856,7 @@ class GameData:
         self._effect_order = effect_order
         self._affix_effects = affix_effects
         self.containers = containers
+        self.slot_bases = slot_bases
         self._sets = sets
         self.failed = failed
         self.files_read = files_read
@@ -897,6 +906,12 @@ class GameData:
         effect_order: list[DatNode] = []
         affix_effects: dict[str, set[str]] = {}
         containers: dict[int, str] = {}
+        # The two halves of one fact, which live in two files: what slot file
+        # each container is made of, and what block each slot file numbers
+        # from.  Joined after the sweep, because the manifest's order is the
+        # archive's and is not an order to rely on.
+        slot_files: dict[int, str | None] = {}
+        slot_bases: dict[str, int] = {}
         sets: dict[str, DatNode] = {}
         failed: list[tuple[str, str]] = []
         item_files: dict[str, DatFile] = {}
@@ -957,6 +972,18 @@ class GameData:
                     found = _container_entry(data)
                     if found is not None:
                         containers[found[0]] = found[1]
+                        slot_files[found[0]] = found[2]
+
+                elif path.startswith(INVENTORY_DIR):
+                    # The other half: a slot file states the block its own
+                    # cells are numbered from, which is the number the save
+                    # file writes for the first item put in it.  Nothing here
+                    # links it to a container -- the container is the one that
+                    # names this file -- so the two are matched by name below.
+                    name = data.root.text(VAR_NAME)
+                    base = data.root.number(VAR_SLOT_BASE)
+                    if name and base is not None:
+                        slot_bases[name] = int(base)
 
                 if path.startswith(GEMS_DIR):
                     # The two shelves again, one per kind of claim: what the
@@ -1083,6 +1110,15 @@ class GameData:
             if _data_path(GRAPHS_DIR + stem) in curves
         }
 
+        # Where each numbered container begins, joined across the two files
+        # that state it between them.  A container whose cells have no numbers
+        # -- a character's head, a merchant's shelves -- is simply absent.
+        numbered = {
+            cid: slot_bases[name]
+            for cid, name in slot_files.items()
+            if name in slot_bases
+        }
+
         return cls(
             install,
             by_name,
@@ -1091,6 +1127,7 @@ class GameData:
             effect_order,
             affix_effects,
             containers,
+            numbered,
             sets,
             failed,
             read,
@@ -1654,6 +1691,23 @@ class GameData:
         """
         return self.containers.get(container_id)
 
+    def slot_base(self, container_id: int) -> int | None:
+        """The number of a container's first cell, if it has one.
+
+        Every inventory slot in the game is numbered in one flat space -- a
+        head is 645 and a belt 1161 -- and a container is an ordered list of
+        them.  This is the first number in that list, read from the game's own
+        files rather than assumed: the container names the slot files it is
+        made of and each of those states its number.
+
+        The three shared stash tabs are what the caller wants it for: 3322,
+        4322 and 5322, and their cells run consecutively from there, so the
+        first one is the slot an item goes into when a tab is empty.
+
+        ``None`` for an id the data does not describe.
+        """
+        return self.slot_bases.get(container_id)
+
     def stash_tab(self, container_id: int) -> int | None:
         """Which tab of the shared stash this is, counting from 1.
 
@@ -1793,19 +1847,27 @@ def _seconds(effect: DatNode) -> float:
     return effect.number(VAR_DURATION) or 0.0
 
 
-def _container_entry(data: DatFile) -> tuple[int, str] | None:
-    """``(container id, name)`` for one ``MEDIA/INVENTORY/CONTAINERS`` file.
+def _container_entry(data: DatFile) -> tuple[int, str, str | None] | None:
+    """``(container id, name, slot file)`` for one ``CONTAINERS`` file.
 
     Unlike the files beside it, these declare the container id itself -- the
     save file's container 24 is the file that calls itself 24 -- so no
     arithmetic is needed to tie the two together.
+
+    The slot file is the first one the container's ``SLOTS`` list names, which
+    is where its cells begin -- the same file :data:`VAR_SLOT_BASE` is
+    declared on.  Every inventory slot in the game has a number of its own,
+    a belt's being 1161 and a head's 645, so a container is an ordered list of
+    numbered cells however many of them it has.  ``None`` for a file that
+    names no slot at all.
     """
     root = data.root
     name = root.text(VAR_NAME)
     cid = root.number(VAR_SLOT_BASE)
     if not name or cid is None:
         return None
-    return int(cid), name
+    slots = [slot for node in root.walk() for slot in node.texts(VAR_SLOT_NAME)]
+    return int(cid), name, (slots[0] if slots else None)
 
 
 def _percent(value: float | None) -> float:

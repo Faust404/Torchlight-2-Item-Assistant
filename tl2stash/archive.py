@@ -258,14 +258,20 @@ class RestoreReport:
     changed: bool = False
 
 
-def next_free_slot(
-    occupied: set[int], preferred: int | None = None, base: int | None = None
-) -> int:
+def next_free_slot(occupied: set[int], preferred: int | None = None) -> int:
     """Lowest free slot, preferring the item's original one.
 
     Slots are not compacted when items leave -- removal leaves a hole -- so
     filling gaps keeps a restored item near where it was and keeps the tab
     from drifting upward over time.
+
+    ``preferred`` is the item's own last slot, or -- for an item the tool has
+    no place for -- the container's first cell, which is the same question
+    asked of the container instead of the item (see
+    :meth:`tl2stash.service.ItemService.first_slot`).  With neither, and
+    nothing in the container to measure from, this refuses to guess: a slot
+    number means nothing on its own, and a wrong one puts the item where the
+    game will not show it.
     """
     if preferred is not None and preferred not in occupied:
         return preferred
@@ -274,9 +280,7 @@ def next_free_slot(
         while slot in occupied:
             slot += 1
         return slot
-    if base is None:
-        raise ValueError("cannot place into an empty container without a slot")
-    return base
+    raise ValueError("nowhere to put an item: the container is empty and no slot is known")
 
 
 def restore_items(

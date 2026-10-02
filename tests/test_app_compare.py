@@ -79,12 +79,10 @@ def two_copies() -> tuple:
         row(
             card(name="Miss Gazer Man", level=0, blocks=(Block(AFFIX, ("+8% Crit Damage",)),)),
             fingerprint="fp-a",
-            found="Tab 1 · slot 2",
         ),
         row(
             card(name="Miss Gazer Man", level=0, blocks=(Block(AFFIX, ("+12% Crit Damage",)),)),
             fingerprint="fp-b",
-            found="Tab 2 · slot 7",
         ),
     )
 
@@ -163,11 +161,16 @@ def test_every_copy_offers_transfer_to_stash(qapp):
         assert button.text() == "Transfer to Stash"
 
 
-def test_each_copy_says_where_it_was_last_seen(qapp):
-    """A copy's place is its own.  The tile says the first copy's, which is
-    the one thing about the group it can be sure of."""
+def test_a_copy_does_not_say_where_it_was_last_seen(qapp):
+    """A copy is the tool's now, so the tab and slot it once sat in say nothing
+    about it.  What a copy is *is* its own numbers, which is the whole reason
+    there is a card per copy."""
     _, overlay = opened()
-    assert texts(overlay, "found") == ["Tab 1 · slot 2", "Tab 2 · slot 7"]
+
+    assert texts(overlay, "found") == []
+    assert not any(
+        "slot" in label.text().lower() for label in overlay.findChildren(QLabel)
+    )
 
 
 def test_a_copy_that_will_not_parse_is_a_sentence_here_too(qapp):
@@ -270,7 +273,6 @@ def test_the_wall_scrolls_when_there_are_more_copies_than_fit(qapp):
                 blocks=(Block(AFFIX, (f"+{n}% Crit Damage",)),),
             ),
             fingerprint=f"fp-{n}",
-            found="Tab 1 · slot 2",
         )
         for n in range(20)
     ]

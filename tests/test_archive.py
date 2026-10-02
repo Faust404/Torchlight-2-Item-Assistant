@@ -376,10 +376,17 @@ def test_next_free_slot_appends_when_full():
 
 
 def test_next_free_slot_needs_a_hint_for_an_empty_container():
+    """An empty container with nowhere to start is the one case this refuses.
+
+    The anchor is the same argument either way -- the item's own last slot, or
+    a container's first cell when the item has none (see
+    :meth:`tl2stash.service.ItemService.first_slot`) -- so an empty container
+    plus no anchor leaves nothing to place against, and guessing a number would
+    put the item somewhere the game never numbered.
+    """
     with pytest.raises(ValueError):
         next_free_slot(set())
     assert next_free_slot(set(), preferred=7) == 7
-    assert next_free_slot(set(), base=7) == 7
 
 
 def test_restore_puts_an_item_back_where_it_was(tmp_path):
@@ -464,6 +471,38 @@ def test_restore_skips_an_item_that_never_left(tmp_path):
     assert not report.changed
     # In particular it did not become two copies of itself.
     assert len(read_stash_file(path).items) == 2
+
+
+def test_restore_moves_over_when_the_slot_it_wants_is_taken(tmp_path):
+    """The item's own slot is a preference, not a promise.
+
+    Nothing stops the player dropping something into the cell an absorbed item
+    came out of, and the tool must not be the thing that overwrites it -- so
+    the item takes the lowest free slot from the container's start instead.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    prints = write_synthetic_stash(path, ["Alpha", "Beta", "Gamma"])
+    beta = read_stash_file(path).items[1]
+    archive_stash(path, {prints[1]})
+
+    # The player put something else where Beta had been.  Alpha and Gamma are
+    # still in 3322 and 3324, so 3323 is the one cell that is now spoken for.
+    squatter = parse_item(synthetic_item(name="Delta", slot=3323)[0])
+    _write(path, [e.blob for e in read_stash_file(path).entries] + [squatter.raw])
+
+    report = restore_items(
+        path,
+        [RestoreRequest(raw=beta.raw, container=24, slot=3323, label="Beta")],
+    )
+
+    assert report.restored == [("Beta", 24, 3325)]
+    after = read_stash_file(path)
+    assert sorted((i.location.slot_index, i.base_name) for i in after.items) == [
+        (3322, "Alpha"),
+        (3323, "Delta"),
+        (3324, "Gamma"),
+        (3325, "Beta"),
+    ]
 
 
 def test_restore_is_idempotent(tmp_path):

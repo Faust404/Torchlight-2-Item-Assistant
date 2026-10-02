@@ -356,6 +356,59 @@ def test_search_narrows_with_every_term(service):
 
 
 # --------------------------------------------------------------------------
+# Where a returned item lands
+# --------------------------------------------------------------------------
+
+
+def test_a_tab_the_save_has_used_remembers_where_its_cells_begin(service):
+    """The tool's own memory of a tab, for a machine with no game on it.
+
+    The three synthetic items sit at 3322, 3323 and 3324, so the tab began at
+    3322 -- and it still does once they have all been taken, because a
+    placement is recorded and not removed.  That is the case this is for: a
+    tab the player has swept out is exactly the one they are putting something
+    back into.
+    """
+    service.absorb_all()
+
+    assert service.registry.first_slot(24, service.source_key) == 3322
+    assert service.first_slot(24) == 3322
+
+
+def test_a_tab_nothing_has_ever_been_in_has_no_first_cell(service):
+    """Which is the one case the tool has nothing to go on, and says so.
+
+    ``None`` rather than a guess: a made-up number would put the item in a
+    cell the game never numbered, and the caller can do better -- see
+    :meth:`tl2stash.gamedata.GameData.slot_base`.
+    """
+    service.absorb_all()
+
+    assert service.registry.first_slot(25, service.source_key) is None
+    assert service.first_slot(25) is None
+
+
+def test_the_game_s_answer_outranks_the_registry_s(stash_path, db_path):
+    """The short way round and the long way round, for a tab nobody has used.
+
+    An empty stash the tool has never absorbed anything from has no placements
+    at all, so the registry cannot say where its first tab begins -- and the
+    game's own files can, which is what makes the first item ever put into a
+    fresh install land in the right cell.
+    """
+    write_synthetic_stash(stash_path, [])
+
+    def slot_base(container: int) -> int | None:
+        return 3322 if container == 24 else None
+
+    with ItemService(
+        db_path, SaveLocation.at(stash_path), slot_base=slot_base
+    ) as svc:
+        assert svc.first_slot(24) == 3322
+        assert svc.first_slot(25) is None, "a container the game does not number"
+
+
+# --------------------------------------------------------------------------
 # Registry housekeeping
 # --------------------------------------------------------------------------
 

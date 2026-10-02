@@ -25,7 +25,6 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "COLLECTION_COLUMNS",
     "FINGERPRINT_ROLE",
-    "FOUND_ROLE",
     "GATE_ROLE",
     "LEVEL_ROLE",
     "MEMBERS_ROLE",
@@ -93,8 +92,7 @@ LEVEL_MAX = 110
 #: ``MEMBERS_ROLE`` holds every fingerprint the row stands for.  A row is a
 #: *tile*: the tool's copies of one item are gathered into one row however many
 #: rolls of it there are, and this is what turns a selection of that row back
-#: into the items it is made of.  ``FOUND_ROLE`` is the last-seen place, as the
-#: text the tile's footer shows.
+#: into the items it is made of.
 #:
 #: ``LEVEL_ROLE`` is the item's own level -- the number the list shows and has
 #: always shown.  ``GATE_ROLE`` is a different number and the one the level
@@ -111,7 +109,6 @@ TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
 PLACE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
 LEVEL_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 3)
 MEMBERS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 4)
-FOUND_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 5)
 GATE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 6)
 
 
@@ -257,7 +254,6 @@ def _gathered(rows: list) -> list[list]:
 def fill_collection(
     model: QStandardItemModel,
     rows: list,
-    placed: dict[str, str],
     catalog: Catalog | None = None,
 ) -> None:
     """Show what the tool holds, one row per *item* rather than per copy.
@@ -275,10 +271,16 @@ def fill_collection(
     tile draws, and ``MEMBERS_ROLE`` carries the rest so that selecting the
     tile is selecting every copy of it.
 
-    ``placed`` maps a fingerprint to where the item was last seen, so an item
-    taken out of the game still says which tab it came from.  ``catalog``
-    supplies the tier, the kind and the picture, and reading it is what turns a
-    row of text into a row of the game's own items.
+    What the row does *not* carry is where the game had the item.  The tool
+    holds it now, so the tab and the slot it once sat in say nothing about
+    where it is; the collection is a place of its own, and the panel beside it
+    is where anything about the game's stash belongs.  Where a restored item
+    lands is decided on the way back (see
+    :meth:`tl2stash.service.ItemService.first_slot`), not by what it used to
+    be.
+
+    ``catalog`` supplies the tier, the kind and the picture, and reading it is
+    what turns a row of text into a row of the game's own items.
     """
     model.removeRows(0, model.rowCount())
     for group in _gathered(rows):
@@ -286,7 +288,6 @@ def fill_collection(
         name = _cell(first["name"])
         name.setData(first["fingerprint"], FINGERPRINT_ROLE)
         name.setData(tuple(row["fingerprint"] for row in group), MEMBERS_ROLE)
-        name.setData(placed.get(first["fingerprint"], ""), FOUND_ROLE)
         if catalog is not None:
             _describe(name, catalog.entry(first["fingerprint"], first), first["level"])
         model.appendRow([name])
@@ -421,8 +422,9 @@ class CollectionFilter(QSortFilterProxyModel):
     def _value(self, parent: QModelIndex, row: int, facet: Qt.ItemDataRole):
         """One facet of one row, read off the row's first cell.
 
-        A row is one thing and its first cell is where it says so: the other
-        columns are the item's level and where it was found, and neither is
-        what a facet is about.
+        A row is one thing and its first cell is where it says so.  The
+        collection is a single column -- what the player sees is the card the
+        tile draws from the row, not the cells -- so the first cell is the
+        whole of what there is to read.
         """
         return self.sourceModel().index(row, 0, parent).data(facet)

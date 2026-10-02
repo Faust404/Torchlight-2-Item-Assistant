@@ -902,7 +902,7 @@ def test_the_real_collection_narrows_by_kind_and_by_rarity(real_game, qapp):
     ]
     catalog = Catalog(real_game, IconCache(real_game.install))
     model = new_model(COLLECTION_COLUMNS)
-    fill_collection(model, rows, {}, catalog)
+    fill_collection(model, rows, catalog)
     proxy = CollectionFilter()
     proxy.setSourceModel(model)
 

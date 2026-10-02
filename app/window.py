@@ -51,13 +51,11 @@ from .filters import FilterBar
 from .models import (
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
-    FOUND_ROLE,
     MEMBERS_ROLE,
     PLACE_ROLE,
     STASH_COLUMNS,
     TIER_ROLE,
     CollectionFilter,
-    container_label,
     fill_collection,
     fill_stash,
     new_model,
@@ -144,11 +142,6 @@ class MainWindow(QMainWindow):
         #: bytes, so an entry can never go stale and nothing ever needs
         #: invalidating.
         self._details: dict[str, Card | str] = {}
-        #: Where each absorbed item was last seen in the game, by fingerprint.
-        #: Kept beside the memo because the comparison overlay draws one card
-        #: per *copy*, and a copy's place is its own -- the tile's footer is
-        #: the first copy's.
-        self._placed: dict[str, str] = {}
 
         self._build_ui()
         self._load_sources(source)
@@ -375,6 +368,18 @@ class MainWindow(QMainWindow):
             self._game_error = str(exc)
         return self._game
 
+    def _slot_base(self, container: int) -> int | None:
+        """Where the game says this container's cells begin.
+
+        Handed to :class:`~tl2stash.service.ItemService` as a callable rather
+        than as an answer, because reading the game's files takes a second and
+        is only needed when an item is being put back into a tab the tool has
+        never seen it in.  ``None`` without the game, which the service has an
+        answer of its own for.
+        """
+        game = self._game_data()
+        return game.slot_base(container) if game is not None else None
+
     def _note_game(self) -> None:
         """Say, in one line, that there is no game data -- if there is not.
 
@@ -464,7 +469,7 @@ class MainWindow(QMainWindow):
         db_path = (
             self.db_path if self.db_path is not None else self.db_dir / location.db_name
         )
-        self.service = ItemService(db_path, location)
+        self.service = ItemService(db_path, location, slot_base=self._slot_base)
         self.watcher = StashWatcher(location.path)
 
         self._sync(write=False)
@@ -589,8 +594,7 @@ class MainWindow(QMainWindow):
         The tile draws one card for all of them -- that is what makes the
         collection readable -- so this is the one place the copies are told
         apart.  Each is built from its own bytes, which is where its own
-        numbers and its own fingerprint come from, and each is placed where it
-        was last seen rather than where the tile's first copy was.
+        numbers and its own fingerprint come from.
         """
         prints = row.members or (row.fingerprint,)
         self.compare.open_for(
@@ -599,7 +603,6 @@ class MainWindow(QMainWindow):
                     fingerprint=print_,
                     name=row.name,
                     members=(print_,),
-                    found=self._placed.get(print_, ""),
                     card=self._card_for(print_),
                 )
                 for print_ in prints
@@ -674,12 +677,7 @@ class MainWindow(QMainWindow):
         # where it currently is, made these two lists overlap and left the
         # reader to work out which entries they were actually responsible for.
         rows = self.service.registry.rows(status=STATUS_ABSORBED)
-        placements = self.service.registry.placements_for(self.service.source_key)
-        self._placed = {
-            print_: f"{container_label(p['container'], data)} · slot {p['slot']}"
-            for print_, p in placements.items()
-        }
-        fill_collection(self.collection_model, rows, self._placed, catalog)
+        fill_collection(self.collection_model, rows, catalog)
 
         # The rail describes what is *here*, so its shape comes from the rows
         # and not from the filters -- which is what keeps a row from vanishing
@@ -711,7 +709,6 @@ class MainWindow(QMainWindow):
                     fingerprint=fingerprint,
                     name=index.data(Qt.ItemDataRole.DisplayRole),
                     members=tuple(index.data(MEMBERS_ROLE) or (fingerprint,)),
-                    found=index.data(FOUND_ROLE) or "",
                     card=self._card_for(fingerprint),
                 )
             )

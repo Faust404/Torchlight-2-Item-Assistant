@@ -71,7 +71,6 @@ _STYLE = STYLE + f"""
     border-radius: 4px;
 }}
 #replica #card {{ background: transparent; border: 0; border-radius: 0; }}
-#found {{ color: {DIM}; font-size: 11px; }}
 /* The same button the collection draws, and deliberately: what it does is the
    same thing, and the two are the same word for it -- a copy of an item goes
    back to the stash it came from. */
@@ -127,10 +126,10 @@ class ReplicaCard(CardFrame):
     """One copy of an item, drawn whole, with the one button that returns it.
 
     A copy is not the item: two copies of a unique have two sets of numbers,
-    and the card under the button is the copy's own.  The place it was last
-    seen in the game is in the footer because that is what the collection
-    cannot say either -- its tile says the first copy's place, and this says
-    each one's.
+    and the card under the button is the copy's own.  That is the whole of what
+    tells one replica from another on this screen, and it is why each is built
+    from its own bytes -- the button sends back the copy it is under, and the
+    card above it is that copy.
     """
 
     #: The copy to put back, by fingerprint.
@@ -149,11 +148,6 @@ class ReplicaCard(CardFrame):
         row.setContentsMargins(13, 6, 13, 7)
         row.setSpacing(8)
 
-        found = QLabel(self.row.found)
-        found.setObjectName("found")
-        row.addWidget(found)
-        row.addStretch(1)
-
         button = QPushButton("Transfer to Stash")
         button.setObjectName("transfer")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -162,6 +156,7 @@ class ReplicaCard(CardFrame):
             "up on its next load.  The other copies are left where they are."
         )
         button.clicked.connect(lambda: self.put_back.emit(self.row.fingerprint))
+        row.addStretch(1)
         row.addWidget(button)
         return foot
 

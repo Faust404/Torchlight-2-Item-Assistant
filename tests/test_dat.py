@@ -35,6 +35,7 @@ from tl2stash.dat import (  # noqa: E402
     VAR_ICON,
     VAR_NAME,
     VAR_SLOT_BASE,
+    VAR_SLOT_NAME,
     VAR_UNIDENTIFIED_NAME,
     VAR_UNITTYPE,
     VAR_UNITTYPES,
@@ -388,9 +389,10 @@ def test_the_ids_no_name_has_reproduced_are_these_five():
     Four of them the module names for what the field means rather than what
     it is called -- ``VAR_FLAVOR`` is the field ``DESCRIPTION``,
     ``VAR_EFFECT_TYPE`` is the field ``EFFECT`` -- and those hash correctly
-    under the game's spelling.  ``VAR_AFFIX_LEVEL`` is the same arrangement
-    for a smaller reason: the field is the one word ``AFFIXLEVEL``, and the
-    constant is spaced for reading.  The rest are simply their own names.
+    under the game's spelling.  ``VAR_AFFIX_LEVEL`` and ``VAR_SLOT_NAME`` are
+    the same arrangement for a smaller reason: the fields are the one words
+    ``AFFIXLEVEL`` and ``SLOTNAME``, and the constants are spaced for reading.
+    The rest are simply their own names.
 
     What is left over is five ids with no name at all, and that is the point
     of writing the list down: none of them is a hash of a name nobody has
@@ -405,6 +407,7 @@ def test_the_ids_no_name_has_reproduced_are_these_five():
         VAR_DISPLAY_NAME: "DISPLAYNAME",
         VAR_FLAVOR: "DESCRIPTION",
         VAR_EFFECT_TYPE: "EFFECT",
+        VAR_SLOT_NAME: "SLOTNAME",
     }
 
     unexplained = []

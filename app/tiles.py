@@ -89,7 +89,6 @@ _STYLE = STYLE + f"""
 }}
 #tile[selected="true"] {{ border-color: {HEAD}; }}
 #tile #card {{ background: transparent; border: 0; border-radius: 0; }}
-#found {{ color: {DIM}; font-size: 11px; }}
 #compare, #transfer, #transferall {{
     color: {LABEL};
     background: transparent;
@@ -123,12 +122,15 @@ class TileRow:
     One copy of an item is a row too, and that is what the comparison overlay
     is handed: a row whose ``members`` are itself.  A copy differs from its
     fellows in its own bytes, so its fingerprint and its card are its own.
+
+    Nothing here says where the item sat in the game.  The tool holds it, so a
+    tab and a slot are a fact about a stash it is no longer in -- and it is
+    the game that decides where a restored item lands.
     """
 
     fingerprint: str
     name: str
     members: tuple[str, ...]
-    found: str
     card: "Card | str"
 
     @property
@@ -354,9 +356,9 @@ class ItemTile(CardFrame):
         """Draw the same item as the tool now describes it.
 
         Another copy was absorbed, or this one was moved in the game: the
-        fingerprint is the same and the card is the same, but the count and
-        the place are not.  Everything else about the tile is kept, including
-        whether it is selected.
+        fingerprint is the same and the card is the same, but the count is
+        not.  Everything else about the tile is kept, including whether it is
+        selected.
         """
         if row == self.row:
             return
@@ -380,19 +382,18 @@ class ItemTile(CardFrame):
     # -- the pieces ------------------------------------------------------
 
     def _footer(self) -> QWidget:
-        """The card's own line: what it cannot say, and what can be done to it.
+        """The card's own line: what can be done with what it draws.
 
-        The left of the footer holds whatever the card above cannot say about
-        itself.  One copy of an item is the ordinary case, and what is worth
-        saying is where the game had it -- the tab and the slot, which the
-        collection table used to carry in a column.  More than one copy is the
-        case that needs acting on, and the count takes that corner instead:
-        putting all of them back is one decision about the group, and the
-        group is the thing the card is.
+        One copy of an item is the ordinary case, and the footer's right-hand
+        end is the plain way back to the game.  More than one copy is the case
+        that needs acting on, and the count takes the left: putting all of them
+        back is one decision about the group, and the group is the thing the
+        card is.  The way into the copies is across from it.
 
-        The right is the way into the copies, or -- when there is only one --
-        the plain way back to the game, because a comparison of one copy with
-        itself is not worth a screen.
+        The left is empty for a single copy, which is the one thing a footer
+        full of buttons would have said twice -- a card with one of something
+        has one thing to do with it, and it is the same button in the same
+        place either way.
         """
         foot = QWidget()
         row = QHBoxLayout(foot)
@@ -401,10 +402,6 @@ class ItemTile(CardFrame):
 
         if self.row.copies > 1:
             row.addWidget(self._transfer_all_button())
-        else:
-            found = QLabel(self.row.found)
-            found.setObjectName("found")
-            row.addWidget(found)
         row.addStretch(1)
 
         row.addWidget(
