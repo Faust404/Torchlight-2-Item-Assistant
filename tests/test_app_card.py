@@ -101,7 +101,7 @@ def card(**kwargs) -> Card:
         "name": "Bashdrill",
         "tier": "unique",
         "tier_word": "Unique",
-        "type_name": "Fist",
+        "type_name": "Claw",
         "set_name": None,
         "icon": None,
         "level": 0,
@@ -201,12 +201,12 @@ def test_a_tier_that_is_not_a_key_is_inked_as_no_tier(qapp):
 
 
 def test_the_kind_line_names_the_tier_in_its_colour_and_the_kind_in_grey(qapp):
-    """``Unique Fist``: the tier word carries what the type does not, so it is
+    """``Unique Claw``: the tier word carries what the type does not, so it is
     the one word in the line painted in the tier's colour."""
-    drawn = ItemCard(card(tier="unique", tier_word="Unique", type_name="Fist"))
+    drawn = ItemCard(card(tier="unique", tier_word="Unique", type_name="Claw"))
     (kind,) = texts(drawn, "dtype")
 
-    assert "Unique" in kind and "Fist" in kind
+    assert "Unique" in kind and "Claw" in kind
     assert TIER_INK["unique"] in kind
 
 
@@ -282,9 +282,9 @@ def test_a_stack_says_how_many_it_is_before_the_rest_of_the_corner(qapp):
 def test_an_item_with_no_icon_draws_the_type_s_initial(qapp):
     """The site's own fallback for the 2% of items whose icon is in no sheet
     -- and for every item on a machine with no game installed at all."""
-    tile = ItemCard(card(type_name="Fist")).findChild(IconTile)
+    tile = ItemCard(card(type_name="Claw")).findChild(IconTile)
     assert tile.icon is None
-    assert tile.letter == "F"
+    assert tile.letter == "C"
 
     # Not even a type to take a letter from: the site's question mark.
     assert ItemCard(card(type_name="")).findChild(IconTile).letter == "?"

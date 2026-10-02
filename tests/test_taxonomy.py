@@ -88,7 +88,7 @@ def test_every_kind_the_game_has_is_in_one_of_the_named_groups(real_game):
     listed = {kind for _, _, kinds in TYPE_GROUPS for kind in kinds}
     strays = sorted({canonical_kind(kind) for kind in kinds} - listed)
     assert not strays, f"the game writes kinds the reference has not got: {strays}"
-    assert len(listed) == 43, "the reference's list is 43 types"
+    assert len(listed) == 38, "the reference's 43 less the five nothing lands in"
 
     # The four embers are real kinds in the archive and they are one kind here:
     # the reference database files all of them, embers and gems together, under
@@ -363,26 +363,55 @@ def test_the_lists_are_the_reference_s_own():
         "Quest Item",
         "Shotgonne",
         "Tag",
-        "Armor",
     } <= listed
 
     # The game's words for them are not kinds at all, and every one of them
-    # canonicalises to something that is.  ``2H Sword``, ``2H Mace``, ``Fist``
-    # and ``Rifle`` are absent from this list on purpose: they are the four in
-    # the block below, which are the game's words *and* the reference's names.
+    # canonicalises to something that is.
     for word in ("1H Sword", "1H Axe", "1H Mace", "2H Axe", "Fist Fire",
                  "Fist Electric", "Polararm Fire", "Polararm Ele", "Pants",
                  "Stud", "Item", ""):
         assert word not in listed, f"{word} is still a kind of its own"
         assert canonical_kind(word) in listed, f"{word} canonicalises to nothing"
 
-    # ``Fist``, ``2H Sword``, ``2H Mace`` and ``Rifle`` are the other half of
-    # that: the reference keeps them for a kind the corpus never carries, and
-    # they are the same four names -- so the box is drawn and the game's items
-    # for it are filed under the other spelling.
-    assert {"Fist", "2H Sword", "2H Mace", "Rifle"} <= listed
-    assert canonical_kind("Fist") == "Claw"
-    assert canonical_kind("Rifle") == "Shotgonne"
+
+def test_the_five_dead_names_are_not_kinds_here():
+    """The reference's 43 minus the five nothing can land in: 38 boxes.
+
+    The reference keeps ``Fist``, ``2H Sword``, ``2H Mace`` and ``Rifle``
+    *"because UNITTYPE can still emit them"*, and has an ``Armor`` type one
+    unreachable record uses.  Each is a word, not a question: a box here is a
+    filter, and the game's items for those kinds are filed under the other
+    spelling -- ``FIST`` under ``Claw``, ``2H SWORD`` under ``Greatsword`` --
+    which is where the reference's own records put them too.  So the box would
+    be a leaf that cannot fill, and it is not drawn.
+    """
+    listed = {kind for _, _, kinds in TYPE_GROUPS for kind in kinds}
+
+    for dead in ("Fist", "2H Sword", "2H Mace", "Rifle", "Armor"):
+        assert dead not in listed, f"{dead} is still a box in the grid"
+        # And the word is not lost: the game's spelling of it is in the alias
+        # table, and comes out as a kind that *is* listed -- except ``Armor``,
+        # which is a group and not a kind at all and so has nowhere to go.
+        if dead != "Armor":
+            assert canonical_kind(dead) in listed, dead
+
+    assert len(listed) == 38, "the reference's 43 less the five"
+
+    # ``Armor`` is still the *group* the six armour kinds hang under, which is
+    # the half of it that stays.
+    assert ("Armor", None) in {(g, s) for g, s, _ in TYPE_GROUPS}
+    assert group_of("Helmet") == ("Armor", None)
+    assert group_of("Boots") == ("Armor", None)
+
+    # A game word whose box is gone still has one: this is the filter the user
+    # asked for, said at the taxonomy's level.  Every one of the archive's 88
+    # ``FIST`` files and 83 ``RIFLE`` files lands on a listed kind, so ticking
+    # that kind is how they are asked for.
+    assert canonical_kind("FIST") == "Claw"
+    assert canonical_kind("2H Sword") == "Greatsword"
+    assert canonical_kind("2H Axe") == "Greataxe"
+    assert canonical_kind("2H Mace") == "Greathammer"
+    assert canonical_kind("RIFLE") == "Shotgonne"
 
 
 def test_canonical_kind_leaves_every_other_kind_alone():

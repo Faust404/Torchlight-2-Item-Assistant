@@ -94,7 +94,7 @@ from app.sidebar import UNCLASSIFIED, SidePanel  # noqa: E402
 from tl2stash.card import AFFIX, TIER_INK, Block, Card, Rung  # noqa: E402
 from tl2stash.taxonomy import OTHER  # noqa: E402
 
-from test_gamedata import _an_item_of_tier  # noqa: E402
+from test_gamedata import _an_item_of_tier, _bashdrill  # noqa: E402
 from test_dat import needs_game, real_game  # noqa: E402
 
 
@@ -2846,3 +2846,60 @@ def test_the_real_collection_narrows_by_kind_and_by_rarity(real_game, qapp):
     proxy.set_places({green.data(PLACE_ROLE)})
     proxy.set_tiers({"Magic"})
     assert _shown(proxy) == ["Green"]
+
+
+@needs_game
+def test_a_fist_weapon_is_filtered_by_the_name_the_reference_gives_it(real_game, qapp):
+    """The four words the grid no longer draws, asked for by the ones it does.
+
+    Bashdrill's file says ``FIST`` and the reference database types it ``Claw``.
+    The advanced search's grid has a box for the second and none for the first,
+    so the question is whether ticking that box finds the item -- and it does
+    because the *read* is what is renamed rather than the drawing: the kind goes
+    through ``canonical_kind`` as the data file is read, so the item never has a
+    second name for the filter to miss.  ``2H Sword``, ``2H Axe``, ``2H Mace``
+    and ``Rifle`` are the same story, and ``tests/test_taxonomy.py`` holds all
+    five words to a box that exists without needing an item of each.
+
+    The whole path is here -- a real save blob, the catalogue, the rail and the
+    filter -- because the claim is about the wiring and not about one function.
+    """
+    item = _bashdrill()
+    row = {
+        "fingerprint": item.fingerprint,
+        "name": item.display_name,
+        "level": item.level,
+        "num_sockets": item.num_sockets,
+        "guid": f"{item.guid:016X}",
+        "prefix": item.prefix,
+        "suffix": item.suffix,
+        "num_enchants": item.num_enchants,
+    }
+    catalog = Catalog(real_game, IconCache(real_game.install))
+    model = new_model(COLLECTION_COLUMNS)
+    fill_collection(model, [row], catalog)
+    proxy = CollectionFilter()
+    proxy.setSourceModel(model)
+
+    cell = model.item(0, 0)
+    claw = ("Weapons", "One-Handed", "Claw")
+    assert cell.data(PLACE_ROLE) == claw, (
+        "the game's FIST reached the place unrenamed, so no box could match it"
+    )
+
+    # The rail draws the reference's word and has no row for the game's.
+    panel = _panel()
+    panel.set_shape([cell.data(PLACE_ROLE)])
+    assert _rows(panel) == ["Weapons", "  ONE-HANDED", "    Claw"], (
+        "the rail's rows are the reference's words, and the dead name is no row"
+    )
+
+    # And ticking it is how the item is asked for.
+    proxy.set_places({claw})
+    assert _shown(proxy) == ["Bashdrill"]
+
+    # Nothing else in the taxonomy answers for it: the item's own kind is in
+    # the box and the box is the reference's whole vocabulary, so a tick on
+    # any other kind leaves it out.
+    proxy.set_places({("Weapons", "One-Handed", "Sword")})
+    assert _shown(proxy) == []

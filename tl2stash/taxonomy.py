@@ -22,13 +22,21 @@ eighty-nine that do not are the ``BASE_*`` templates, which are no item at all
 ``tests/test_taxonomy.py`` re-reads the archive to notice the day the game
 disagrees.
 
-Four of the types no item in the corpus carries are kept, because the reference
-keeps them: ``Fist``, ``2H Sword``, ``2H Mace`` and ``Rifle`` stand in its list
-*"because UNITTYPE can still emit them"*.  Each is the game's own word for a
-kind the reference files under the other spelling of the same thing -- a fist is
-its ``Claw``, a ``2H Sword`` its ``Greatsword`` -- and the pair are listed
-separately there and here for one reason: a box is a *name* a kind can go by,
-and a name the game can still write is not a name to drop.
+Five of the reference's types are left out rather than kept, and the list here
+is 38 where its is 43.  ``Fist``, ``2H Sword``, ``2H Mace`` and ``Rifle`` stand
+in its list *"because UNITTYPE can still emit them"*, and they are the game's
+own word for a kind it files under the other spelling of the same thing: a fist
+is its ``Claw``, a ``2H Sword`` its ``Greatsword``.  ``Armor`` is the fifth --
+its type for the armour that is not a slot, which one record of its corpus
+carries and no item of the game does.
+
+A box there is a name a kind can go by; a box here is a *filter*, and a filter
+the corpus never lands in narrows to nothing.  Every item the game types
+``FIST`` or ``RIFLE`` is already filed under ``Claw`` and ``Shotgonne`` -- which
+is where the reference's own records put them too -- so the box would be a leaf
+that cannot fill beside the leaf holding all 88 of its items.  Ticking ``Claw``
+is how a player asks for a fist weapon, and that is the whole of the difference
+between the two lists.
 
 The embers are the same story one step along: the game writes
 ``CHAOS EMBER`` where a gem's file writes ``SOCKETABLE``, and the two are one
@@ -167,7 +175,7 @@ KIND_ALIASES: dict[str, str] = {
     "": "Quest Item",
 }
 
-#: Every kind of thing the game has, in the reference database's own list.
+#: Every kind of thing the game has, in the reference database's own words.
 #:
 #: ``(group, subgroup, kinds)``, and the *group* order is the rail's --
 #: ``Weapons`` appears three times, once per subgroup, in the order its three
@@ -179,20 +187,20 @@ KIND_ALIASES: dict[str, str] = {
 #: reference's own and nothing else's.
 #:
 #: ``Shield`` is under ``Weapons`` where the reference puts it, not under
-#: ``Armor`` where it feels like it belongs.  ``Armor`` is a kind as well as a
-#: group name -- the reference keeps one for the armour that is not a slot --
-#: and the four it keeps for kinds no item of the corpus carries are named and
-#: explained in the module docstring.
+#: ``Armor`` where it feels like it belongs.  ``Armor`` is a group name and not
+#: also a kind: the reference has a type of that name, for the armour that is
+#: not a slot, and no item of the game is one.
 #:
 #: The words are the reference's and so are the spellings: ``Leggings`` where
 #: the game writes ``PANTS``, ``Shotgonne`` where it writes ``RIFLE``.  What the
 #: game writes is in :data:`KIND_ALIASES`, against the word here it means.
 #:
-#: The four ember kinds, the three potion family names and ``Identify Scroll``
-#: are deliberately absent: each is one kind with the word above it, and
-#: :data:`KIND_ALIASES` is where they are made one.  Listed here they would be
-#: eight leaves of eight items each beside the leaf holding the 178 they belong
-#: with.
+#: This is 38 of the reference's 43 types, and the module docstring says which
+#: five are out and why.  The four ember kinds, the three potion family names
+#: and ``Identify Scroll`` are also deliberately absent: each is one kind with
+#: the word above it, and :data:`KIND_ALIASES` is where they are made one.
+#: Listed here they would be eight leaves of eight items each beside the leaf
+#: holding the 178 they belong with.
 #:
 #: The empty kind is deliberately absent: :data:`KIND_ALIASES` reads it as
 #: ``Quest Item``, which is here.
@@ -207,7 +215,6 @@ TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "Gloves",
             "Leggings",
             "Boots",
-            "Armor",
         ),
     ),
     (
@@ -221,7 +228,6 @@ TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "Claw",
             "Wand",
             "Pistol",
-            "Fist",
         ),
     ),
     (
@@ -237,9 +243,6 @@ TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "Crossbow",
             "Shotgonne",
             "Cannon",
-            "2H Sword",
-            "2H Mace",
-            "Rifle",
         ),
     ),
     ("Weapons", "Off-Hand", ("Shield",)),
@@ -288,12 +291,12 @@ _BY_KIND: dict[str, tuple[str, str | None]] = {
 #: It is here for the one control that offers the *game's* kinds rather than
 #: the collection's: the advanced search's Type grid, which is a form and has
 #: to be able to ask for a kind the player owns none of -- a search that could
-#: only name what is already on hand could only ever narrow the wall.  That the
-#: list is the reference's own, and in its own words, is what makes the panel's
-#: grid the same list of boxes as the reference's own advanced search, down to
-#: the four no item of the corpus lands in -- ``Fist``, ``2H Sword``, ``2H
-#: Mace`` and ``Rifle``, which the reference keeps *"because UNITTYPE can still
-#: emit them"*.
+#: only name what is already on hand could only ever narrow the wall.
+#:
+#: Every kind here is one an item can land in, which is what makes the grid a
+#: list of questions and not a list of words: the five types of the reference's
+#: that no item carries are out, so ticking a box here always has something to
+#: match.  The five are named in the module docstring.
 #:
 #: Not the empty kind, which is deliberately absent from the lists above: an
 #: item with no kind word is a ``Quest Item`` and reads as one, and an item with

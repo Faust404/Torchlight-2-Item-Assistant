@@ -962,16 +962,15 @@ def test_the_grid_offers_the_kinds_the_collection_has_none_of(qapp):
     the advanced search, not just the ones that correspond to the existing
     items in the tool"*.
 
-    A rifle and a map are kinds no collection in these tests holds, and a form
-    that could not name them could only ever narrow: the player selling the
-    last rifle would find the box gone and the search unwidenable from here.
-    The reference keeps its own list for exactly this -- *"kept because
-    UNITTYPE can still emit them"* -- and this is the same claim.
+    A two-handed axe and a map are kinds no collection in these tests holds,
+    and a form that could not name them could only ever narrow: the player
+    selling the last greataxe would find the box gone and the search
+    unwidenable from here.
     """
     _, overlay = opened(places=WIDE)
     words = set(boxes(overlay.types))
 
-    assert {"Rifle", "Map", "Fish", "Collar"} <= words, (
+    assert {"Greataxe", "Map", "Fish", "Collar"} <= words, (
         "the grid is still drawing only what the collection holds"
     )
     assert words >= {kind for _, _, kind in KIND_PLACES}, (
@@ -1000,18 +999,13 @@ def test_a_subgroup_is_set_in_under_the_group_it_belongs_to(qapp):
 
 def test_four_kinds_stand_on_every_line_of_the_grid(qapp):
     """The user's own number, read off a shown grid: lines by y, and the first
-    line of a group with more kinds than fit across it.
+    line of a group with six kinds holding four of them.
 
-    What it is for is legibility rather than arithmetic -- the armour kinds
+    What it is for is legibility rather than arithmetic -- six armour kinds
     down one column is a column twice as long as it needs to be, and the grid
     is now long enough that a ragged one would be long twice over -- so this is
     about what is *drawn*, and a grid that laid its boxes out any other way
     would fail it.
-
-    The Armor group is seven boxes here rather than the fixture's six, because
-    the grid is the whole taxonomy and not the collection: ``Armor`` is a kind
-    of the reference's -- the armour that is not a slot -- and it is drawn
-    whether or not this collection has one.
     """
     _, overlay = opened(places=WIDE)
     lines = rows(overlay.types)
@@ -1019,10 +1013,10 @@ def test_four_kinds_stand_on_every_line_of_the_grid(qapp):
     assert max(len(line) for line in lines) == 4, "a line holds more than four"
     assert lines[0] == [
         boxes(overlay.types)[word]
-        for word in ("Armor", "Boots", "Chest Armor", "Gloves")
+        for word in ("Boots", "Chest Armor", "Gloves", "Helmet")
     ]
-    assert [box.text() for box in lines[1]] == ["Helmet", "Leggings", "Shoulder Armor"], (
-        "the last three of the armour kinds do not follow the first four"
+    assert [box.text() for box in lines[1]] == ["Leggings", "Shoulder Armor"], (
+        "the last two of the six armour kinds do not follow the first four"
     )
     assert lines[1][0].x() == lines[0][0].x(), (
         "the fifth kind went back to the left margin instead of under a column"
@@ -1037,7 +1031,7 @@ def test_the_grid_opens_with_every_kind_ticked(qapp):
     _, overlay = opened(places=PLACES)
 
     assert all(box.isChecked() for box in boxes(overlay.types).values())
-    assert boxes(overlay.types)["Rifle"].isChecked(), (
+    assert boxes(overlay.types)["Cannon"].isChecked(), (
         "a kind the collection has none of is ticked too -- everything means "
         "everything, or the resting state would be a narrowing nobody asked for"
     )
@@ -1224,7 +1218,7 @@ def test_every_group_stays_on_the_strip_however_the_collection_moves(qapp):
 
     words = set(drawn(overlay.types))
     assert {"Boots", "Helmet"} <= words, "the two armour kinds that are held"
-    assert {"Shield", "Rifle", "Staff"} <= words, (
+    assert {"Shield", "Cannon", "Staff"} <= words, (
         "an Off-Hand and a Two-Handed are drawn over a collection with neither"
     )
     assert UNCLASSIFIED not in words, "the stranger's box stayed after it went"
