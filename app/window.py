@@ -721,9 +721,12 @@ class MainWindow(QMainWindow):
         # rebuilt with them, because what it draws is what the filters left.
         places = [catalog.entry(row["fingerprint"], row).place for row in rows]
         self.sidebar.set_shape(places)
-        # The same shape, to the advanced search's Type grid: one list of kinds
-        # in two places, so a kind can be ticked above or in the rail and the
-        # two are the same tick.
+        # And the same rows again to the advanced search's Type grid, which is
+        # not the same list and does not want to be: the panel draws the game's
+        # kinds, and the collection's are the strangers folded in among them --
+        # a mod's, or a kind the game has and the player owns none of.  Ticks
+        # are the one state either way, so a kind ticked above or in the rail
+        # is the same tick.
         self.advanced.set_kinds(places)
         self._filters_changed()
 

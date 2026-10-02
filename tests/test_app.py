@@ -586,10 +586,13 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
         # Every box on the grid is ticked to begin with, so the walk is to
         # untick the socketable and leave the swords' kind standing: what the
         # rail is handed has to be that one kind, which is a narrowing the
-        # panel did and the rail did not.
+        # panel did and the rail did not.  The grid draws the game's kinds
+        # rather than this collection's -- see
+        # :class:`app.advsearch.TypeGrid` -- so the two the fixture stocks are
+        # two among the fifty-odd on it, and the walk is between them.
         kinds_drawn = panel.types.findChildren(QCheckBox)
-        assert {box.text() for box in kinds_drawn} == {"Sword", "Socketable"}, (
-            "the fixture's three items are not the two kinds this walks"
+        assert {"Sword", "Socketable"} <= {box.text() for box in kinds_drawn}, (
+            "the fixture's three items are not among the kinds the grid draws"
         )
         for box in kinds_drawn:
             box.setChecked(box.text() == "Sword")

@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from tl2stash.card import TIER_INK
-from tl2stash.taxonomy import Place
+from tl2stash.taxonomy import KIND_PLACES, Place
 
 from .card import BODY, DIM, GOLD, HEAD, LABEL, LINE, PANEL, Hairline
 from .compare import SCRIM, inset_for
@@ -83,12 +83,20 @@ ALL_TYPES = "All"
 #: How wide the panel is allowed to get, however wide the window is.  A form is
 #: read down a column, and a search box spanning a 1400px screen puts its words
 #: at one edge and its end at the other; the reference caps its own panel for
-#: the same reason, and this is a little wider than its 620 -- for the Type
-#: grid, which now draws four kinds to a row where it drew two.  It is a cap
-#: and not a width: what the panel opens at is the width of the form inside it
-#: -- see :class:`Body` -- and this is only what stops a wide window handing it
-#: more than a form should have.
-PANEL_MAX = 820
+#: the same reason, and this is wider than its 620 -- for the Type grid, which
+#: draws four kinds to a row and now draws the whole of the game's taxonomy in
+#: them.
+#:
+#: It is a cap and not a width.  What the panel opens at is the width of the
+#: form inside it -- see :class:`Body` -- and this is only what stops a wide
+#: *window* from handing it more than a form should have.  Which means it has
+#: to stand clear of the form rather than inside it: the widest thing here is
+#: the grid, and how wide that is depends on the machine's face, which is not a
+#: number this file can pin.  A cap below the form would not make the panel
+#: narrower than the form -- it would make it narrower *than its own form*, and
+#: the ends of the rows would be cut off, because the body scrolls down and not
+#: across.  So it is set well clear, and in practice the form is what decides.
+PANEL_MAX = 960
 
 #: How many kind boxes stand in one row of the Type grid.  The user's own
 #: number.  The reference draws two, which is what its narrower panel fits; at
@@ -449,7 +457,7 @@ class Body(QScrollArea):
 
 
 class TypeGrid(QWidget):
-    """Every kind the collection holds, in one grid, under a strip of buttons.
+    """Every kind the *game* has, in one grid, under a strip of buttons.
 
     A second view of the rail and not a second filter: the shape and the order
     are :func:`app.sidebar.arranged`'s, which is what the rail draws from, and
@@ -457,6 +465,24 @@ class TypeGrid(QWidget):
     the draft is committed rather than ANDing two sets here.  So a player who
     ticks Boots on this panel and a player who ticks Boots on the rail have
     asked for the same collection.
+
+    What it draws is the game's own vocabulary rather than the collection's:
+    :data:`tl2stash.taxonomy.KIND_PLACES`, with whatever the collection holds
+    that the taxonomy does not know added to it -- a mod's kinds, and the empty
+    kind an item with no ``UNITTYPE`` word carries.  The rail is a description
+    of what is *here* and can only offer what the player has; this is a form,
+    and a form that could only name what is already on hand could only ever
+    narrow.  The reference keeps its own type list for the same reason, and
+    spells it out: ``Fist``, ``Rifle``, ``2H Mace`` and ``2H Sword`` stand in
+    it although no item in its corpus carries one, *"kept because UNITTYPE can
+    still emit them"*.
+
+    Two things follow, and both are the point rather than a side effect.  A
+    group stays on the strip whether or not the collection has a kind under it,
+    because the group has kinds in it either way.  And a kind ticked here stays
+    ticked when the collection loses its last one: the kind is still a kind, so
+    the tick is no longer the collection's business -- which is what the rail
+    cannot say and this can.
 
     The strip is a *bulk toggle* and not a set of tabs, which is the
     reference's own reading of this control and the one the user asked to have
@@ -479,15 +505,21 @@ class TypeGrid(QWidget):
     a box nobody has searched for yet would be the numbers of a list the player
     is not looking at, which is the one thing a count must never be.
 
-    The boxes are the *collection's* kinds rather than the current answer's,
-    also like the reference: a box that vanished because of a filter the same
-    panel set is a box the player cannot tick, so a search could never be
-    widened from here.
+    The boxes are the game's kinds rather than the current answer's, also like
+    the reference: a box that vanished because of a filter the same panel set
+    is a box the player cannot tick, so a search could never be widened from
+    here -- and a box that vanished because the collection has none of that
+    kind is the same fault with a longer memory.
     """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._places: frozenset[Place] = frozenset()
+        #: Everything the grid draws: the game's kinds, and the collection's
+        #: strangers.  A kind's *box* is a thing the player can ask for, and
+        #: what the player can ask for is the game's list -- see the class
+        #: docstring -- so this is a wider set than the rail's and the ticks
+        #: are read against it rather than against what the collection holds.
+        self._drawn: frozenset[Place] = frozenset()
         self._ticked: set[Place] = set()
         self._boxes: dict[Place, QCheckBox] = {}
         self._tabs: dict[str, QPushButton] = {}
@@ -517,27 +549,31 @@ class TypeGrid(QWidget):
     # -- what it is told --------------------------------------------------
 
     def set_kinds(self, places) -> None:
-        """Draw this shape of the collection, keeping the ticks it had.
+        """Draw the game's kinds with the collection's strangers among them.
 
-        Called after every poll with what the collection holds, and does
-        nothing at all when the shape has not moved -- the same bargain the
-        rail makes, and for the same reason: a grid rebuilt under the pointer
-        is a grid that loses the click.  The panel is usually hidden, where
-        this costs one comparison of two small sets.
+        ``places`` is what the collection holds, and the one thing it changes
+        about the grid: a kind the taxonomy does not know -- a mod's, or one
+        whose data file is gone -- has no box otherwise, and a box is the only
+        way to ask for it.  Called after every poll, and it does nothing at all
+        when the *drawn* set has not moved, which is the same bargain the rail
+        makes: a kind of the game's arriving in the collection changes nothing
+        on screen, and a grid rebuilt under the pointer is a grid that loses
+        the click.
 
         A grid that was wholly ticked stays wholly ticked across the change,
         which is the resting state being carried over rather than a new kind
         arriving unticked: the collection gains and loses a kind every time the
         player moves an item, and a panel left open on a poll must not come
         back narrowed by the item that happened to arrive.  A grid the player
-        *has* narrowed keeps only the ticks the collection still has.
+        *has* narrowed keeps only the ticks it still has -- which for the
+        game's own kinds is all of them, however the collection moves.
         """
-        wanted = frozenset(tuple(place) for place in places)
-        if wanted == self._places:
+        drawn = KIND_PLACES | {tuple(place) for place in places}
+        if drawn == self._drawn:
             return
-        whole = self._ticked == set(self._places)
-        self._places = wanted
-        self._ticked = set(wanted) if whole else self._ticked & wanted
+        whole = self._ticked == set(self._drawn)
+        self._drawn = frozenset(drawn)
+        self._ticked = set(drawn) if whole else self._ticked & drawn
         self._rebuild()
 
     def ticks(self) -> set[Place]:
@@ -548,8 +584,15 @@ class TypeGrid(QWidget):
         but "anything", so the resting state of the control and the resting
         state of the search are the same state written twice -- see
         :meth:`tick` for the other direction of the same round trip.
+
+        What is handed back is the rail's own value, and it can name kinds the
+        rail is not drawing because the collection has none of them: a kind
+        that is not *there* is not an item that fails to match, so the two sets
+        narrow to the same collection -- see
+        :meth:`app.models.CollectionFilter.set_places`, whose empty set means
+        every kind and whose named set means only those.
         """
-        if self._ticked == set(self._places):
+        if self._ticked == set(self._drawn):
             return set()
         return set(self._ticked)
 
@@ -560,12 +603,12 @@ class TypeGrid(QWidget):
         search that names no kinds comes up with the whole grid ticked: no
         kinds ticked is not a grid the player would recognise as *their*
         search, and an empty grid and a full one mean the same thing to the
-        model.  A search that does name kinds ticks exactly the ones the
-        collection still has -- a kind that is no longer in it is no longer a
-        thing to narrow by.
+        model.  A search that does name kinds ticks exactly those of them the
+        grid draws -- and a name it does not draw is a kind from neither the
+        game's list nor the collection's, which is no kind at all.
         """
         named = {tuple(place) for place in places}
-        self._ticked = set(self._places) if not named else named & self._places
+        self._ticked = set(self._drawn) if not named else named & self._drawn
         self._fill()
 
     # -- the user ---------------------------------------------------------
@@ -610,7 +653,7 @@ class TypeGrid(QWidget):
         """
         return [
             place
-            for name, subgroups in arranged(self._places)
+            for name, subgroups in arranged(self._drawn)
             if group == ALL_TYPES or name == group
             for _, here in subgroups
             for place in here
@@ -638,7 +681,7 @@ class TypeGrid(QWidget):
 
     def _rebuild(self) -> None:
         """Redraw the group buttons, then refill the grid from the new shape."""
-        groups = [ALL_TYPES] + [name for name, _ in arranged(self._places)]
+        groups = [ALL_TYPES] + [name for name, _ in arranged(self._drawn)]
         _empty(self._tab_row)
         self._tabs = {}
         for name in groups:
@@ -664,13 +707,19 @@ class TypeGrid(QWidget):
         indented one under it, and its kinds follow -- so a group never breaks
         across the gutter with a heading stranded at the bottom of a column,
         which is what the spanning cell is for.
+
+        The list is :attr:`_drawn`'s, so it is the whole of the game's taxonomy
+        with the collection's strangers folded in where their group puts them
+        -- fifty-odd boxes on a panel that a collection of four kinds used to
+        give a dozen.  That it is long is the point of it: this is a form to ask
+        questions of, not a description of the answer.
         """
         _empty(self._grid)
         self._boxes = {}
         self._updating = True
         try:
             row = 0
-            for group, subgroups in arranged(self._places):
+            for group, subgroups in arranged(self._drawn):
                 self._grid.addWidget(self._heading(group, HEAD), row, 0, 1, COLUMNS)
                 row += 1
                 for subgroup, here in subgroups:
@@ -906,13 +955,29 @@ class AdvancedSearchOverlay(QWidget):
         """Tell the panel which kinds the collection holds.
 
         Called after every poll, and passed straight to the Type grid, which
-        rebuilds only when the shape has moved.
+        draws the game's own kinds around them and rebuilds only when what it
+        draws has moved.
         """
         wanted = list(places)
         if wanted == self._shape:
             return
         self._shape = wanted
         self.types.set_kinds(wanted)
+        self._remeasure()
+
+    def _remeasure(self) -> None:
+        """Let the panel widen if the form inside it has.
+
+        The panel is as wide as the form it holds, and Qt works that width out
+        once -- while the Type grid is still empty, because the panel is built
+        before it is given anything to draw.  A grid filled with the game's
+        kinds afterwards is a form half again as wide as the panel that was
+        measured around it, and the extra is not a sideways scroll: the body
+        scrolls down and not across, so it is the ends of the rows.  Asking the
+        body to say how wide it is asks the form again -- see
+        :meth:`Body.sizeHint` -- and the panel is laid out around the answer.
+        """
+        self._scroll.updateGeometry()
 
     def open_for(
         self,
@@ -938,6 +1003,10 @@ class AdvancedSearchOverlay(QWidget):
         self.raise_()
         self.show()
         self.setFocus()
+        # And once the panel is up, because a hidden widget is not laid out: the
+        # form has been given the grid's kinds on the way in, and this is the
+        # moment the panel can be measured around what they came to.
+        self._remeasure()
 
     def draft(self) -> Advanced:
         """What the controls say right now, as one search.
@@ -1049,6 +1118,9 @@ class AdvancedSearchOverlay(QWidget):
         see :class:`Body`.
         """
         scroll = Body()
+        #: Kept, because it is the one piece that knows how wide the form is
+        #: -- see :meth:`AdvancedSearchOverlay._remeasure`.
+        self._scroll = scroll
         scroll.setObjectName("abody")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)

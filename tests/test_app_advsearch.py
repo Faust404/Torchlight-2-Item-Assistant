@@ -67,9 +67,10 @@ from app.models import (  # noqa: E402
     REQ_WORDS,
     Advanced,
 )
-from app.sidebar import UNCLASSIFIED  # noqa: E402
+from app.sidebar import UNCLASSIFIED, arranged  # noqa: E402
 from app.theme import CHALK  # noqa: E402
 from tl2stash.card import Rung  # noqa: E402
+from tl2stash.taxonomy import KIND_PLACES  # noqa: E402
 
 from test_app_filters import BOOTS, BROKEN, HELMET, SWORD  # noqa: E402
 
@@ -222,6 +223,19 @@ def rows(grid) -> list[list[QCheckBox]]:
     return [
         sorted(lines[y], key=lambda box: box.x()) for y in sorted(lines)
     ]
+
+
+def everything(places) -> set:
+    """The places the grid draws for a collection.
+
+    The game's own list, with whichever of the collection's the game's list
+    does not have folded in -- a mod's kinds, and the empty kind.  Spelled out
+    here rather than read off the grid, because *what* it draws is the claim
+    under test: ``tl2stash.taxonomy.KIND_PLACES`` is the game's list and the
+    union is the panel's rule, and a test that asked the grid what it drew
+    would agree with it about anything.
+    """
+    return set(KIND_PLACES) | {tuple(place) for place in places}
 
 
 def only(grid, *words: str) -> None:
@@ -917,26 +931,49 @@ def test_the_grid_draws_every_group_at_once_under_its_own_heading(qapp):
     way of telling the two apart now that they are one size.
     """
     _, overlay = opened(places=WIDE)
+    here = everything(WIDE)
 
-    assert drawn(overlay.types) == [
+    expected: list[str] = []
+    for group, subgroups in arranged(here):
+        expected.append(group)
+        for subgroup, kinds in subgroups:
+            if subgroup is not None:
+                expected.append(subgroup.upper())
+            expected.extend(kind[2] or UNCLASSIFIED for kind in kinds)
+
+    assert drawn(overlay.types) == expected
+    assert list(tabs(overlay.types)) == [
+        ALL_TYPES,
         "Armor",
-        "Boots",
-        "Chest Armor",
-        "Gloves",
-        "Helmet",
-        "Pants",
-        "Shoulder Armor",
         "Weapons",
-        "ONE-HANDED",
-        "Axe",
-        "Sword",
-        "TWO-HANDED",
-        "Bow",
+        "Accessories",
+        "Misc",
         "Other",
-        UNCLASSIFIED,
-    ]
-    assert list(tabs(overlay.types)) == [ALL_TYPES, "Armor", "Weapons", "Other"], (
-        "a group button per group the collection has, in the rail's order"
+    ], "a group button per group the grid draws, in the rail's order"
+
+
+def test_the_grid_offers_the_kinds_the_collection_has_none_of(qapp):
+    """What the user asked for in as many words: *"add all available types to
+    the advanced search, not just the ones that correspond to the existing
+    items in the tool"*.
+
+    A rifle and a map are kinds no collection in these tests holds, and a form
+    that could not name them could only ever narrow: the player selling the
+    last rifle would find the box gone and the search unwidenable from here.
+    The reference keeps its own list for exactly this -- *"kept because
+    UNITTYPE can still emit them"* -- and this is the same claim.
+    """
+    _, overlay = opened(places=WIDE)
+    words = set(boxes(overlay.types))
+
+    assert {"Rifle", "Map", "Fish", "Collar"} <= words, (
+        "the grid is still drawing only what the collection holds"
+    )
+    assert words >= {kind for _, _, kind in KIND_PLACES}, (
+        "a kind the game has is missing from the grid"
+    )
+    assert UNCLASSIFIED in words, (
+        "the collection's own stranger went with them -- this is a union"
     )
 
 
@@ -961,18 +998,22 @@ def test_four_kinds_stand_on_every_line_of_the_grid(qapp):
     line of a group with six kinds holding four of them.
 
     What it is for is legibility rather than arithmetic -- six armour kinds
-    down one column is a column twice as long as it needs to be -- so this is
+    down one column is a column twice as long as it needs to be, and the grid
+    is now long enough that a ragged one would be long twice over -- so this is
     about what is *drawn*, and a grid that laid its boxes out any other way
     would fail it.
     """
     _, overlay = opened(places=WIDE)
     lines = rows(overlay.types)
 
-    assert [len(line) for line in lines] == [4, 2, 2, 1, 1]
+    assert max(len(line) for line in lines) == 4, "a line holds more than four"
     assert lines[0] == [
         boxes(overlay.types)[word]
         for word in ("Boots", "Chest Armor", "Gloves", "Helmet")
     ]
+    assert [box.text() for box in lines[1]] == ["Pants", "Shoulder Armor"], (
+        "the last two of the six armour kinds do not follow the first four"
+    )
     assert lines[1][0].x() == lines[0][0].x(), (
         "the fifth kind went back to the left margin instead of under a column"
     )
@@ -986,6 +1027,10 @@ def test_the_grid_opens_with_every_kind_ticked(qapp):
     _, overlay = opened(places=PLACES)
 
     assert all(box.isChecked() for box in boxes(overlay.types).values())
+    assert boxes(overlay.types)["Rifle"].isChecked(), (
+        "a kind the collection has none of is ticked too -- everything means "
+        "everything, or the resting state would be a narrowing nobody asked for"
+    )
     assert overlay.types.ticks() == set(), "the whole grid is no kind in particular"
     assert overlay.draft().places == frozenset()
 
@@ -1002,17 +1047,16 @@ def test_a_group_button_takes_the_whole_group_and_gives_it_back(qapp):
     """
     _, overlay = opened(places=WIDE)
     button = tabs(overlay.types)["Armor"]
+    armour = {place for place in everything(WIDE) if place[0] == "Armor"}
 
     pressed(button)
 
     assert not any(box.isChecked() for box in rows(overlay.types)[0])
     assert boxes(overlay.types)["Sword"].isChecked(), "a weapon went with it"
-    assert overlay.draft().places == {
-        ("Weapons", "One-Handed", "Axe"),
-        ("Weapons", "One-Handed", "Sword"),
-        ("Weapons", "Two-Handed", "Bow"),
-        ("Other", None, ""),
-    }
+    assert boxes(overlay.types)["Boots"].isChecked() is False
+    assert overlay.draft().places == everything(WIDE) - armour, (
+        "the press took the six armour kinds out of the search and nothing else"
+    )
 
     pressed(button)
 
@@ -1058,20 +1102,45 @@ def test_the_kinds_ticked_reach_the_search_as_places(qapp):
     assert overlay.draft().places == {BOOTS, HELMET}
 
 
-def test_a_tick_on_a_kind_the_collection_has_lost_goes_with_it(qapp):
+#: A kind from neither the game's list nor these collections': what an item
+#: from a mod carries, and the only kind the collection can take away.
+PAD = ("Other", None, "Shoulderpad")
+
+
+def test_a_tick_on_one_of_the_game_s_kinds_stays_when_the_collection_moves(qapp):
+    """The other half of the grid being the game's list rather than the
+    collection's: a kind is still a kind when the last sword of it is sold.
+
+    The rail cannot say this -- a leaf with no items under it is not a leaf --
+    and a panel that dropped the tick with the items would be a search quietly
+    widening itself behind the player's back, which is the one thing a filter
+    is never allowed to do.
+    """
+    _, overlay = opened(state=Advanced(places=frozenset({SWORD})))
+
+    overlay.set_kinds([BOOTS, HELMET])
+
+    assert boxes(overlay.types)["Sword"].isChecked(), "the box went with the swords"
+    assert overlay.types.ticks() == {SWORD}, "a tick the player set was thrown away"
+    assert overlay.draft().places == {SWORD}
+
+
+def test_a_tick_on_a_stranger_the_collection_has_lost_goes_with_it(qapp):
     """The collection is thrown away and built again every poll, and a kind
-    that is no longer in it is no longer a thing to narrow by.
+    that was only ever *in* it is drawn from it: with the last modded item
+    gone there is no such kind to offer and no tick to keep.
 
     When the lost kind was the *only* one ticked there is nothing left to
     narrow by, and the grid says so the way this control says everything: no
     kind ticked is any kind, which is also where three of the four ticks went
     when the grid opened -- see :meth:`app.advsearch.TypeGrid.set_kinds`.
     """
-    _, overlay = opened(state=Advanced(places=frozenset({SWORD})))
+    _, overlay = opened(places=PLACES + [PAD], state=Advanced(places=frozenset({PAD})))
+    assert "Shoulderpad" in boxes(overlay.types), "the stranger was not drawn"
 
     overlay.set_kinds([BOOTS, HELMET])
 
-    assert SWORD not in overlay.types.ticks()
+    assert "Shoulderpad" not in boxes(overlay.types)
     assert overlay.draft().places == frozenset()
     assert not any(box.isChecked() for box in boxes(overlay.types).values()), (
         "a box for a kind that is gone stayed ticked"
@@ -1080,13 +1149,25 @@ def test_a_tick_on_a_kind_the_collection_has_lost_goes_with_it(qapp):
 
 def test_a_grid_that_has_not_moved_is_not_built_again(qapp):
     """A grid rebuilt under the pointer is a grid that loses the click -- the
-    same bargain the rail makes, and the reason the shape is compared first."""
+    same bargain the rail makes, and the reason the drawn set is compared
+    first.  Which is not the collection: a poll that swapped one game kind for
+    another has changed nothing on screen, and a grid of fifty boxes is worth
+    not rebuilding for that.
+    """
     _, overlay = opened()
     drawn_before = overlay.types.findChildren(QCheckBox)
 
     overlay.types.set_kinds(list(PLACES))
 
     assert overlay.types.findChildren(QCheckBox) == drawn_before, "the grid was rebuilt"
+
+    swapped = [BOOTS, HELMET, BROKEN, ("Weapons", "One-Handed", "Axe")]
+
+    overlay.types.set_kinds(swapped)
+
+    assert overlay.types.findChildren(QCheckBox) == drawn_before, (
+        "a sword left the collection and a sword arrived, and the grid redrew"
+    )
 
 
 def test_a_grid_left_whole_stays_whole_when_the_collection_moves(qapp):
@@ -1113,14 +1194,30 @@ def test_a_grid_left_whole_stays_whole_when_the_collection_moves(qapp):
     )
 
 
-def test_a_group_the_collection_has_lost_goes_off_the_strip(qapp):
-    """Rather than staying on it as a button that toggles nothing."""
+def test_every_group_stays_on_the_strip_however_the_collection_moves(qapp):
+    """A group button is over the kinds *under* it, and the grid draws the
+    game's kinds, so a group is never left toggling nothing: a collection of
+    two armour kinds still offers Weapons, and Off-Hand still offers its one
+    shield -- which the rail, drawing only what is here, cannot do.
+    """
     _, overlay = opened(places=WIDE)
 
     overlay.set_kinds([BOOTS, HELMET])
 
-    assert list(tabs(overlay.types)) == [ALL_TYPES, "Armor"]
-    assert drawn(overlay.types) == ["Armor", "Boots", "Helmet"]
+    assert list(tabs(overlay.types)) == [
+        ALL_TYPES,
+        "Armor",
+        "Weapons",
+        "Accessories",
+        "Misc",
+    ], "the Other group went with the collection's stranger; the rest stayed"
+
+    words = set(drawn(overlay.types))
+    assert {"Boots", "Helmet"} <= words, "the two armour kinds that are held"
+    assert {"Shield", "Rifle", "Staff"} <= words, (
+        "an Off-Hand and a Two-Handed are drawn over a collection with neither"
+    )
+    assert UNCLASSIFIED not in words, "the stranger's box stayed after it went"
 
 
 def test_a_group_s_button_says_how_much_of_it_is_ticked(qapp):

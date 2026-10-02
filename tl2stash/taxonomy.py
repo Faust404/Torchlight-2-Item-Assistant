@@ -47,6 +47,7 @@ from __future__ import annotations
 
 __all__ = [
     "KIND_ALIASES",
+    "KIND_PLACES",
     "OTHER",
     "TYPE_GROUPS",
     "Place",
@@ -210,6 +211,28 @@ _BY_KIND: dict[str, tuple[str, str | None]] = {
     for group, subgroup, kinds in TYPE_GROUPS
     for kind in kinds
 }
+
+#: Every kind in :data:`TYPE_GROUPS` as the rail's own :data:`Place`: the whole
+#: list at once, unarranged -- putting them in the rail's order is
+#: :func:`app.sidebar.arranged`'s job, and this is only the vocabulary.
+#:
+#: It is here for the one control that offers the *game's* kinds rather than
+#: the collection's: the advanced search's Type grid, which is a form and has
+#: to be able to ask for a kind the player owns none of -- a search that could
+#: only name what is already on hand could only ever narrow the wall.  The
+#: reference keeps types in its own list for exactly this reason: ``Fist``,
+#: ``Rifle``, ``2H Mace`` and ``2H Sword`` stand in it although no item in its
+#: corpus carries one, *"kept because UNITTYPE can still emit them"*.
+#:
+#: Not the empty kind, which is deliberately absent from the lists above: an
+#: item with no kind word is not a kind, and a grid draws it when the
+#: collection holds one rather than always.  The aliased spellings are absent
+#: for the reason :data:`KIND_ALIASES` gives -- they are the same leaves.
+KIND_PLACES: frozenset[Place] = frozenset(
+    (group, subgroup, kind)
+    for group, subgroup, kinds in TYPE_GROUPS
+    for kind in kinds
+)
 
 
 def canonical_kind(kind: str) -> str:

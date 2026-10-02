@@ -23,6 +23,7 @@ from tl2stash.dat import VAR_UNITTYPE  # noqa: E402
 from tl2stash.gamedata import archive_path, read_unit_type  # noqa: E402
 from tl2stash.pak import PakIndex  # noqa: E402
 from tl2stash.taxonomy import (  # noqa: E402
+    KIND_PLACES,
     OTHER,
     TYPE_GROUPS,
     canonical_kind,
@@ -255,3 +256,27 @@ def test_the_weapons_are_split_and_the_armour_is_not():
     # A weapon held in the off hand is still a weapon, which is the reference's
     # placement and not the obvious one.
     assert group_of("Shield") == ("Weapons", "Off-Hand")
+
+
+def test_every_listed_kind_is_a_place_and_the_empty_kind_is_not():
+    """What the advanced search's Type grid draws from: the whole taxonomy as
+    places, so that it can offer a kind the collection has none of.
+
+    A place and not a word, because that is what the rail holds and what the
+    filter matches on -- and the empty kind is deliberately *not* in here, so a
+    grid built from this list never draws a box for a kind that is not one.
+    """
+    assert KIND_PLACES == {
+        (group, subgroup, kind)
+        for group, subgroup, kinds in TYPE_GROUPS
+        for kind in kinds
+    }
+    assert len(KIND_PLACES) == sum(len(kinds) for _, _, kinds in TYPE_GROUPS)
+    assert not any(kind == "" for _, _, kind in KIND_PLACES)
+    assert ("Weapons", "One-Handed", "Sword") in KIND_PLACES
+    assert ("Other", None, "") not in KIND_PLACES, "the empty kind is no kind"
+
+    # Every one of them is a kind :func:`group_of` agrees with, which is what
+    # makes the grid's boxes and the rail's leaves the same leaves.
+    for place in KIND_PLACES:
+        assert group_of(place[2]) == (place[0], place[1]), place
