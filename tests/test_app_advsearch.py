@@ -90,15 +90,20 @@ PLACES = [BOOTS, HELMET, SWORD, BROKEN]
 #: The words the grid draws over those four, in the rail's own order.
 PLACE_WORDS = ["Boots", "Helmet", "Sword", UNCLASSIFIED]
 
-#: A collection wide enough to say something about the grid's *shape*: six
-#: armour kinds, which is a full row of four and one of two, and two weapon
+#: A collection wide enough to say something about the grid's *shape*: the
+#: armour kinds, which is more than a full row of four, and two weapon
 #: subgroups, which is the one group that has headings inside it.
+#:
+#: ``Leggings`` and not ``Pants``: the game writes the second and the reference
+#: says the first, and a place is drawn in the reference's words -- so a
+#: fixture naming the game's word would be a box no item of this collection
+#: could ever land in.
 WIDE = [
     ("Armor", None, "Boots"),
     ("Armor", None, "Chest Armor"),
     ("Armor", None, "Gloves"),
     ("Armor", None, "Helmet"),
-    ("Armor", None, "Pants"),
+    ("Armor", None, "Leggings"),
     ("Armor", None, "Shoulder Armor"),
     ("Weapons", "One-Handed", "Axe"),
     ("Weapons", "One-Handed", "Sword"),
@@ -995,13 +1000,18 @@ def test_a_subgroup_is_set_in_under_the_group_it_belongs_to(qapp):
 
 def test_four_kinds_stand_on_every_line_of_the_grid(qapp):
     """The user's own number, read off a shown grid: lines by y, and the first
-    line of a group with six kinds holding four of them.
+    line of a group with more kinds than fit across it.
 
-    What it is for is legibility rather than arithmetic -- six armour kinds
+    What it is for is legibility rather than arithmetic -- the armour kinds
     down one column is a column twice as long as it needs to be, and the grid
     is now long enough that a ragged one would be long twice over -- so this is
     about what is *drawn*, and a grid that laid its boxes out any other way
     would fail it.
+
+    The Armor group is seven boxes here rather than the fixture's six, because
+    the grid is the whole taxonomy and not the collection: ``Armor`` is a kind
+    of the reference's -- the armour that is not a slot -- and it is drawn
+    whether or not this collection has one.
     """
     _, overlay = opened(places=WIDE)
     lines = rows(overlay.types)
@@ -1009,10 +1019,10 @@ def test_four_kinds_stand_on_every_line_of_the_grid(qapp):
     assert max(len(line) for line in lines) == 4, "a line holds more than four"
     assert lines[0] == [
         boxes(overlay.types)[word]
-        for word in ("Boots", "Chest Armor", "Gloves", "Helmet")
+        for word in ("Armor", "Boots", "Chest Armor", "Gloves")
     ]
-    assert [box.text() for box in lines[1]] == ["Pants", "Shoulder Armor"], (
-        "the last two of the six armour kinds do not follow the first four"
+    assert [box.text() for box in lines[1]] == ["Helmet", "Leggings", "Shoulder Armor"], (
+        "the last three of the armour kinds do not follow the first four"
     )
     assert lines[1][0].x() == lines[0][0].x(), (
         "the fifth kind went back to the left margin instead of under a column"

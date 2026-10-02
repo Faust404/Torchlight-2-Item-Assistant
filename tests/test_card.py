@@ -60,13 +60,17 @@ def test_a_real_item_reads_as_the_card_the_window_draws(real_game):
     colours the name, the kind underneath it and the icon in the corner -- and
     none of it is in the save file.  It comes from the item's own data file by
     way of its guid, which is why this needs the game installed.
+
+    ``Claw`` on the type line: Bashdrill is a fist weapon and the game's
+    ``UNITTYPE`` says so, but the card says what the reference database says,
+    which is the word the player will look the item up under.
     """
     card = build(_bashdrill(), real_game)
 
     assert card.name == "Bashdrill"
     assert card.tier == "unique"
     assert card.tier_word == "Unique"
-    assert card.type_name == "Fist"
+    assert card.type_name == "Claw"
     assert card.icon == "icon_weapon_fist14"
     assert card.level == 45
     # One socket and nothing in it, which is why the two are different

@@ -1773,11 +1773,15 @@ def test_a_unique_is_read_as_a_unique_with_its_kind_and_its_icon(real_game):
     number, and that is all.  The item is ``FIST_U04.DAT``, which states only
     its icon and its base file; the tier and the kind come down the chain from
     ``base_fists_unique.dat``, which is the inheritance this reads through.
+
+    ``Claw`` and not ``Fist``: the game's ``UNITTYPE`` says the second and the
+    reference's type list says the first, which is the same rename the rail and
+    the advanced search's grid wear.
     """
     appearance = real_game.appearance_for(_bashdrill())
 
     assert appearance.tier == "Unique"
-    assert appearance.type_name == "Fist"
+    assert appearance.type_name == "Claw"
     assert appearance.icon == "icon_weapon_fist14"
     assert appearance.set_name is None
     assert appearance.item_level == 45
