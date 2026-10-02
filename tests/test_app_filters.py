@@ -35,7 +35,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QPalette, QStandardItem  # noqa: E402
+from PySide6.QtGui import QColor, QFontMetrics, QPalette, QStandardItem  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QGroupBox,
@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
 from app.filters import INSET, WASH, FilterBar  # noqa: E402
-from app.theme import CHALK, apply_theme  # noqa: E402
+from app.theme import BODY_PX, CHALK, RAIL_PX, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
@@ -909,6 +909,35 @@ def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
     assert [washed.red(), washed.green(), washed.blue()] == pytest.approx(
         wanted, abs=2
     ), "the tick's fill is not the tier's colour over the ground"
+
+
+def test_the_rail_s_words_are_a_step_up_from_the_window_s_body(themed):
+    """The user's third change, and the one place in the window that sets a
+    size of its own: the rail is a column of kind names with height to spare,
+    and the words there are what the player aims at.
+
+    Measured on a real rail rather than read off the sheet, because the rule
+    is written about an *object name* -- a tree that went unnamed would keep
+    the window's 13px and nothing else would say so.  The rows come with the
+    words, which is the other half of that spare height: a 15px word in a 13px
+    row is a clipped word.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    panel.resize(240, 300)
+    panel.show()
+    themed.processEvents()
+
+    tree = panel.tree
+    body = QFontMetrics(QApplication.font())
+    row = tree.visualItemRect(tree.topLevelItem(0)).height()
+
+    assert QApplication.font().pixelSize() == BODY_PX, "the body is not the body"
+    assert tree.font().pixelSize() == RAIL_PX > BODY_PX
+    assert tree.fontMetrics().horizontalAdvance("Boots") > body.horizontalAdvance(
+        "Boots"
+    ), "the rail is drawn no wider than the window's own text"
+    assert row > body.height(), "the rows did not grow with the words"
 
 
 def test_the_rails_boxes_are_outlined_and_fill_when_ticked(themed):

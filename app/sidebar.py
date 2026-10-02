@@ -112,6 +112,11 @@ class SidePanel(QWidget):
 
     def _build_tree(self) -> QTreeWidget:
         tree = QTreeWidget()
+        # Named, because the size the rows are set at -- and with it how tall a
+        # row is drawn -- is the sheet's one rule about a *rail* rather than
+        # about trees: see :data:`app.theme.RAIL_PX`.  Everything else about
+        # this tree is set here.
+        tree.setObjectName("rail")
         tree.setColumnCount(2)
         tree.header().setVisible(False)
         tree.setUniformRowHeights(True)

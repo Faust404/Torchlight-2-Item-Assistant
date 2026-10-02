@@ -173,6 +173,23 @@ SANS = ("Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif")
 #: rather than a different scheme.
 BODY_PX = 13
 
+#: The rail's own size, one step up from the body's -- the only place in the
+#: window that sets a size of its own.
+#:
+#: The rail is a column of kind names down the left edge with a window's worth
+#: of height to spare and nothing else in it, and its words are the one thing
+#: the player aims at there; the user's own reading, and the reason they asked
+#: for it.  A step rather than a jump: the column the words are drawn in is
+#: about 180 pixels wide at a 1920 window -- 260 at 2560 -- and the longest
+#: kind names are already the ones that elide, so a size the column cannot
+#: hold would trade a small word for half a word.
+#:
+#: Two things are drawn at this size and they are one number written once --
+#: the rows, and the box at the head of each of them, which is a square in the
+#: theme's own sheet rather than anything the style measures.  That is why it
+#: is here and not in :mod:`app.sidebar`: the sheet is what draws both.
+RAIL_PX = 15
+
 
 def _load_fonts() -> tuple[str, ...]:
     """Register the faces that travel with the tool, before anything is drawn.
@@ -319,16 +336,24 @@ QTableView {{
 QTreeView {{
     border: 1px solid {EDGE};
 }}
+/* The rail's own voice, and the one place a widget sets its own size: it is a
+   column of kind names with height to spare, so the words are set a step up
+   from the window's body -- see RAIL_PX.  Found by name rather than as
+   ``QTreeView`` because this is a rule about the rail, not about trees. */
+QTreeView#rail {{
+    font-size: {RAIL_PX}px;
+}}
 /* A ticked box is a filled one rather than a ticked one: Qt's stylesheet
    language can draw a box's fill and its border but not a check mark, which
    needs an image file this application does not ship.  A solid white square
    against a hollow one is what the rarity chips beside it do -- their
    indicator is collapsed to nothing and the pill itself is the control -- and
-   at 13px it is the reading a glance gets.  A group row is half filled, which
-   is the same idea for a box that is neither on nor off. */
+   at the size of the words beside it, it is the reading a glance gets.  A
+   group row is half filled, which is the same idea for a box that is neither
+   on nor off. */
 QTreeView::indicator {{
-    width: 13px;
-    height: 13px;
+    width: {RAIL_PX}px;
+    height: {RAIL_PX}px;
     border: 1px solid {CHALK};
     border-radius: 3px;
     background: transparent;

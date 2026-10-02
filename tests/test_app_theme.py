@@ -38,6 +38,7 @@ from app.theme import (  # noqa: E402
     EDGE,
     FIELD,
     PALE,
+    RAIL_PX,
     RAISED,
     SANS,
     SELECT,
@@ -250,6 +251,27 @@ def test_the_window_is_set_in_the_site_s_own_voice(themed):
 
     assert tuple(font.families()[: len(SANS)]) == SANS
     assert font.pixelSize() == BODY_PX
+
+
+def test_the_rail_is_set_a_step_up_from_the_body(themed):
+    """The one size the window sets of its own, and the box drawn at the head
+    of every row is that size too.
+
+    The rail is a column of kind names down the left edge with a window's
+    worth of height to spare, and the words there are the thing the player
+    aims at -- the user's own reading of it.  In the sheet rather than in
+    :mod:`app.sidebar` because two things are drawn at it and this is the one
+    place both can see: the rows, and the chalk square at the head of each of
+    them, which the sheet draws as a square of a stated size rather than
+    anything the style measures.  A square two pixels smaller than the words
+    beside it is a small box in a big row, which is what the rail had before.
+    """
+    sheet = themed.styleSheet()
+
+    assert "QTreeView#rail" in sheet, "the rail's rule is not in the sheet"
+    assert RAIL_PX > BODY_PX, "the rail's size is a step up, not a step down"
+    assert f"font-size: {RAIL_PX}px" in sheet
+    assert f"width: {RAIL_PX}px" in sheet, "the box is not the size of the words"
 
 
 def test_a_number_is_set_in_figures_that_line_up(themed):
