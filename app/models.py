@@ -38,14 +38,19 @@ __all__ = [
     "new_model",
 ]
 
-#: Two columns apiece.  The collection is not a table at all any more -- it is
-#: a grid of cards drawn from the model's rows -- so its one column is where a
-#: row keeps what it knows, and the model is what the filters read.
+#: What each model's columns are.  The collection is not a table at all any
+#: more -- it is a grid of cards drawn from the model's rows -- so its one
+#: column is where a row keeps what it knows, and the model is what the filters
+#: read.
 #:
-#: The stash keeps the item and its level, which is what a row of that list is
-#: for; where it sat is on the name cell's tooltip, which costs nothing and
+#: The stash keeps the item, the level it asks for and how many sockets it has,
+#: which is what a row of that list is for.  The socket count is a column
+#: rather than a line on the tooltip because it is the one thing about an item
+#: still in the game that decides what happens *next*: a socketed item has to
+#: be taken out of the game before its gems can be.  Where it sat -- the tab and
+#: the slot -- stays on the name cell's tooltip, which costs nothing and
 #: explains itself on hover, rather than in two columns nobody reads.
-STASH_COLUMNS = ["Item", "Lvl"]
+STASH_COLUMNS = ["Item", "Lvl", "Sockets"]
 COLLECTION_COLUMNS = ["Item"]
 
 #: The rarity chips' order and their words, which is the game's own order and
@@ -125,17 +130,10 @@ def new_model(columns: list[str]) -> QStandardItemModel:
     return model
 
 
-def _cell(text: str = "", *, sort: object | None = None) -> QStandardItem:
-    """A read-only cell, optionally sorting by something other than its text.
-
-    Levels and slot numbers sort numerically this way; without it "10" would
-    come before "9", which is the kind of detail that makes a tool feel wrong
-    without anyone being able to say why.
-    """
+def _cell(text: str = "") -> QStandardItem:
+    """A cell the player cannot type into."""
     item = QStandardItem(text)
     item.setEditable(False)
-    if sort is not None:
-        item.setData(sort, Qt.ItemDataRole.DisplayRole)
     return item
 
 
@@ -163,10 +161,16 @@ def fill_stash(
 ) -> None:
     """Show what is in the save file right now.
 
-    Two columns and no more: the item and the level it asks for.  Which tab and
-    which slot it came out of is on the name cell's tooltip -- it is worth
-    having when it is asked for and worth nothing in a column, since the row a
-    player is looking at is the row they just put something in.
+    Three columns and no more: the item, the level it asks for and how many
+    sockets it has.  Which tab and which slot it came out of is on the name
+    cell's tooltip -- it is worth having when it is asked for and worth nothing
+    in a column, since the row a player is looking at is the row they just put
+    something in.
+
+    The socket count is blank when there is none rather than a zero on every
+    row: nearly everything in a stash has no sockets, and a column of noughts
+    is a column nobody can read at a glance -- which is the only reason to have
+    it.
 
     ``data`` names the tabs; without it they fall back to the container id.
     ``catalog`` supplies the tier, the kind and the picture, and without it the
@@ -180,7 +184,8 @@ def fill_stash(
             _describe(name, catalog.entry(item.fingerprint, item), item.level)
         name.setToolTip(_where_it_sat(item, data))
 
-        model.appendRow([name, _cell(str(item.level), sort=item.level)])
+        sockets = _cell(str(item.num_sockets or ""))
+        model.appendRow([name, _cell(str(item.level)), sockets])
 
 
 def _where_it_sat(item: Item, data: "GameData | None") -> str:
@@ -189,7 +194,8 @@ def _where_it_sat(item: Item, data: "GameData | None") -> str:
     The internal name is the second line because it is the second question --
     ``SHARED_STASH_BAG_ARMS`` says what the bag was built for, which is not
     what the player is looking at but is what a save file or a bug report
-    talks about.
+    talks about.  How many sockets the item has is not here: it is a column of
+    the same row.
     """
     lines = [
         f"{container_label(item.location.container, data)} · slot {item.location.slot_index}"
@@ -198,8 +204,6 @@ def _where_it_sat(item: Item, data: "GameData | None") -> str:
         internal = data.container_name(item.location.container)
         if internal:
             lines.append(internal)
-    if item.num_sockets:
-        lines.append(f"{item.num_sockets} socket(s)")
     return "\n".join(lines)
 
 

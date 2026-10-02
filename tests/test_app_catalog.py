@@ -222,15 +222,16 @@ def test_an_item_the_game_does_not_have_is_other_with_a_placeholder(real_game, q
 def test_a_picture_bigger_than_the_tile_is_scaled_into_it_whole(qapp):
     """The regression that a screenshot would never catch.
 
-    A ringed square, 62 pixels, drawn into a 40-pixel tile.  If the tile
-    centres it and lets its own clip take the edges, the ring is outside the
-    window and the tile is solid blue -- which is what the sword's tip and
+    A ringed square, 62 pixels, drawn into a tile less than half that.  If the
+    tile centres it and lets its own clip take the edges, the ring is outside
+    the window and the tile is solid blue -- which is what the sword's tip and
     pommel would be.  Scaled, the ring is still at the tile's edge.
     """
     art = QPixmap(62, 62)
     art.fill(QColor("red"))
+    ring = 10
     inner = QPainter(art)
-    inner.fillRect(QRect(10, 10, 42, 42), QColor("blue"))
+    inner.fillRect(QRect(ring, ring, 62 - 2 * ring, 62 - 2 * ring), QColor("blue"))
     inner.end()
 
     tile = QPixmap(ICON_SIZE, ICON_SIZE)
@@ -239,11 +240,16 @@ def test_a_picture_bigger_than_the_tile_is_scaled_into_it_whole(qapp):
     paint_tile(painter, ICON_SIZE, ICON_SIZE, QColor("#ef6100"), art, "?")
     painter.end()
 
+    # Sampled down the middle of the ring rather than at a fixed row: the ring
+    # is ``ring`` of the picture's 62 pixels, so it is proportionally narrower
+    # in a smaller tile, and a fixed row falls off it -- and off a fixed row,
+    # the antialiased seam between red and blue is what gets measured.
+    band = ICON_SIZE * ring // 62 // 2
     seen = tile.toImage()
     # Well inside the rounded corner and well inside the ring: red means the
     # edge of the picture reached the edge of the tile.
-    assert seen.pixelColor(ICON_SIZE // 2, 3).name() == "#ff0000"
-    assert seen.pixelColor(ICON_SIZE // 2, ICON_SIZE - 4).name() == "#ff0000"
+    assert seen.pixelColor(ICON_SIZE // 2, band).name() == "#ff0000"
+    assert seen.pixelColor(ICON_SIZE // 2, ICON_SIZE - 1 - band).name() == "#ff0000"
 
 
 # --------------------------------------------------------------------------

@@ -110,7 +110,11 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Torchlight 2 Item Assistant")
-        self.resize(1100, 700)
+        # Wide enough for the three panes on the day it opens: the rail, the
+        # game's list with a name in it, and a row of cards.  The window's own
+        # minimum is what the bar of filters needs, so this is a starting size
+        # rather than a floor -- and Qt clamps it to the screen it opens on.
+        self.resize(1440, 900)
 
         # ``db_path`` given means one database for every stash, which is what
         # --db asks for.  Left out, each stash gets its own file in ``db_dir``
@@ -284,23 +288,66 @@ class MainWindow(QMainWindow):
         # under its group -- and every pixel past that goes to the cards, which
         # are the thing here worth looking at.  The handle is the player's;
         # this is only where it starts.
-        splitter.setSizes([180, 300, 920])
+        #
+        # The game's list is the narrowest of the three, because what it holds
+        # is a row per item sitting in a tab the player has just used: a name,
+        # a level, a socket count, gone by the next save.  What the tool holds
+        # is the thing worth the window.
+        #
+        # Narrow, but not *narrower than its own columns*: a name, a level and
+        # a socket count want about 300 pixels between them, and the two
+        # numbers cost a fixed 96 of that whether the pane is 200 wide or 400.
+        # Below that the name -- the only column here worth reading -- is what
+        # pays, so this is the share that keeps it legible rather than the
+        # smallest the pane could be drawn at.
+        splitter.setSizes([180, 340, 900])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
+        """The game's list: rows, ordered the way the stash is.
+
+        Not sortable, which is a decision rather than an omission.  The list is
+        thrown away and rebuilt on every poll, so a column the player sorted by
+        would come back in stash order at the next save -- a control that does
+        not hold is worse than no control.  And the order it *is* in is the one
+        worth having here: tab, then slot, which is where the player just put
+        things.
+
+        Turning sorting off also takes the sort indicator off the header, and
+        that is worth more than it sounds.  Qt reserves its twenty pixels in
+        *every* section whether or not that section is the one sorted, so it
+        was sixty pixels of a three-hundred-pixel pane -- while the arrow it
+        drew sat over the Item column claiming the rows were in name order, and
+        they were in slot order.
+        """
         view = QTableView()
-        view.setSortingEnabled(True)
         view.setAlternatingRowColors(True)
         view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         view.verticalHeader().setVisible(False)
-        view.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         # The tier tile beside every name, at the size the catalogue paints it,
         # so the view is not asked to scale a picture per cell per redraw.
         view.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
 
         model = new_model(columns)
         view.setModel(model)
+
+        # After the model, because setting one rebuilds the header's sections
+        # and puts every one of them back to Qt's default: 100px and
+        # interactive.  Set before it, these modes were silently dropped and a
+        # 300px pane showed a 100px name column with the rest of the width
+        # sitting empty beside it.
+        #
+        # The name takes whatever the other columns do not, and the others take
+        # exactly what they need: a level is two digits and a socket count is
+        # one, and neither is worth the 100px Qt would give it.  That the name
+        # stretches is the whole reason a wide row stays readable in a narrow
+        # pane: the two numbers cost what they cost, and every pixel left over
+        # is name.
+        header = view.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, len(columns)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         return view, model
 
     # -- the game's data -------------------------------------------------

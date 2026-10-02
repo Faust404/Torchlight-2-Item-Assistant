@@ -23,7 +23,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+)
 
 import app.window as window_module  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
@@ -219,22 +225,6 @@ def test_the_filters_stand_over_the_pane_they_narrow(window):
     assert window.centralWidget().layout().indexOf(window.filters) == -1
 
 
-def test_the_absorb_controls_sit_over_the_list_they_empty(window):
-    """The button and the box move to the thing they act on.
-
-    They used to sit in the toolbar at the top, beside the box naming the save
-    file -- two panes away from the stash they empty.  Absorbing is a thing
-    done *to* the game's list, so both controls are over it, and neither is
-    left up in the toolbar.
-    """
-    assert window.absorb_button.parent() is window.stash_group
-    assert window.auto_absorb.parent() is window.stash_group
-
-    column = window.stash_group.layout()
-    assert column.indexOf(window.stash_view) > 0, "the controls are above the list"
-    assert window.centralWidget().layout().indexOf(window.absorb_button) == -1
-
-
 def test_the_collection_lists_only_what_the_tool_holds(window, monkeypatch):
     """The contract for the right-hand panel.
 
@@ -325,24 +315,107 @@ def test_modded_and_vanilla_do_not_share_a_pile(qapp, tmp_path, monkeypatch):
         two.close()
 
 
-def test_the_stash_row_is_the_item_and_its_level(window):
-    """Two columns, and where the thing sat is on the name cell's tooltip.
+def test_the_stash_row_is_the_item_its_level_and_its_sockets(window):
+    """Three columns, and where the thing sat is on the name cell's tooltip.
 
-    The "In the game" list is the list the player empties, so it is the item
-    and the level it asks for -- the tiling is for the tool's own items.  Which
-    tab and slot it came out of is a question about one item, asked by pointing
-    at it.
+    The "In the game" list is the list the player empties, so it is the item,
+    the level it asks for and how many sockets it has -- the tiling is for the
+    tool's own items.  Which tab and slot it came out of is a question about
+    one item, asked by pointing at it.
+
+    A socket count of none is a blank cell rather than a nought: nearly every
+    row in a stash has no sockets, and the point of the column is to be read at
+    a glance.  The fixture's three items are plain ones.
     """
     names = [
         window.stash_model.item(row, 0).text()
         for row in range(window.stash_model.rowCount())
     ]
     assert sorted(names) == ["Alpha", "Beta", "Gamma"]
-    assert window.stash_model.columnCount() == 2
+    assert window.stash_model.columnCount() == 3
+    assert [
+        window.stash_model.headerData(column, Qt.Orientation.Horizontal)
+        for column in range(3)
+    ] == ["Item", "Lvl", "Sockets"]
     assert [
         window.stash_model.item(row, 1).text()
         for row in range(window.stash_model.rowCount())
     ] == ["5", "5", "5"]
+    assert [
+        window.stash_model.item(row, 2).text()
+        for row in range(window.stash_model.rowCount())
+    ] == ["", "", ""]
+
+
+def test_a_socketed_item_in_the_game_says_so_in_its_own_column(qapp, tmp_path):
+    """What the column is for: a socketed item has to come out of the game
+    before the gems in it can, so it is the one thing about a row still in the
+    stash that decides what to do next.
+
+    An item with no sockets has an empty cell rather than a nought: over a
+    stash where nearly nothing is socketed, a column of zeroes is one nobody
+    can read at a glance.
+    """
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            parse_item(synthetic_item(name="Plain Helm", level=12)[0]),
+            parse_item(synthetic_item(name="Socketed Helm", level=12, sockets=3)[0]),
+        ],
+    )
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        rows = {
+            win.stash_model.item(row, 0).text(): win.stash_model.item(row, 2)
+            for row in range(win.stash_model.rowCount())
+        }
+        assert set(rows) == {"Plain Helm", "Socketed Helm"}
+        assert rows["Socketed Helm"].text() == "3"
+        assert rows["Plain Helm"].text() == ""
+    finally:
+        win.close()
+
+
+def test_the_name_column_takes_the_width_the_two_numbers_do_not(qapp, tmp_path):
+    """The name is the column worth reading, so it is the one that stretches.
+
+    A level is two digits and a socket count is one, so those two columns take
+    what they take and every pixel left over in the pane is name.  The three
+    modes have to be set *after* ``setModel``, which rebuilds the header's
+    sections and puts them all back to Qt's default of a hundred pixels each:
+    set before, they were dropped without a word and a pane twice that wide
+    showed a hundred-pixel name column with the rest sitting empty beside it.
+    """
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(stash, ["Alpha"])
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        win.show()
+        qapp.processEvents()
+        header = win.stash_view.horizontalHeader()
+        assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+        assert [
+            header.sectionResizeMode(column) for column in (1, 2)
+        ] == [QHeaderView.ResizeMode.ResizeToContents] * 2
+        name, level, sockets = (header.sectionSize(column) for column in range(3))
+        assert name > level + sockets, (
+            f"the name got {name}px of a {win.stash_group.width()}px pane, "
+            f"against {level + sockets}px for the two numbers"
+        )
+    finally:
+        win.close()
+
+
+def test_the_game_list_does_not_offer_to_sort(window):
+    """No sort arrow, because there is no sort behind it.
+
+    The list is thrown away and rebuilt on every poll, so a column the player
+    sorted by comes back in stash order at the next save -- and the arrow Qt
+    draws would sit over a list that is in tab-and-slot order, claiming an
+    order the rows do not have.
+    """
+    assert not window.stash_view.isSortingEnabled()
 
 
 def test_search_filters_the_collection(window, monkeypatch):

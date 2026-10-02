@@ -49,7 +49,12 @@ __all__ = ["ICON_SIZE", "Catalog", "Entry", "Facts"]
 #: How big a list row's picture is drawn.  Smaller than the card's own 58,
 #: because a row is one line tall and the card's tile is a headline; both are
 #: the same picture at two sizes, drawn by the same function.
-ICON_SIZE = 40
+#:
+#: Small, because the width it costs comes out of the item's *name*: "In the
+#: game" is a narrow pane by design, and a 40px tile in it left about fifty
+#: pixels of text -- "Alhi... Amulet".  At 24 the whole name fits and the
+#: picture still reads as what it is: the game's own art, in the tier's colour.
+ICON_SIZE = 24
 
 
 @dataclass(frozen=True)

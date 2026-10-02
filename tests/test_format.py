@@ -69,6 +69,7 @@ def synthetic_item(
     slot: int = 10,
     container: int = 24,
     level: int = 5,
+    sockets: int = 0,
     extra_records: bytes = b"",
     tail: bytes | None = None,
 ) -> tuple[bytes, int]:
@@ -78,6 +79,9 @@ def synthetic_item(
     derived from it rather than passed separately -- which is the property
     under test.  ``tail`` replaces the whole variable-length tail; the default
     is the plainest one there is -- no damage types and four empty lists.
+    ``sockets`` is the count the item says it has, which is a field of its own
+    and not the list of gems in them: a socketed item with nothing socketed in
+    it is the ordinary case.
     """
     assert len(extra_records) % 8 == 0
     out = bytearray()
@@ -119,7 +123,7 @@ def synthetic_item(
     out.extend(bytes(80))
     u32(level)
     u32(1)                                     # quantity
-    u32(0)                                     # sockets
+    u32(sockets)
     u32(0)                                     # gems
     out.extend(bytes(4))
     u32(0)                                     # max damage

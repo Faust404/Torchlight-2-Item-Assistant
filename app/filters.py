@@ -99,7 +99,14 @@ class FilterBar(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search the collection…")
         self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(260)
+        # A floor, because a text box's own minimum is nothing: squeezed, it
+        # would collapse to a sliver while the pills beside it kept their
+        # width.  It matters beyond this row, too -- whatever the bar asks for,
+        # the pane under it asks for as well, and the three panes together are
+        # what set the window's own minimum width.  Every pixel of floor here
+        # is a pixel the window cannot open narrower, and the game's list
+        # beside it is what pays for that; 180 still leaves the box readable.
+        self.search.setMinimumWidth(180)
         self.search.setToolTip(
             "Show only the items whose name contains this.\n"
             "It narrows what the ticks beside it leave."
