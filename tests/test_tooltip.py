@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tl2stash.card import AFFIX, Rung, lines  # noqa: E402
+from tl2stash.card import AFFIX, DAMAGE, Rung, lines  # noqa: E402
 from tl2stash.gamedata import (  # noqa: E402
     GameData,
     SetBonus,
@@ -453,6 +453,66 @@ def test_the_no_value_sentinel_is_not_shown_as_a_number():
     lines = render(item(max_damage=0xFFFFFFFF, armor=0xFFFFFFFF), None)
     assert lines == ["Test Item"]
     assert render(item(max_damage=0, armor=0), None) == ["Test Item"]
+
+
+@needs_game
+def test_a_weapon_s_parts_are_the_numbers_its_lines_were_written_from(game):
+    """Two elements, drawn as two sentences and kept as four numbers.
+
+    The card is asked for the damage as numbers because a filter has to ask
+    about a number and not about a sentence, and the number *has* to be the one
+    the line was drawn from: reading the card back out of its own text would be
+    a second reading of the same item, and the two would come apart the first
+    time a line was reworded.
+    """
+    card = build(item("Bonebreaker", guid=6933962607845725281), game)
+
+    assert card.damage == (("physical", 120, 239), ("fire", 80, 159))
+    assert card.armor == ()
+
+    # The block itself, because the headline above it -- '288 Damage per
+    # Second' -- is about the damage rather than a line of it.
+    drawn = next(block.lines for block in card.blocks if block.kind == DAMAGE)
+    assert drawn == ("Physical Damage 120-239", "Fire Damage 80-159")
+
+
+@needs_game
+def test_armour_keeps_its_five_parts_the_same_way(game):
+    """A level 45 Chokehold: five elements, each a single number.
+
+    The parts come out in the game's own order rather than the file's dict
+    order, which is what makes two single-element pieces of armour list their
+    elements the same way round.  ``tests/test_gamedata.py`` pins the numbers;
+    what is pinned here is that they reach the card in that order.
+    """
+    card = build(item("Chokehold", guid=-7711194175558023803), game)
+
+    assert card.armor == (
+        ("physical", 85, 85),
+        ("fire", 32, 32),
+        ("ice", 32, 32),
+        ("electric", 32, 32),
+        ("poison", 32, 32),
+    )
+    assert card.damage == ()
+
+
+def test_the_save_file_s_only_number_becomes_a_part_spanning_itself():
+    """Without the game's files there is no split to read, and the one number
+    the save file keeps is the physical part against itself -- the sentence
+    'Damage 72' read as the range it is."""
+    card = build(item(max_damage=72, armor=20), None)
+
+    assert card.damage == (("physical", 72, 72),)
+    assert card.armor == (("physical", 20, 20),)
+
+
+def test_an_item_with_no_numbers_of_its_own_carries_no_parts():
+    """And the two are empty together rather than one being a zero: an item
+    that deals no damage is a different thing from one dealing none *yet*."""
+    card = build(item(max_damage=0xFFFFFFFF, armor=0xFFFFFFFF), None)
+
+    assert card.damage == () and card.armor == ()
 
 
 def test_the_level_line_is_left_out_when_there_is_no_level():

@@ -282,6 +282,18 @@ class Card:
     a machine with no game installed can answer for one and not the other:
     ``requires`` is ``None`` there and the level is what the card falls back
     to showing.
+
+    ``damage`` and ``armor`` are the same numbers the two blocks above are
+    written from, kept apart from the sentence they are written into: one
+    ``(element, low, high)`` per part, in the game's own order of elements, and
+    empty where the item has none of that kind.  They are here because a
+    filter has to ask about a *number* and not about a sentence -- ``Physical
+    Damage 52-74`` is what the card draws, and ``('physical', 52, 74)`` is what
+    a range is compared against -- and because working the sentence back apart
+    would be a second reading of the same data with its own ways to be wrong.
+    The element is spelled the way :data:`tl2stash.gamedata.DAMAGE_TYPES`
+    spells it, which is what the derived numbers were keyed by in the first
+    place.
     """
 
     name: str
@@ -303,6 +315,26 @@ class Card:
     requires: Requirements | None = None
     weapon_lead: tuple[str, ...] = ()
     augments: tuple[Augment, ...] = ()
+    damage: tuple[tuple[str, int, int], ...] = ()
+    armor: tuple[tuple[str, int, int], ...] = ()
+
+    @property
+    def properties(self) -> tuple[str, ...]:
+        """What the item says about itself, in the order the card draws it.
+
+        The property block and nothing else.  The item's damage and armour are
+        lines too, and are deliberately not here: a filter asking about those
+        has the numbers above to read, and working the answer back out of the
+        sentence would be a second reading of the same data.  Nor are a gem's
+        lines here -- they are the socket's, not the item's, and they are drawn
+        as a card of the gem's own.
+        """
+        return tuple(
+            line
+            for block in self.blocks
+            if block.kind == AFFIX
+            for line in block.lines
+        )
 
 
 #: The heading over the ways in.  The reference database puts one over them and

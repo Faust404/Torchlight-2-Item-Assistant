@@ -27,15 +27,16 @@ rectangles are what tells a reader where the rarity chips stop and the level
 range starts.
 
 :guilabel:`Advanced search` sits between the two, and opens
-:class:`app.advsearch.AdvancedSearchOverlay` -- four more facets that have no
+:class:`app.advsearch.AdvancedSearchOverlay` -- eight more facets that have no
 room in this row: an item level range, socket counts, four attribute
-requirements and the classes an item may be restricted to.  They are kept
-*here* rather than in the panel, because this is where every facet lives until
-the window asks for it, and the panel is a thing that opens and closes: a
-search that unset four facets by being closed would be a filter with a
-lifetime of its own.  The button wears the rail's gold while one of those four
-is narrowing the collection, which is the only sign a control this row has not
-got is doing anything -- see :meth:`FilterBar.advanced_active`.
+requirements, the classes an item may be restricted to, the damage and armour
+elements asked about, and the property rows.  They are kept *here* rather than
+in the panel, because this is where every facet lives until the window asks for
+it, and the panel is a thing that opens and closes: a search that unset eight
+facets by being closed would be a filter with a lifetime of its own.  The
+button wears the rail's gold while one of those eight is narrowing the
+collection, which is the only sign a control this row has not got is doing
+anything -- see :meth:`FilterBar.advanced_active`.
 
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
@@ -303,20 +304,26 @@ class FilterBar(QWidget):
         #: the button either, for the same reason: the arrow is written *from*
         #: this, so the glyph and what the window is told cannot come apart.
         self._backwards = False
-        #: The advanced search's four facets, which have no control here: an
+        #: The advanced search's eight facets, which have no control here: an
         #: item level range (kept as the pair of numbers it is), the socket
         #: counts, the four attribute ranges in :data:`~app.models.REQ_WORDS`
-        #: order, and the class words.  Plain attributes rather than widgets,
-        #: because there is nothing to draw -- the panel draws them, and
-        #: :meth:`current` and :meth:`adopt` are how the two sides pass them.
-        #: All of them stay at rest until a panel writes one, and "at rest" is
-        #: a range or a set that lets everything through: the same bargain the
-        #: facets above make.
+        #: order, the class words, and the three that read the item's own card
+        #: -- the damage and armour elements asked about, and the property
+        #: rows.  Plain attributes rather than widgets, because there is
+        #: nothing to draw -- the panel draws them, and :meth:`current` and
+        #: :meth:`adopt` are how the two sides pass them.  All of them stay at
+        #: rest until a panel writes one, and "at rest" is a range or a set
+        #: that lets everything through: the same bargain the facets above
+        #: make.
         self._item_low = 0
         self._item_high = LEVEL_MAX
         self._sockets: set[int] = set()
         self._reqs: tuple[tuple[int, int], ...] = REQ_REST
         self._classes: set[str] = set()
+        self._damage: tuple[tuple[str, int, int], ...] = ()
+        self._armor: tuple[tuple[str, int, int], ...] = ()
+        self._stats: tuple[tuple[str, int, int], ...] = ()
+        self._bonuses = False
 
         row = QHBoxLayout(self)
         row.setContentsMargins(INSET, 0, 0, 0)
@@ -434,7 +441,8 @@ class FilterBar(QWidget):
         self.advanced.setCursor(Qt.CursorShape.PointingHandCursor)
         self.advanced.setToolTip(
             "More ways to narrow the collection: item level, sockets,\n"
-            "an item's stat requirements, and the class it is for."
+            "an item's stat requirements, the class it is for, its damage\n"
+            "and armour, and the stats it shows."
         )
         self._ink_advanced()
         row.addWidget(self.advanced)
@@ -551,8 +559,30 @@ class FilterBar(QWidget):
         """The class words ticked; empty for every class."""
         return set(self._classes)
 
+    def damage_ranges(self) -> tuple[tuple[str, int, int], ...]:
+        """The damage elements asked about, one ``(element, low, high)`` each.
+
+        Only the elements the search names, which is what the model reads the
+        presence test from: a row left covering everything is not passed and
+        does not have to be filtered out again downstream -- see
+        :meth:`app.models.CollectionFilter.set_damage`.
+        """
+        return tuple(self._damage)
+
+    def armor_ranges(self) -> tuple[tuple[str, int, int], ...]:
+        """The armour elements asked about, the same shape exactly."""
+        return tuple(self._armor)
+
+    def stat_rows(self) -> tuple[tuple[str, int, int], ...]:
+        """The property rows: what to look for, and the range to find it in."""
+        return tuple(self._stats)
+
+    def bonuses(self) -> bool:
+        """Whether a property row may be answered by a set's bonus as well."""
+        return self._bonuses
+
     def advanced_active(self) -> bool:
-        """Whether one of the four panel-only facets is narrowing anything.
+        """Whether one of the eight panel-only facets is narrowing anything.
 
         What the button's ink says, and the reason it is worked out from the
         facets rather than remembered as a flag: a flag is a second answer to a
@@ -565,12 +595,15 @@ class FilterBar(QWidget):
             or self._sockets
             or self._classes
             or self._reqs != REQ_REST
+            or self._damage
+            or self._armor
+            or self._stats
         )
 
     def current(self) -> Advanced:
         """Everything the advanced search opens on, as one value.
 
-        The bar's own three facets are read off their controls and the four
+        The bar's own three facets are read off their controls and the eight
         behind the button off the attributes above, so there is one copy of
         each and nothing to keep in step.  ``places`` is left resting: the
         kinds are ticked in the rail, which is not part of the bar, and whoever
@@ -587,15 +620,19 @@ class FilterBar(QWidget):
             sockets=frozenset(self._sockets),
             reqs=tuple(self._reqs),
             classes=frozenset(self._classes),
+            damage=tuple(self._damage),
+            armor=tuple(self._armor),
+            stats=tuple(self._stats),
+            bonuses=self._bonuses,
         )
 
     def adopt(self, state: Advanced) -> None:
-        """Write a search back onto the controls, and onto the four behind them.
+        """Write a search back onto the controls, and onto the eight behind them.
 
         What pressing `Search` does with the draft the panel hands over.  The
         three controls are written *silently*: this is one move, the window
-        makes it, and a bar that emitted for each of the five writes would have
-        the window re-apply half a search four times over.  The caller emits
+        makes it, and a bar that emitted for each of the writes would have the
+        window re-apply half a search several times over.  The caller emits
         once when it is done -- see :meth:`app.window.MainWindow._advanced_search`.
 
         The rail is not touched.  ``state.places`` is the window's to apply,
@@ -616,10 +653,14 @@ class FilterBar(QWidget):
         self._sockets = set(state.sockets)
         self._reqs = tuple(state.reqs)
         self._classes = set(state.classes)
+        self._damage = tuple(state.damage)
+        self._armor = tuple(state.armor)
+        self._stats = tuple(state.stats)
+        self._bonuses = state.bonuses
         self._ink_advanced()
 
     def _ink_advanced(self) -> None:
-        """Say whether the four facets behind the button are doing anything."""
+        """Say whether the eight facets behind the button are doing anything."""
         self.advanced.setStyleSheet(_advanced_style(self.advanced_active()))
 
     # -- what the bar says about the order --------------------------------
@@ -733,7 +774,7 @@ class FilterBar(QWidget):
         has asked for the newest first and then clears the search box is still
         asking for the newest first.
 
-        The four behind the advanced button *are* put back, and they are the
+        The eight behind the advanced button *are* put back, and they are the
         ones that make this the whole of "show everything": they are facets of
         the same collection, they are what the gold button has been saying is
         on, and a `Clear filters` that left a class ticked somewhere the player
@@ -748,13 +789,17 @@ class FilterBar(QWidget):
         self._sockets = set()
         self._reqs = REQ_REST
         self._classes = set()
+        self._damage = ()
+        self._armor = ()
+        self._stats = ()
+        self._bonuses = False
         self._ink_advanced()
 
     def reset(self) -> None:
         """Put every control back, which is the state the window starts in.
 
         What `Clear filters` does, and it is the whole of that: the bar's own
-        controls and the four facets behind the button, said once through
+        controls and the eight facets behind the button, said once through
         :attr:`changed` so that the window applies the whole of it in one go.
         The kinds are the rail's and are cleared by whoever hears
         :attr:`cleared` -- the bar cannot reach them, and a bar that cleared

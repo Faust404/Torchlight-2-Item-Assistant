@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 import app.window as window_module  # noqa: E402
 from app.card import LinkLabel  # noqa: E402
 from app.filters import INSET  # noqa: E402
-from app.models import LEVEL_MAX  # noqa: E402
+from app.models import LEVEL_MAX, NUMBER_MAX  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
 
 #: The real search, kept before any fixture can stand in front of it.
@@ -43,7 +43,7 @@ _REAL_FIND_INSTALL = window_module.find_install
 
 from test_archive import write_stash_of, write_synthetic_stash  # noqa: E402
 from test_format import synthetic_item  # noqa: E402
-from test_gamedata import install as synthetic_install  # noqa: E402
+from test_gamedata import _bashdrill, install as synthetic_install  # noqa: E402
 from tl2stash import parse_item  # noqa: E402
 
 
@@ -609,6 +609,79 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
         assert win.filters.item_level_range() == (0, LEVEL_MAX)
         assert win.sidebar.places() == set(), "the rail kept a kind ticked"
         assert win.grid.count() == 2
+    finally:
+        win.close()
+
+
+def test_the_card_reading_facets_reach_the_wall(
+    qapp, tmp_path, game_install, monkeypatch
+):
+    """The three facets that need an item's card, wired end to end.
+
+    A card is not on the row: it is built by walking the game's data files, so
+    the window hands the proxy a *way* to ask for one -- its own memo, the same
+    one the wall draws from -- and nothing else in the tool would show whether
+    the two are connected.  The panel is opened and driven exactly as a player
+    drives it, and what is asserted is what ends up on the wall.
+
+    Bashdrill is the item with something on it: 72 physical damage and a list
+    of properties, against the fixture's plain sword, which carries neither.
+    The three facets are asked in turn, each on its own, because they AND --
+    which is the rule the first two halves of this test are also reading.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            _bashdrill(),
+            parse_item(synthetic_item(name="Plainblade", guid=0x7001, level=40)[0]),
+        ],
+    )
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.count() == 2, "the fixture did not stock the tool"
+
+        # What the wall is read from is the cards behind it, so the assertion
+        # below is a statement about the same reading the filter is given.
+        card = win._detail_for(win.grid.rows()[0].fingerprint)
+        assert card is not None, "the window cannot answer for its own items"
+
+        # A damage range: the plain sword deals none, and an item that carries
+        # no part of an element named in the row is not an item it is looking
+        # for, however wide the range is.
+        win.filters.advanced.click()
+        panel = win.advanced
+        panel.damage_spins["physical"][0].setValue(50)
+        panel.damage_spins["physical"][1].setValue(100)
+        panel.search_button.click()
+
+        assert win.filters.damage_ranges() == (("physical", 50, 100),)
+        assert [row.name for row in win.grid.rows()] == ["Bashdrill"]
+
+        # A property row, on the same two items: the words are matched against
+        # the lines the card shows, and only one of the two says this one.
+        win.filters.clear_button.click()
+        win.filters.advanced.click()
+        win.advanced.findChild(QPushButton, "aadd").click()
+        win.advanced.stat_rows[0].text.setText("lightning damage bonus")
+        win.advanced.search_button.click()
+
+        assert win.filters.stat_rows() == (("lightning damage bonus", 0, NUMBER_MAX),)
+        assert [row.name for row in win.grid.rows()] == ["Bashdrill"]
+
+        # And the order, which reads the same numbers: most first, with an item
+        # that carries none below one that carries seventy-two.
+        win.filters.clear_button.click()
+        win.filters.sort.setCurrentText("Damage")
+
+        assert [row.name for row in win.grid.rows()] == ["Bashdrill", "Plainblade"]
     finally:
         win.close()
 

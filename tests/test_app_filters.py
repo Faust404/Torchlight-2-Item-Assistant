@@ -55,10 +55,13 @@ from app.theme import BODY_PX, CHALK, FIELD, RAIL_PX, SHELL, apply_theme  # noqa
 from app.models import (  # noqa: E402
     CLASS_ROLE,
     COLLECTION_COLUMNS,
+    ELEMENTS,
+    ELEMENT_REST,
     FINGERPRINT_ROLE,
     GATE_ROLE,
     LEVEL_MAX,
     LEVEL_ROLE,
+    NUMBER_MAX,
     PLACE_ROLE,
     REQS_ROLE,
     REQ_MAX,
@@ -75,7 +78,7 @@ from app.models import (  # noqa: E402
     new_model,
 )
 from app.sidebar import UNCLASSIFIED, SidePanel  # noqa: E402
-from tl2stash.card import TIER_INK  # noqa: E402
+from tl2stash.card import AFFIX, TIER_INK, Block, Card, Rung  # noqa: E402
 from tl2stash.taxonomy import OTHER  # noqa: E402
 
 from test_gamedata import _an_item_of_tier  # noqa: E402
@@ -532,7 +535,7 @@ def test_the_search_box_narrows_the_counts(qapp):
 
 
 # --------------------------------------------------------------------------
-# The four the advanced search sets, which have no control in the row
+# The eight the advanced search sets, which have no control in the row
 # --------------------------------------------------------------------------
 
 #: Four items and the six things the panel's facets read about them: the item's
@@ -700,6 +703,318 @@ def test_the_four_narrow_the_counts_as_well_as_the_list(qapp):
 
     proxy.set_sockets({2})
 
+    assert proxy.counts(TIER_ROLE) == {"Unique": 1}
+
+
+# --------------------------------------------------------------------------
+# The three that read the card
+#
+# A card's damage, its armour and its property lines are built by walking the
+# game's data files, which is not something to do for every row of a collection
+# nobody has asked a question about -- so these three facets are answered from
+# a *lookup* the window offers, and what is pinned here is both halves of that
+# bargain: what each facet means, and that nothing is looked up until one of
+# them is set.
+# --------------------------------------------------------------------------
+
+#: Three items and the cards behind them, which is what the last three facets
+#: are answered from.  A weapon, a piece of armour and a shield, so that an
+#: element asked for on a weapon is not found on the armour and a property
+#: asked for on the armour is not found on the weapon -- and one element on
+#: each of the two so that Damage and Armor are not one question asked twice.
+#:
+#: The shield is the reach of the rules: it is armour, its span is wide, and
+#: its set ladder carries a line its own properties do not.
+CARDS = {
+    "Blade": Card(
+        name="Blade",
+        tier="unique",
+        tier_word="Unique",
+        type_name="Sword",
+        set_name=None,
+        icon=None,
+        level=45,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+15% to Fire Damage", "+38 to Strength")),),
+        gems=(),
+        set_ladder=(),
+        flavor=None,
+        damage=(("physical", 14, 28), ("fire", 40, 60)),
+        armor=(),
+    ),
+    "Choker": Card(
+        name="Choker",
+        tier="rare",
+        tier_word="Rare",
+        type_name="Amulet",
+        set_name=None,
+        icon=None,
+        level=30,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+22 to Strength",)),),
+        gems=(),
+        set_ladder=(),
+        flavor=None,
+        damage=(),
+        armor=(("physical", 85, 85), ("fire", 32, 32)),
+    ),
+    "Warder": Card(
+        name="Warder",
+        tier="set",
+        tier_word="Set",
+        type_name="Shield",
+        set_name="Test Set",
+        icon=None,
+        level=20,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+9 Physical Damage",)),),
+        gems=(),
+        set_ladder=(Rung(3, ("+15% to Fire Damage",)),),
+        flavor=None,
+        damage=(),
+        armor=(("physical", 120, 180),),
+    ),
+}
+
+
+def _carded(cards=None) -> CollectionFilter:
+    """A proxy over those cards, wired the way the window wires it.
+
+    The row carries the fingerprint and the lookup answers it with the card,
+    which is the whole of the contract: a row on its own is a name and three
+    numbers, and the item behind it is somewhere the proxy asks about.
+    """
+    cards = CARDS if cards is None else cards
+    model = new_model(COLLECTION_COLUMNS)
+    for name, card in cards.items():
+        cell = QStandardItem(name)
+        cell.setData(name, FINGERPRINT_ROLE)
+        cell.setData(card.tier_word, TIER_ROLE)
+        # Every row the window builds carries the item's own level, and the
+        # two card-reading keys tie-break on it -- so a row built without one
+        # would sort by name and quietly agree with a different rule.
+        cell.setData(card.level, LEVEL_ROLE)
+        model.appendRow(
+            [
+                cell,
+                QStandardItem(str(card.level)),
+                QStandardItem("0"),
+                QStandardItem(""),
+            ]
+        )
+    proxy = CollectionFilter()
+    proxy.setSourceModel(model)
+    proxy.set_detail(cards.get)
+    return proxy
+
+
+def test_a_fire_range_keeps_an_item_whose_fire_span_merely_overlaps_it(qapp):
+    """The rule is overlap and not containment, and this is the pair that says
+    which.
+
+    The blade rolls 40-60 fire and the search asks for 20-45: neither span
+    contains the other, and the item passes -- because neither end of either
+    span is the real number, both being what a roll can land on.  A comparator
+    that wanted the item's low inside the range, or the range inside the item,
+    would turn it away.  The second half is the same item against a range it
+    does not reach at all, so that the first half is not passing everything.
+    """
+    proxy = _carded()
+
+    proxy.set_damage((("fire", 20, 45),))
+    assert _listed(proxy) == ["Blade"]
+
+    proxy.set_damage((("fire", 70, 90),))
+    assert _listed(proxy) == []
+
+
+def test_an_element_the_item_does_not_carry_turns_it_away(qapp):
+    """The presence half, which is the half that is easy to leave out.
+
+    The warder's armour is 120-180 physical, so its span *does* overlap a
+    request for any amount of fire -- if naming an element were only a range,
+    the shield would pass.  It does not: *a type named here has to be one the
+    item carries*, which is the reference's own reading of an empty pair of
+    boxes, and the choker is here to say the row is not simply matching
+    nothing.
+    """
+    proxy = _carded()
+
+    proxy.set_armor((("fire", 0, NUMBER_MAX),))
+
+    assert _listed(proxy) == ["Choker"], "not the shield"
+
+
+def test_the_armour_section_is_a_question_of_its_own(qapp):
+    """Ten rows in two sections, and a weapon's damage has nothing to do with
+    a chest's armour.
+
+    One element, two items, one question each: the blade's fire is *damage* and
+    the choker's fire is *armour*, so the same row in the two sections finds
+    one item either way and a different item each way.
+    """
+    proxy = _carded()
+
+    proxy.set_damage((("fire", 0, NUMBER_MAX),))
+    assert _listed(proxy) == ["Blade"], "the sword's fire is damage"
+
+    proxy.set_damage(())
+    proxy.set_armor((("fire", 0, NUMBER_MAX),))
+    assert _listed(proxy) == ["Choker"], "and the amulet's is armour"
+
+
+def test_no_element_named_is_not_the_same_as_every_element_named(qapp):
+    """An empty ``damage`` is the rest state -- nothing asked -- and a row
+    covering everything is not the same thing.
+
+    The one is a facet nobody has touched and the other is a row that has been
+    moved, which is how the panel says *this element and no other*: what is
+    left of the question is the presence half, and the blade's damage is not
+    armour however wide the range is.
+    """
+    proxy = _carded()
+
+    proxy.set_damage(())
+    assert _listed(proxy) == ["Blade", "Choker", "Warder"]
+
+    proxy.set_armor((("physical", 0, NUMBER_MAX),))
+    assert _listed(proxy) == ["Choker", "Warder"], "the two that carry armour"
+
+
+def test_a_stat_row_matches_by_text_and_then_by_the_number(qapp):
+    """One row, two halves: the words, and the range they have to land in.
+
+    The words are matched by containment rather than for equality, because
+    what the picker offers is a fragment of a sentence -- ``to strength`` is
+    nowhere in ``+38 to Strength`` as a whole word and is in it as a substring
+    -- and what a row is typed from is that fragment.  The range is read off
+    the first number on whichever line the words found.
+    """
+    proxy = _carded()
+
+    proxy.set_stats((("to strength", 0, NUMBER_MAX),))
+    assert _listed(proxy) == ["Blade", "Choker"], "the shield says nothing of it"
+
+    proxy.set_stats((("to strength", 30, NUMBER_MAX),))
+    assert _listed(proxy) == ["Blade"], "38 is over 30 and 22 is not"
+
+
+def test_a_row_with_no_range_asks_only_whether_the_item_says_it(qapp):
+    """The unbounded row, which is the reference's most common one.
+
+    It is the whole of the question when the number is not what the player
+    cares about -- a stat that only exists on a set ladder is asked for this
+    way -- and it is what makes a row that has been typed into and not bounded
+    do something rather than nothing.
+    """
+    proxy = _carded()
+
+    proxy.set_stats((("physical damage", ELEMENT_REST[0], ELEMENT_REST[1]),))
+
+    assert _listed(proxy) == ["Warder"], "the shield's own flat damage line"
+
+
+def test_set_bonus_lines_are_invisible_until_the_box_is_ticked(qapp):
+    """``Include set bonuses`` widens *where* a row may be answered from.
+
+    ``+15% to Fire Damage`` is on the warder's ladder and not among its own
+    lines, and it is on the blade's own lines and on no ladder -- so the same
+    row finds exactly one item either way, and it is a different item each way.
+    That is what says the ladder is a second pool rather than a second clause:
+    a bonus nobody asked about is not a reason to turn an item away, which is
+    why the shield is still shown when the box is ticked and a row asks for
+    something else.
+    """
+    proxy = _carded()
+
+    proxy.set_stats((("to fire damage", 0, NUMBER_MAX),))
+    assert _listed(proxy) == ["Blade"]
+
+    proxy.set_stats((("to fire damage", 0, NUMBER_MAX),), bonuses=True)
+    assert _listed(proxy) == ["Blade", "Warder"]
+
+    proxy.set_stats((("to strength", 0, NUMBER_MAX),), bonuses=True)
+    assert _listed(proxy) == ["Blade", "Choker"], "the ladder is a pool, not a clause"
+
+
+def test_every_row_has_to_be_answered_and_not_merely_one(qapp):
+    """Rows AND together like every other facet here, and like the reference's:
+    a form of two rows is a question with two parts."""
+    proxy = _carded()
+
+    proxy.set_stats(
+        (("to strength", 0, NUMBER_MAX), ("to fire damage", 0, NUMBER_MAX))
+    )
+    assert _listed(proxy) == ["Blade"], "the choker has the strength and no fire"
+
+
+def test_nothing_is_looked_up_until_one_of_the_three_is_set(qapp):
+    """The bargain the lookup exists for.
+
+    A card is built by walking the game's data files, so asking for one per row
+    on every poll would be doing that work for a collection nobody has asked a
+    question about.  The counter is the point of the test: three facets read
+    the card, and every other one reads the row and never asks.
+    """
+    asked = []
+
+    def counting(print_: str):
+        asked.append(print_)
+        return CARDS.get(print_)
+
+    proxy = _carded()
+    proxy.set_detail(counting)
+
+    proxy.set_places(set())          # the kinds
+    proxy.set_tiers(set())           # the rarities
+    proxy.set_level_range(0, LEVEL_MAX)
+    proxy.set_item_levels(0, LEVEL_MAX)
+    proxy.set_sockets(set())
+    proxy.set_requirements(REQ_REST)
+    proxy.set_classes(set())
+    proxy.counts(TIER_ROLE)
+    assert asked == [], "a poll that asks nothing built a card"
+
+    proxy.set_damage((("fire", 0, NUMBER_MAX),))
+    assert asked, "the one facet that needs it did not ask"
+
+
+def test_an_item_with_no_card_fails_a_search_that_asked(qapp):
+    """``None`` is not a pass.  A row the tool cannot describe -- an item the
+    parser could not read, or a collection assembled with no window behind it
+    -- is not an item that matches a description of one.
+
+    And nothing raises: the predicate runs inside a filter, where an exception
+    is a crash in the middle of a repaint rather than a message.
+    """
+    proxy = _carded()
+    proxy.set_detail(lambda print_: None)
+
+    proxy.set_damage((("fire", 0, NUMBER_MAX),))
+
+    assert _listed(proxy) == []
+
+
+def test_a_proxy_with_no_lookup_at_all_narrows_to_nothing(qapp):
+    """The same answer from the other side: a proxy that was never told how to
+    get a card cannot honestly pass anything through one of these three."""
+    proxy = _carded()
+    proxy.set_detail(None)
+
+    proxy.set_stats((("to strength", 0, NUMBER_MAX),))
+
+    assert _listed(proxy) == []
+
+
+def test_the_three_narrow_the_counts_as_well_as_the_list(qapp):
+    """The same rule as the other five: a panel nobody is looking at is still
+    narrowing the list in front of the player, so it is still what the numbers
+    beside the rail are counted from."""
+    proxy = _carded()
+
+    proxy.set_damage((("fire", 0, NUMBER_MAX),))
+
+    assert _listed(proxy) == ["Blade"]
     assert proxy.counts(TIER_ROLE) == {"Unique": 1}
 
 
@@ -885,6 +1200,103 @@ def test_the_type_sorts_by_the_kind_word_and_not_by_the_rail_s_path(qapp):
     proxy.set_sort("Type")
 
     assert _shown(proxy) == ["Nothing", "Axe", "Boots", "Sword"]
+
+
+#: A fourth item for the two keys that read a card: one with nothing left of
+#: it.  Zero damage is a *number* and the absence of damage is not one, which
+#: is the whole of why the two sort differently -- see
+#: :meth:`app.models.CollectionFilter._carried`.
+STUB = Card(
+    name="Stub",
+    tier="normal",
+    tier_word="Normal",
+    type_name="Sword",
+    set_name=None,
+    icon=None,
+    level=10,
+    sockets=0,
+    blocks=(),
+    gems=(),
+    set_ladder=(),
+    flavor=None,
+    damage=(("physical", 0, 0),),
+    armor=(("physical", 0, 0),),
+)
+
+
+def test_damage_sorts_by_what_the_item_carries_most_first(qapp):
+    """The reference's own reading: the midpoints of an item's parts, summed.
+
+    Which is why the two-element sword is above a piece carrying the same span
+    in one element -- a span is counted at its middle, and the two are the two
+    things the item's damage really is.
+
+    The last two rows are the shape of the rule rather than an accident of the
+    fixture: the warder and the choker carry no damage at all and the stub
+    carries none-worth, and *none* sorts below *none-worth* -- because zero is
+    a number and the absence of one is not, so the absence is the worst value
+    there is rather than the best.
+    """
+    proxy = _carded({**CARDS, "Stub": STUB})
+    proxy.set_sort("Damage")
+
+    assert _shown(proxy) == ["Blade", "Stub", "Warder", "Choker"]
+
+
+def test_armor_sorts_the_same_way_over_the_other_number(qapp):
+    """The same key over the other half of the card, and the two are not one
+    question: the sword is top of one list and bottom of the other.
+
+    The choker's 117 is 85 physical and 32 fire -- five elements summed at
+    their middles -- against the warder's single 120-180.
+    """
+    proxy = _carded({**CARDS, "Stub": STUB})
+    proxy.set_sort("Armor")
+
+    assert _shown(proxy) == ["Warder", "Choker", "Stub", "Blade"]
+
+
+def test_the_arrow_turns_a_card_key_over_and_leaves_the_ties_alone(qapp):
+    """*Damage* read the other way is least first, and the rows the key cannot
+    tell apart keep the order everything else here is read in.
+
+    The reference multiplies its whole comparison by the direction, so its two
+    four-hundred-damage weapons would swap places on the arrow for no reason a
+    player could name.  Here only what the key *says* answers to the arrow --
+    the same rule the ladder follows, and the reason the two rows carrying no
+    damage come out in level order both ways.
+    """
+    proxy = _carded({**CARDS, "Stub": STUB})
+    proxy.set_sort("Damage", True)
+
+    shown = _shown(proxy)
+
+    assert shown == ["Warder", "Choker", "Stub", "Blade"]
+    assert shown.index("Warder") < shown.index("Choker"), (
+        "the two rows the key ties were read upside down along with it"
+    )
+
+
+def test_a_card_key_asks_for_no_card_until_it_is_the_key(qapp):
+    """The other half of the bargain the lookup makes: the wall is re-ordered
+    after every poll, and a poll that asks every item for its card would build
+    the whole collection's cards to sort a list nobody has re-ordered."""
+    asked = []
+
+    def counting(print_: str):
+        asked.append(print_)
+        return CARDS.get(print_)
+
+    proxy = _carded()
+    proxy.set_detail(counting)
+
+    proxy.set_sort("Tier")
+    _shown(proxy)
+    assert asked == []
+
+    proxy.set_sort("Damage")
+    _shown(proxy)
+    assert asked, "the one key that needs it did not ask"
 
 
 def test_a_sort_is_not_a_filter_and_moves_no_number(qapp):
@@ -1444,14 +1856,14 @@ def test_the_bar_says_when_it_was_cleared_rather_than_narrowed(qapp):
     assert len(heard) == 1
 
 
-def test_the_bar_keeps_the_four_facets_the_panel_sets(qapp):
+def test_the_bar_keeps_the_eight_facets_the_panel_sets(qapp):
     """They are held rather than drawn, and the bar is where they are held.
 
     There is no room in the row for a second level range, five socket chips,
-    four attribute pairs and four classes -- and no need of it, because the
-    panel is where they are set.  What the bar is for is remembering them, so
-    that the window can ask for the whole search and the panel can open on what
-    is in force (below).
+    four attribute pairs, four classes, ten element ranges and a list of
+    property rows -- and no need of it, because the panel is where they are
+    set.  What the bar is for is remembering them, so that the window can ask
+    for the whole search and the panel can open on what is in force (below).
     """
     bar = _bar()
 
@@ -1459,6 +1871,10 @@ def test_the_bar_keeps_the_four_facets_the_panel_sets(qapp):
     assert bar.sockets() == set()
     assert bar.requirement_ranges() == REQ_REST
     assert bar.classes() == set()
+    assert bar.damage_ranges() == ()
+    assert bar.armor_ranges() == ()
+    assert bar.stat_rows() == ()
+    assert bar.bonuses() is False
     assert bar.advanced_active() is False
 
     bar.adopt(
@@ -1468,6 +1884,10 @@ def test_the_bar_keeps_the_four_facets_the_panel_sets(qapp):
             sockets=frozenset({2}),
             reqs=_strength((30, REQ_MAX)),
             classes=frozenset({"Embermage"}),
+            damage=(("fire", 20, 40),),
+            armor=(("physical", 100, 200),),
+            stats=(("to fire damage", 0, NUMBER_MAX),),
+            bonuses=True,
         )
     )
 
@@ -1475,10 +1895,14 @@ def test_the_bar_keeps_the_four_facets_the_panel_sets(qapp):
     assert bar.sockets() == {2}
     assert bar.requirement_ranges() == _strength((30, REQ_MAX))
     assert bar.classes() == {"Embermage"}
+    assert bar.damage_ranges() == (("fire", 20, 40),)
+    assert bar.armor_ranges() == (("physical", 100, 200),)
+    assert bar.stat_rows() == (("to fire damage", 0, NUMBER_MAX),)
+    assert bar.bonuses() is True
     assert bar.advanced_active() is True
 
 
-def test_clearing_the_bar_puts_the_four_back_too(qapp):
+def test_clearing_the_bar_puts_the_eight_back_too(qapp):
     """The button is on the row, so what it stands for is a facet of this bar.
 
     A ``Clear filters`` that left a class ticked behind a control the player
@@ -1487,7 +1911,15 @@ def test_clearing_the_bar_puts_the_four_back_too(qapp):
     """
     bar = _bar()
     bar.adopt(
-        Advanced(item_low=10, sockets=frozenset({1}), classes=frozenset({"Outlander"}))
+        Advanced(
+            item_low=10,
+            sockets=frozenset({1}),
+            classes=frozenset({"Outlander"}),
+            damage=(("fire", 20, 40),),
+            armor=(("ice", 0, 5),),
+            stats=(("to fire damage", 0, NUMBER_MAX),),
+            bonuses=True,
+        )
     )
     assert bar.advanced_active() is True
 
@@ -1497,16 +1929,38 @@ def test_clearing_the_bar_puts_the_four_back_too(qapp):
     assert bar.sockets() == set()
     assert bar.requirement_ranges() == REQ_REST
     assert bar.classes() == set()
+    assert bar.damage_ranges() == ()
+    assert bar.armor_ranges() == ()
+    assert bar.stat_rows() == ()
+    assert bar.bonuses() is False
     assert bar.advanced_active() is False
 
 
+def test_the_set_bonus_box_is_a_widening_and_not_a_facet_of_its_own(qapp):
+    """Ticking it alone narrows nothing: it says *where* a property row may be
+    answered from, so with no row to answer there is nothing for it to do.
+
+    Which is why it is the one field of the eight that the button's ink does
+    not read -- a gold button over a search that is showing everything would be
+    the same lie from the other side.
+    """
+    bar = _bar()
+
+    bar.adopt(Advanced(bonuses=True, stats=(("to fire damage", 0, NUMBER_MAX),)))
+    assert bar.advanced_active() is True, "the row is what is narrowing"
+
+    bar.adopt(Advanced(bonuses=True))
+    assert bar.stat_rows() == ()
+    assert bar.advanced_active() is False, "and with no row it says nothing"
+
+
 def test_writing_a_search_onto_the_bar_is_not_a_change_it_says(qapp):
-    """`Search` is one move the window makes, not five the player did.
+    """`Search` is one move the window makes, not nine the player did.
 
     So the controls are written silently and the window emits once, after it
     has moved the rail as well -- see :meth:`app.window.MainWindow.
     _advanced_search`.  A bar that emitted here would have the window apply
-    half a search four times over before it reached the finished one.
+    half a search eight times over before it reached the finished one.
     """
     bar = _bar()
     heard = []
@@ -1523,14 +1977,22 @@ def test_the_bar_says_what_the_panel_would_open_on(qapp):
     """A draft starts from what is in force, so that ticking the one thing a
     player came for does not throw away what they set a moment ago.
 
-    Which is why this reads the bar rather than the panel: the four are one
+    Which is why this reads the bar rather than the panel: the eight are one
     panel's old draft and the three controls are what the player has done
     since, and :meth:`app.filters.FilterBar.current` has to be the two of them
     together.  The kinds are the odd one out and the window is what fills them:
     they are ticked in the rail, which is not part of the bar.
     """
     bar = _bar()
-    bar.adopt(Advanced(item_low=5, item_high=15, sockets=frozenset({3})))
+    bar.adopt(
+        Advanced(
+            item_low=5,
+            item_high=15,
+            sockets=frozenset({3}),
+            damage=(("fire", 20, 40),),
+            stats=(("to fire damage", 0, NUMBER_MAX),),
+        )
+    )
     bar.search.setText("drill")
     bar.chips["Unique"].setChecked(True)
     bar.low.setValue(20)
@@ -1543,15 +2005,17 @@ def test_the_bar_says_what_the_panel_would_open_on(qapp):
     assert (state.low, state.high) == (20, 30)
     assert (state.item_low, state.item_high) == (5, 15)
     assert state.sockets == {3}
+    assert state.damage == (("fire", 20, 40),)
+    assert state.stats == (("to fire damage", 0, NUMBER_MAX),)
     assert state.places == frozenset(), "the kinds are the rail's to fill in"
 
 
-def test_the_button_says_when_one_of_the_four_is_narrowing(qapp):
+def test_the_button_says_when_one_of_the_eight_is_narrowing(qapp):
     """A facet with no control in the row must not be an invisible one.
 
-    The four have no widget here, so without the ink a collection narrowed by a
-    panel nobody is looking at would read exactly like one narrowed by nothing
-    -- which is why the button turns the rail's gold (see
+    The eight have no widget here, so without the ink a collection narrowed by
+    a panel nobody is looking at would read exactly like one narrowed by
+    nothing -- which is why the button turns the rail's gold (see
     :func:`app.filters._advanced_style`).  Read off the sheet it was given
     rather than off the pixels, because what is being asked is what the button
     was told to wear; the gold itself is drawn like every other word in the
@@ -1563,7 +2027,14 @@ def test_the_button_says_when_one_of_the_four_is_narrowing(qapp):
     assert CHALK in bar.advanced.styleSheet()
 
     bar.adopt(Advanced(sockets=frozenset({1})))
+    assert GOLD in bar.advanced.styleSheet()
 
+    bar.reset()
+    bar.adopt(Advanced(damage=(("fire", 20, 40),)))
+    assert GOLD in bar.advanced.styleSheet()
+
+    bar.reset()
+    bar.adopt(Advanced(stats=(("to fire damage", 0, NUMBER_MAX),)))
     assert GOLD in bar.advanced.styleSheet()
     assert CHALK not in bar.advanced.styleSheet(), "the ink is one or the other"
 
@@ -1574,12 +2045,11 @@ def test_the_button_says_when_one_of_the_four_is_narrowing(qapp):
 
 
 def test_the_bar_offers_every_key_the_reference_does(qapp):
-    """The reference's own four, in its own order, opening on the ladder.
+    """The reference's own six, in its own order, opening on the ladder.
 
-    *Damage* and *Armor* are the reference's other two and are not here yet:
-    they order by numbers that live on the item's card rather than on its row,
-    and a key for them before that card is read would sort the whole
-    collection as zeroes.
+    *Damage* and *Armor* are the two that read the item's own card rather than
+    its row -- see :meth:`app.models.CollectionFilter._carried` -- and they are
+    here because the card is now something the collection is asked for.
 
     The first key is the wall's default, so the default the user asked for is
     the box's own first word rather than something the window has to say.
@@ -1589,6 +2059,7 @@ def test_the_bar_offers_every_key_the_reference_does(qapp):
     assert [bar.sort.itemText(row) for row in range(bar.sort.count())] == list(
         SORT_KEYS
     )
+    assert SORT_KEYS[-2:] == ("Damage", "Armor"), "the reference's last two"
     assert bar.sort_key() == "Tier"
     assert bar.sort_backwards() is False
     assert bar.reverse.text() == "↓"

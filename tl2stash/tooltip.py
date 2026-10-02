@@ -55,7 +55,7 @@ from .card import (
     lines,
 )
 from .dat import VAR_FLAVOR
-from .gamedata import Requirements
+from .gamedata import DAMAGE_TYPES, Requirements
 from .item import as_float, strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -555,6 +555,20 @@ def _damage_lines(derived) -> list[str]:
     return lines
 
 
+def _number_parts(parts) -> tuple[tuple[str, int, int], ...]:
+    """The two numbers under each line above, in the game's own order.
+
+    The order is :data:`tl2stash.gamedata.DAMAGE_TYPES`' rather than this
+    dict's, because a dict's is the order the item's own file happened to state
+    its shares in -- and two cards whose numbers are the same would then list
+    their elements differently.  The five are a fixed vocabulary, so the panel's
+    five rows and these five parts are the same five in the same order.
+    """
+    return tuple(
+        (name, *parts[name]) for name, _, _ in DAMAGE_TYPES if name in parts
+    )
+
+
 def build(item: "Item", data: "GameData | None" = None, host: str | None = None) -> Card:
     """An item as a card: its headline, its blocks of lines, its gems.
 
@@ -603,16 +617,35 @@ def build(item: "Item", data: "GameData | None" = None, host: str | None = None)
     # where it can be: the item's data file says how the damage divides, and
     # a by-level curve says how large it is.  Bashdrill's '72' becomes
     # 'Physical Damage 52-74' and 'Electric Damage 77-110'.
+    #
+    # Every path fills the two number fields as well as the two blocks, and
+    # they are filled *here*, beside the lines, so that the numbers a filter
+    # reads are the numbers the card was drawn with and never a second reading
+    # of the same item -- see :class:`~tl2stash.card.Card`.
+    damage: tuple[tuple[str, int, int], ...] = ()
+    armor: tuple[tuple[str, int, int], ...] = ()
     derived = data.derived_for(item) if data is not None else None
     if derived is not None:
-        kind = DAMAGE if derived.kind == "damage" else ARMOR
-        blocks.append((kind, _damage_lines(derived)))
+        parts = _number_parts(derived.parts)
+        if derived.kind == "damage":
+            damage = parts
+            blocks.append((DAMAGE, _damage_lines(derived)))
+        else:
+            armor = parts
+            blocks.append((ARMOR, _damage_lines(derived)))
     else:
         # 0xFFFFFFFF is what the file holds where an item has none of a
         # thing -- jewelry carries it as its armor, a ring as its damage.
+        #
+        # Both of these fall back to the one number the save file keeps, which
+        # is the physical part: the file has no minimum and no element, so the
+        # span is the number against itself.  It is the sentence the card
+        # draws -- 'Damage 72' -- read as the range it is.
         if item.max_damage not in (0, 0xFFFFFFFF):
+            damage = (("physical", item.max_damage, item.max_damage),)
             blocks.append((DAMAGE, [f"Damage {item.max_damage}"]))
         if item.armor not in (0, 0xFFFFFFFF):
+            armor = (("physical", item.armor, item.armor),)
             blocks.append((ARMOR, [f"Armor {item.armor}"]))
 
     # A weapon's output, which is the headline's other half rather than a
@@ -715,6 +748,8 @@ def build(item: "Item", data: "GameData | None" = None, host: str | None = None)
         requires=requires,
         weapon_lead=lead,
         augments=augments,
+        damage=damage,
+        armor=armor,
     )
 
 

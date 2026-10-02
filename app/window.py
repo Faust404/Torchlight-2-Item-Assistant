@@ -45,7 +45,7 @@ from tl2stash.service import STATUS_ABSORBED, ItemService
 from tl2stash.tooltip import build
 from tl2stash.watcher import StashWatcher
 
-from .advsearch import AdvancedSearchOverlay
+from .advsearch import AdvancedSearchOverlay, vocabulary
 from .card import IconCache
 from .catalog import ICON_SIZE, Catalog
 from .compare import CompareOverlay
@@ -287,6 +287,11 @@ class MainWindow(QMainWindow):
         self.collection_proxy.setSourceModel(self.collection_model)
         self.collection_proxy.setFilterKeyColumn(0)
         self.collection_proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        # Three of the facets read the item's *card* rather than its row, so the
+        # proxy is given the memo the wall draws from -- the same cards, built
+        # once each, and never asked for unless one of the three is set.  See
+        # `CollectionFilter.set_detail`.
+        self.collection_proxy.set_detail(self._detail_for)
 
         self.grid = TileGrid(self._icons())
         self.grid.compare.connect(self._compare_copies)
@@ -779,6 +784,36 @@ class MainWindow(QMainWindow):
             self._details[print_] = card
         return card
 
+    def _detail_for(self, print_: str) -> Card | None:
+        """One item's card, for a filter that has to ask about a number.
+
+        ``None`` rather than the sentence `_card_for` falls back to: what
+        arrives here is asked whether the item matches, and an item the tool
+        cannot read is not an item that matches -- see
+        :meth:`app.models.CollectionFilter.set_detail`, which is the only
+        caller.  This is the wall's own memo, so a search that reads damage
+        builds each card once and the wall that follows draws what is already
+        built.
+        """
+        card = self._card_for(print_)
+        return card if isinstance(card, Card) else None
+
+    def _stat_vocabulary(self) -> list[str]:
+        """The stats to suggest in the advanced search's property rows.
+
+        Which cards to read is the window's business -- it is the one that
+        holds the collection and the memo -- and what to read *off* them is the
+        panel's: see :func:`app.advsearch.vocabulary`, which turns a list of
+        cards into a list of the stats they show.
+        """
+        cards = []
+        for row in range(self.collection_model.rowCount()):
+            index = self.collection_model.index(row, 0)
+            card = self._detail_for(index.data(FINGERPRINT_ROLE))
+            if card is not None:
+                cards.append(card)
+        return vocabulary(cards)
+
     def _render_stats(self, print_: str) -> Card | str:
         """The game's own card for one stored item, or why there is not one.
 
@@ -856,12 +891,12 @@ class MainWindow(QMainWindow):
 
         One slot for the whole job, whether it was a kind ticked in the rail, a
         chip ticked in the bar or a set name clicked on a card: the proxy holds
-        all nine facets at once, so applying eight of them and rebuilding would
-        be a redraw of a list the player is not looking at.  Each setter
+        all twelve facets at once, so applying eleven of them and rebuilding
+        would be a redraw of a list the player is not looking at.  Each setter
         returns without touching the rows when its facet has not moved, which
         is what keeps this free on the polls that changed nothing.
 
-        Four of the nine have no control in the row -- they are set on the
+        Eight of the twelve have no control in the row -- they are set on the
         advanced search's panel and read back off the bar -- and they are
         applied here with the rest, because to the collection they are not a
         different kind of thing.
@@ -875,6 +910,11 @@ class MainWindow(QMainWindow):
         self.collection_proxy.set_sockets(self.filters.sockets())
         self.collection_proxy.set_requirements(self.filters.requirement_ranges())
         self.collection_proxy.set_classes(self.filters.classes())
+        self.collection_proxy.set_damage(self.filters.damage_ranges())
+        self.collection_proxy.set_armor(self.filters.armor_ranges())
+        self.collection_proxy.set_stats(
+            self.filters.stat_rows(), self.filters.bonuses()
+        )
         self._count_facets()
         self._rebuild_collection()
 
@@ -909,11 +949,15 @@ class MainWindow(QMainWindow):
         machine without the reference database an empty section would be a
         control that can never match anything -- see
         :meth:`~tl2stash.gamedata.GameData.has_classes`.
+
+        The property rows are offered the collection's own wording, which is
+        read off the same memo the wall draws from and so costs nothing that
+        has not already been paid.
         """
         state = replace(self.filters.current(), places=frozenset(self.sidebar.places()))
         data = self._game_data()
         offered = CLASSES if data is not None and data.has_classes else ()
-        self.advanced.open_for(state, offered)
+        self.advanced.open_for(state, offered, self._stat_vocabulary())
 
     def _advanced_search(self, state) -> None:
         """Apply a committed draft: the bar, then the rail, then the wall.

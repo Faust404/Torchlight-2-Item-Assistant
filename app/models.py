@@ -8,29 +8,35 @@ better explanation of what this tool does than any amount of prose.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QBrush, QColor, QStandardItem, QStandardItemModel
 
 from tl2stash.card import TIER_INK
+from tl2stash.gamedata import DAMAGE_TYPES
 from tl2stash.item import Item
 from tl2stash.taxonomy import Place
 
 from .catalog import Catalog, Entry
 
 if TYPE_CHECKING:  # pragma: no cover
+    from tl2stash.card import Card
     from tl2stash.gamedata import GameData
 
 __all__ = [
     "CLASSES",
     "CLASS_ROLE",
     "COLLECTION_COLUMNS",
+    "ELEMENTS",
+    "ELEMENT_REST",
     "FINGERPRINT_ROLE",
     "GATE_ROLE",
     "LEVEL_ROLE",
     "MEMBERS_ROLE",
+    "NUMBER_MAX",
     "PLACE_ROLE",
     "REQS_ROLE",
     "REQ_MAX",
@@ -107,14 +113,14 @@ TIER_RANK = {word: rung for rung, word in enumerate(TIER_LADDER)}
 TIER_TAIL = len(TIER_LADDER)
 
 #: What the sort box offers, in the order it offers them.  The reference's own
-#: list, less its two number orders: *Damage* and *Armor* order by numbers that
-#: are not on a row at all but on the item's own card, so they arrive with the
-#: panel that reads the same numbers -- a key for them before that would sort
-#: the whole collection as zeroes.
+#: list.  Its two number orders come last because they are the two that read
+#: the item's *card* rather than its row -- the same numbers the panel's Damage
+#: and Armor sections narrow -- so they are the two whose first sort builds
+#: every card in the collection; see :meth:`CollectionFilter.set_detail`.
 #:
 #: The first key is what the wall opens on, so the default above is the default
 #: here without any part of the window having to say so.
-SORT_KEYS = ("Tier", "Name", "Level", "Type")
+SORT_KEYS = ("Tier", "Name", "Level", "Type", "Damage", "Armor")
 
 #: The top of the level range, and so the level of the box that ends it.
 #: Measured over the archive: 5,974 item files state a level and the highest of
@@ -148,6 +154,26 @@ REQ_WORDS = ("Strength", "Dexterity", "Focus", "Vitality")
 #: ranges that can come apart.
 REQ_REST = ((0, REQ_MAX),) * len(REQ_WORDS)
 
+#: The five damage and armour types, in the game's own order -- which is the
+#: order the panel's five rows are in and the order a card's parts come back
+#: in.  The words are the ones the game's own data file keys its shares by
+#: (:data:`tl2stash.gamedata.DAMAGE_TYPES`), so an element is spelled one way
+#: from the file it was read out of to the row that narrows it.
+ELEMENTS = tuple(name for name, _, _ in DAMAGE_TYPES)
+
+#: The top of a damage, armour or property number box, and so of every range
+#: that reads one.  Nothing in the game comes near it: the widest span in the
+#: reference's whole corpus is 5,610, on a level 100 two-hander, and armour is
+#: two orders of magnitude below that again.  Round, and high enough that "and
+#: up" is a thing a range can say without a special case for it.
+NUMBER_MAX = 99999
+
+#: The range over one element that asks nothing: the pair each of the panel's
+#: five rows in both the Damage and the Armor section starts at, and -- like
+#: :data:`REQ_REST` -- the one spelling of it that the default, the setter and
+#: :meth:`CollectionFilter._attributes` all read.
+ELEMENT_REST = (0, NUMBER_MAX)
+
 #: The socket counts the panel offers a chip for.  The reference's own five,
 #: and it says why: its corpus runs 1 to 5, so five chips cover every item that
 #: can hold a socket at all.  A set of exact counts rather than a range, which
@@ -173,13 +199,25 @@ class Advanced:
     that opening the panel is one copy in and pressing Search is one copy out,
     and a half-applied search is not a thing that can happen on the way.
 
-    It carries the bar's own three facets as well as the panel's five, because
-    the panel *shows* them: a player who opens it with a word in the search box
-    and a rarity ticked must find both where they left them, and a control that
-    silently dropped them would be a search that shows something nobody asked
-    for.  The fields are all at rest in an ``Advanced()`` -- no word, no tick, a
-    range that covers everything -- so the resting state is this type's default
-    and not a second thing to write down.
+    It carries the bar's own three facets as well as the panel's seven,
+    because the panel *shows* them: a player who opens it with a word in the
+    search box and a rarity ticked must find both where they left them, and a
+    control that silently dropped them would be a search that shows something
+    nobody asked for.  The fields are all at rest in an ``Advanced()`` -- no
+    word, no tick, a range that covers everything -- so the resting state is
+    this type's default and not a second thing to write down.
+
+    ``damage`` and ``armor`` name the elements the search asks about, which is
+    not the same list as the elements an item carries (``Card.damage``): a row
+    put back to the range that covers everything leaves the tuple, because a
+    search that asks about every element and a search that asks about none of
+    them are the same search -- see :meth:`CollectionFilter.set_damage`.
+
+    ``stats`` is one row per property the player is looking for: the words to
+    find among an item's lines, and the range its own number has to land in.  A
+    stat is not a manifest constant like the four requirements, because the
+    vocabulary is the collection's own -- what the items in front of the player
+    happen to say -- so it is text rather than a word from a list.
 
     ``places`` is the odd one in that it belongs to neither: the kinds are
     ticked in the rail and the panel's Type grid is a second view of the same
@@ -204,6 +242,16 @@ class Advanced:
     reqs: tuple[tuple[int, int], ...] = REQ_REST
     #: The class words ticked, empty for every class.
     classes: frozenset[str] = frozenset()
+    #: The damage elements asked about, one ``(element, low, high)`` each.
+    damage: tuple[tuple[str, int, int], ...] = ()
+    #: The armour elements asked about, the same shape.
+    armor: tuple[tuple[str, int, int], ...] = ()
+    #: The property rows: ``(what to look for, low, high)``, in the order the
+    #: player added them.
+    stats: tuple[tuple[str, int, int], ...] = ()
+    #: Whether a property row may be answered by a set's bonus as well as by
+    #: the item's own lines.
+    bonuses: bool = False
     #: The kinds ticked in the rail, which the Type grid mirrors.
     places: frozenset[Place] = frozenset()
 
@@ -463,19 +511,41 @@ def fill_collection(
         model.appendRow([name])
 
 
+#: The sign a number may carry, and the number itself: a property line's value
+#: is one number, and the game writes the rest of the sentence around it.
+_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
+def _first_number(line: str) -> float | None:
+    """The number a property line is worth, or ``None`` for a line with none.
+
+    The *first* number, because that is where the game puts the value: every
+    wording in its files leads with it and names the thing after -- ``+15% to
+    Fire Damage``, ``58 Ice Armor``, ``10% Chance to Stun``.  A line with no
+    number at all is a real kind of line (``Identify Item``, ``NA``) and is a
+    line no range can be asked of; it answers a row that asks for the words
+    alone and nothing more.
+    """
+    found = _NUMBER.search(line)
+    return float(found.group()) if found else None
+
+
 class CollectionFilter(QSortFilterProxyModel):
     """The collection, narrowed by what the controls above it have ticked.
 
-    Nine things narrow it and they AND, in two families.  Four are ones the
+    Twelve things narrow it and they AND, in three families.  Four are ones the
     window has a control for within reach -- the search box, the kinds ticked
-    in the rail, the rarity chips, a range of player levels.  Four more have
+    in the rail, the rarity chips, a range of player levels.  Five more have
     controls only in the advanced search's panel, and are set from it in one
     go: a range of *item* levels, a set of socket counts, four attribute
-    ranges, and the classes an item may be restricted to.  The two level
-    ranges are different numbers and the reason they are two controls: what an
-    item asks of the character is not what it is.  The ninth is one set, and it
-    is the odd one of the lot, because it is arrived at by clicking a *name on
-    a card* rather than by a control, and because it is a name rather than a
+    ranges, the classes an item may be restricted to, and the property rows.
+    The two level ranges are different numbers and the reason they are two
+    controls: what an item asks of the character is not what it is.  The last
+    two are the item's own *numbers*, read off its card rather than off the row
+    -- a damage span and an armour span per element -- and they are the only
+    facets here that cost anything to apply.  The twelfth is one set, and it is
+    the odd one of the lot, because it is arrived at by clicking a *name on a
+    card* rather than by a control, and because it is a name rather than a
     tick: a set is not a property an item may have several of.  A facet with
     nothing ticked is not a filter at all, so a window whose controls have just
     been cleared shows the whole collection -- which is what makes them safe to
@@ -519,6 +589,17 @@ class CollectionFilter(QSortFilterProxyModel):
         self._sockets: set[int] = set()
         self._reqs: tuple[tuple[int, int], ...] = REQ_REST
         self._classes: set[str] = set()
+        #: The three that read the item's *card* rather than its row: the
+        #: damage and armour elements asked about, and the property rows.  All
+        #: of them are empty at rest, and empty means no card is ever asked
+        #: for -- see :meth:`set_detail`.
+        self._damage: dict[str, tuple[int, int]] = {}
+        self._armor: dict[str, tuple[int, int]] = {}
+        self._stats: tuple[tuple[str, int, int], ...] = ()
+        self._bonuses = False
+        #: How to get an item's card from its fingerprint, or ``None`` when
+        #: nobody has offered a way.  See :meth:`set_detail`.
+        self._detail: Callable[[str], "Card | None"] | None = None
         #: The one set being shown, by the name the cards draw, or empty for
         #: all of them.
         self._set: str = ""
@@ -635,13 +716,97 @@ class CollectionFilter(QSortFilterProxyModel):
             self._classes = wanted
             self._refilter()
 
+    # -- the three that read the card -------------------------------------
+
+    def set_detail(self, lookup) -> None:
+        """Say how to get an item's card from its fingerprint.
+
+        The three facets below are the only ones whose numbers are not on the
+        row: a card's damage, armour and property lines are built by walking
+        the game's data files, and putting them on every row would be building
+        a card for every item in the collection whether or not anyone asks
+        about one.  So the proxy is given a *way* to ask instead, and it asks
+        only while one of the three is set.
+
+        The window passes its own memo -- see
+        :meth:`app.window.MainWindow._detail_for` -- which is the same memo the
+        wall draws from, so the first search that reads damage builds each
+        card once and every search after it is a dictionary lookup.  A lookup
+        that cannot answer returns ``None``, and ``None`` fails a search that
+        asked: an item the tool cannot read is not an item that matches.
+        """
+        self._detail = lookup
+
+    def set_damage(self, ranges) -> None:
+        """Keep only the items that deal one of these elements, by these ranges.
+
+        ``ranges`` is ``(element, low, high)`` triples for the elements the
+        search is asking about, and only those: a row left at the range that
+        covers everything is not asking anything and is not passed.  That is
+        the reference's own reading -- it iterates the types that have a bound
+        in them and no others -- and it is what makes the rest state free.
+
+        Naming an element asks two things of it, and the second is the one to
+        get wrong: the item has to *carry* it, and the two spans have to
+        **overlap**.  Overlap rather than contain, because neither end of
+        either span is the real one: a sword that rolls 14-28 does have damage
+        in a 20-30 request, and a comparator that wanted 20 <= low would say it
+        does not.  The presence half is the reference's *"a type named with no
+        bound is a presence test"*, read against a fixed five-row form: here a
+        row says which element it is asking about by being moved at all, so a
+        moved row that the item does not carry turns it away.
+        """
+        wanted = {element: (int(low), int(high)) for element, low, high in ranges}
+        if wanted != self._damage:
+            self._damage = wanted
+            self._refilter()
+
+    def set_armor(self, ranges) -> None:
+        """The armour half of :meth:`set_damage`, and the same rules exactly.
+
+        A separate facet rather than one over both, because the two are
+        separate sections on the panel and separate questions about an item: a
+        chest's armour has nothing to do with a weapon's damage, and an item
+        that carries one of the two usually carries nothing of the other.
+        """
+        wanted = {element: (int(low), int(high)) for element, low, high in ranges}
+        if wanted != self._armor:
+            self._armor = wanted
+            self._refilter()
+
+    def set_stats(self, rows, bonuses: bool | None = None) -> None:
+        """Keep only the items with a line each of these rows is answered by.
+
+        A row is ``(text, low, high)``: the words to find among the item's
+        property lines, and the range the first number in such a line has to
+        land in.  ``bonuses`` widens *where* a row may be answered from -- the
+        set ladder as well as the item's own lines -- and is a widening rather
+        than a second clause, which is the reference's own reading of its
+        *Include set bonuses* box.
+
+        The text is matched by containment rather than for equality, because
+        the vocabulary is the collection's own sentences and a row is typed
+        from them: ``to fire damage`` is what the picker offers and what a line
+        says in the middle of ``+15% to Fire Damage``.  A row with no bounds --
+        the resting pair -- asks only whether the item says it at all.
+        """
+        wanted = tuple(
+            (str(text).strip(), int(low), int(high)) for text, low, high in rows
+        )
+        moved = bonuses is not None and bool(bonuses) != self._bonuses
+        if moved:
+            self._bonuses = bool(bonuses)
+        if wanted != self._stats or moved:
+            self._stats = wanted
+            self._refilter()
+
     def set_sort(self, key: str, backwards: bool = False) -> None:
         """Order the rows by one of :data:`SORT_KEYS`, or read it the other way.
 
-        ``key`` is one of the four words the box offers -- what arrives is what
-        the player read, and there is nothing to translate.  ``backwards`` is
-        the arrow: the key's own order is the one written down here, and the
-        arrow is what says the player wants the other one.
+        ``key`` is one of the words the box offers -- what arrives is what the
+        player read, and there is nothing to translate.  ``backwards`` is the
+        arrow: the key's own order is the one written down here, and the arrow
+        is what says the player wants the other one.
 
         ``invalidate`` rather than ``sort``, and that is the whole of why this
         method exists rather than the caller reaching for Qt's own.  ``sort``
@@ -687,12 +852,14 @@ class CollectionFilter(QSortFilterProxyModel):
         the player.  The three ticked facets *are* ignored, because they are
         the ones a count is meant to talk someone out of ticking.
 
-        The advanced search's four are ignored by nothing, and the reason is
+        The advanced search's eight are ignored by nothing, and the reason is
         the same one seen from the other side: there is no number anywhere that
         is a count of them, so there is nothing for a count to talk anyone out
         of ticking.  They are applied to every row this walks, which is what
         makes the numbers beside the rail the numbers of the list in front of
-        the player even while a panel nobody can see is narrowing it.
+        the player even while a panel nobody can see is narrowing it -- and it
+        is why a set of property rows can be worth setting: the counts say how
+        much of the collection is left under them.
         """
         tally: dict = {}
         for row in range(self.sourceModel().rowCount()):
@@ -777,7 +944,93 @@ class CollectionFilter(QSortFilterProxyModel):
             if not low <= stated.get(word, 0) <= high:
                 return False
 
+        # The three that are not on the row at all.  Last, and behind one test,
+        # because they are the only ones that cost anything: everything above
+        # reads a role off the row, and these three have to have the item's
+        # card built -- see :meth:`set_detail`.
+        if self._damage or self._armor or self._stats:
+            card = self._card(parent, row)
+            if not self._elements(card, self._damage, "damage"):
+                return False
+            if not self._elements(card, self._armor, "armor"):
+                return False
+            if not all(self._line_says(card, row_) for row_ in self._stats):
+                return False
+
         return True
+
+    def _card(self, parent: QModelIndex, row: int) -> "Card | None":
+        """One row's card, through the lookup the window offered.
+
+        ``None`` for a row whose card nobody can build -- an item the parser
+        could not read, or a collection assembled without a window behind it.
+        A card-less item fails every one of the three facets, which is the
+        honest reading: an item the tool cannot describe is not an item that
+        matches a description.
+        """
+        if self._detail is None:
+            return None
+        print_ = self._value(parent, row, FINGERPRINT_ROLE)
+        return self._detail(print_) if print_ else None
+
+    def _elements(
+        self, card: "Card | None", wanted: dict[str, tuple[int, int]], kind: str
+    ) -> bool:
+        """Whether an item answers every element this search asks about.
+
+        The card keeps its parts as the tuple of triples the card is written
+        with -- name, low, high, in the game's own order -- so they are keyed
+        here rather than there: a dict on the card would be a second order for
+        the same five elements, and the card's is the one the lines are drawn
+        in.
+        """
+        if not wanted:
+            return True
+        if card is None:
+            return False
+        carried = {name: (low, high) for name, low, high in getattr(card, kind)}
+        for element, (low, high) in wanted.items():
+            ends = carried.get(element)
+            # The presence half: an item that does not carry the element is not
+            # an item this row is looking for, whatever range is asked for.
+            if ends is None:
+                return False
+            # And the overlap half, neither span having to contain the other.
+            if ends[1] < low or ends[0] > high:
+                return False
+        return True
+
+    def _line_says(self, card: "Card | None", row) -> bool:
+        """Whether one property row is answered by one of the item's lines.
+
+        Every line of the item is tried, and a line answers the row when it
+        says what the row is looking for *and* the first number in it lands in
+        the row's range.  A row with no range is asking only whether the item
+        says it, which is the reference's own most common row -- it is how a
+        stat that exists only on set ladders is asked for at all.
+
+        The set ladder joins the search only when the box is ticked, and it
+        joins the *pool* rather than adding a clause: a row is answered by
+        either place, and a bonus nobody asked about is not a reason to turn an
+        item away.
+        """
+        text, low, high = row
+        if card is None:
+            return False
+        said = card.properties
+        if self._bonuses:
+            said = said + tuple(
+                line for rung in card.set_ladder for line in rung.lines
+            )
+        for line in said:
+            if text.casefold() not in line.casefold():
+                continue
+            if (low, high) == ELEMENT_REST:
+                return True
+            number = _first_number(line)
+            if number is not None and low <= number <= high:
+                return True
+        return False
 
     def _value(self, parent: QModelIndex, row: int, facet: Qt.ItemDataRole):
         """One facet of one row, read off the row's first cell.
@@ -843,9 +1096,36 @@ class CollectionFilter(QSortFilterProxyModel):
             # they are made one.
             place = index.data(PLACE_ROLE) or ("", None, "")
             return (place[2].casefold(), level, name.casefold(), print_)
+        if self._sort in ("Damage", "Armor"):
+            # Negated, because the key's own order is the *most* of the thing
+            # first -- the way the ladder is the best first -- and this
+            # comparator reads a smaller number as the earlier row.
+            carried = self._carried(print_, self._sort.lower())
+            return (-carried, level, name.casefold(), print_)
         return (
             TIER_RANK.get(index.data(TIER_ROLE), TIER_TAIL),
             level,
             name.casefold(),
             print_,
         )
+
+    def _carried(self, print_: str, kind: str) -> float:
+        """How much of a thing an item carries, as one number.
+
+        The sum of the midpoints of its parts, which is the reference's own
+        reading of the same key -- a sword with two elements has more damage
+        than one with the same span in one, which is right, and a span is
+        counted at its middle because that is what the player expects to get.
+
+        Minus one for an item that carries none at all, and the negation the
+        caller applies is what makes that the *worst* value rather than the
+        best: zero damage is a real number and the absence of damage is not a
+        number at all, so it sorts below it -- the reference's own ``-1``.
+        """
+        card = self._detail(print_) if self._detail and print_ else None
+        if card is None:
+            return -1.0
+        parts = getattr(card, kind, ())
+        if not parts:
+            return -1.0
+        return sum((low + high) / 2 for _, low, high in parts)

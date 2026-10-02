@@ -406,11 +406,13 @@ QToolTip {{
     border: 1px solid {EDGE};
     padding: 4px;
 }}
-/* The two text boxes -- the search box over the collection and the advanced
-   search's Name row -- are found by name because a spin box holds a line edit
-   of its own, and a rule on ``QLineEdit`` would reach inside it and draw a
-   second border a few pixels from the first. */
-QLineEdit#search, QLineEdit#advname {{
+/* The text boxes -- the search box over the collection, the advanced search's
+   Name row, and one per property row in its Stats section -- are found by name
+   because a spin box holds a line edit of its own, and a rule on ``QLineEdit``
+   would reach inside it and draw a second border a few pixels from the first.
+   The three that are named are the three there are: everything else that takes
+   typing in this application is a number box. */
+QLineEdit#search, QLineEdit#advname, QLineEdit#advstat {{
     border: 1px solid {CHALK};
     border-radius: 3px;
     padding: 3px 6px;

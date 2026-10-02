@@ -1,12 +1,15 @@
 """The advanced search: the facets the bar has no room for, over the window.
 
-The bar over the collection carries four controls, and four more are here:
-a range of *item* levels, the socket counts, an item's four stat requirements,
-and the classes it may be restricted to.  They are the reference database's own
-advanced search, section for section and rule for rule -- see
-:meth:`app.models.CollectionFilter.set_requirements` for the two rules that are
-easy to get wrong -- and they are on a panel rather than in the row because a
-row of nine controls is a row nobody reads.
+The bar over the collection carries four controls, and seven more are here: a
+range of *item* levels, the socket counts, an item's four stat requirements,
+the classes it may be restricted to, and the three that read the item's own
+card -- a damage and an armour range per element, and the property rows.  They
+are the reference database's own advanced search, section for section and rule
+for rule -- see :meth:`app.models.CollectionFilter.set_requirements` for the two
+rules that are easy to get wrong, and
+:meth:`app.models.CollectionFilter.set_damage` for the two the element rows
+have -- and they are on a panel rather than in the row because a row of a dozen
+controls is a row nobody reads.
 
 It opens over the window the way the comparison screen does: a scrim, a panel
 inside it, Esc or the `✕` or a press on the backdrop to put it away.  What is
@@ -28,12 +31,14 @@ mean something.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
+    QCompleter,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -54,7 +59,10 @@ from .compare import SCRIM, inset_for
 from .filters import SpinBox, chip_style
 from .models import (
     CLASSES,
+    ELEMENTS,
+    ELEMENT_REST,
     LEVEL_MAX,
+    NUMBER_MAX,
     REQ_MAX,
     REQ_WORDS,
     SOCKET_COUNTS,
@@ -64,7 +72,7 @@ from .models import (
 from .sidebar import UNCLASSIFIED, arranged
 from .theme import CHALK, PALE
 
-__all__ = ["AdvancedSearchOverlay"]
+__all__ = ["AdvancedSearchOverlay", "vocabulary"]
 
 #: The group button that shows every kind rather than one group's.  Spelled
 #: once, because three places here compare against it and a second spelling
@@ -84,10 +92,36 @@ PANEL_MAX = 720
 #: four more lines on a screen that is already a form.
 PAD = 16
 
-#: The column a row's label is written in.  Fixed, so that the four sections'
+#: The column a row's label is written in.  Fixed, so that the sections'
 #: controls line up down the panel even though the longest word in them --
 #: "Vitality" -- is nothing like the longest in the Type grid.
 LABEL_PX = 92
+
+#: How far one press of a stepper moves a *number* box -- the damage, armour
+#: and property ranges, whose top is :data:`~app.models.NUMBER_MAX`.  The level
+#: and requirement boxes step by one, because that is the scale they are on: a
+#: range of 0 to 110 or 0 to 500 is walked.  A damage figure is in the
+#: thousands, and a box that took four thousand presses to cross is a box
+#: nobody uses the arrows on; ten is a step a thumb can hold down.
+STEP_BY = 10
+
+#: What the Damage and Armor sections say under their rows: the two halves of
+#: the rule the model applies, in the order a reader needs them.
+ELEMENTS_HINT = (
+    "A type named here has to be one the item carries, and the two ranges have "
+    "to overlap — a sword rolling 14-28 passes a request for 20-30.  A row left "
+    "covering everything asks nothing."
+)
+
+#: What the Stats section says under its rows.  The first half is the rule; the
+#: second says where the words in the box come from, which is not a fixed list
+#: and is worth saying before a player hunts for one.
+STATS_HINT = (
+    "Each row has to be answered by one of the item's own lines: the words you "
+    "type, and the first number on that line inside the range — or no range at "
+    "all, to ask only whether the item says it.  The suggestions are the stats "
+    "your collection actually shows."
+)
 
 #: What the Class section says when there is nothing to restrict by.  The
 #: restrictions are the reference database's and are in no file of the game's,
@@ -107,6 +141,34 @@ CLASSES_HINT = (
     "No box ticked means every class.  An item that names no class is one any "
     "class may use, so it is shown whatever is ticked here."
 )
+
+
+#: The roll at the front of a property line: its sign, its number and its per
+#: cent sign if it has one.  It is the part that differs from item to item --
+#: ``+15% to Fire Damage`` and ``+38% to Fire Damage`` are one stat -- so it is
+#: the part the suggestions leave off.
+_ROLL = re.compile(r"^[-+]?\d+(?:\.\d+)?\s*%?\s*")
+
+
+def vocabulary(cards) -> list[str]:
+    """The stats to offer in the property rows, off the collection's own cards.
+
+    The reference offers its own curated vocabulary, which is a list of every
+    stat the *game* has; this offers the stats the player's items actually
+    *show*, which is a shorter list and the one that answers the question they
+    are asking.  Both are a list of names to type, and the names are the same
+    names -- the game's own wording, because that is what the lines say.
+
+    Sorted and deduplicated, so a collection of two hundred items with the same
+    six stats offers six suggestions and not two hundred.
+    """
+    said = set()
+    for card in cards:
+        for line in card.properties:
+            words = _ROLL.sub("", line).strip()
+            if words:
+                said.add(words.casefold())
+    return sorted(said)
 
 
 def _row_label(text: str) -> QLabel:
@@ -132,11 +194,12 @@ def _note(text: str) -> QLabel:
     return label
 
 
-def _spin(value: int, top: int, tip: str) -> SpinBox:
+def _spin(value: int, top: int, tip: str, step: int = 1) -> SpinBox:
     """One end of a range: a number box with its whole span on it."""
     spin = SpinBox()
     spin.setRange(0, top)
     spin.setValue(value)
+    spin.setSingleStep(step)
     spin.setToolTip(tip)
     spin.setMaximumWidth(84)
     return spin
@@ -155,6 +218,50 @@ def _pair(low: SpinBox, high: SpinBox) -> QWidget:
     line.addWidget(high)
     line.addStretch(1)
     return row
+
+
+def _completer(words: Sequence[str], editor: QLineEdit) -> QCompleter:
+    """The suggestions under one of the property rows' text boxes.
+
+    Matched by containment rather than from the start, because the vocabulary
+    is a list of the *sentences* items say rather than a list of names: a
+    player who remembers ``fire damage`` should not have to remember which
+    words come before it.
+    """
+    completer = QCompleter(list(words), editor)
+    completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+    completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    return completer
+
+
+def _element_pair(spins: dict, element: str) -> tuple[int, int]:
+    """Where one of the Damage or Armor rows stands, as a pair."""
+    low, high = spins[element]
+    return low.value(), high.value()
+
+
+def _elements_chosen(spins: dict) -> tuple[tuple[str, int, int], ...]:
+    """The element rows that have moved off the range that covers everything.
+
+    Only the moved ones, in the game's own order of elements: a row nobody
+    touched is not asking anything, and the model reads the absence of an
+    element from the *tuple* rather than comparing every pair against the rest
+    range a second time -- see :meth:`app.models.CollectionFilter.set_damage`.
+    """
+    return tuple(
+        (element, *_element_pair(spins, element))
+        for element in ELEMENTS
+        if _element_pair(spins, element) != ELEMENT_REST
+    )
+
+
+def _write_elements(spins: dict, chosen) -> None:
+    """Put a search's element rows back on the boxes, the rest at rest."""
+    by_name = {element: (low, high) for element, low, high in chosen}
+    for element, (low, high) in spins.items():
+        wanted = by_name.get(element, ELEMENT_REST)
+        low.setValue(wanted[0])
+        high.setValue(wanted[1])
 
 
 def _chips(widgets: Sequence[QWidget]) -> QWidget:
@@ -397,6 +504,74 @@ class TypeGrid(QWidget):
             )
 
 
+class StatRow(QWidget):
+    """One property row: what to look for, its range, and the way out.
+
+    Three controls because the reference's own row has three, and they are the
+    three parts of the question: which stat, how much of it, and -- when the
+    row was a mistake -- a cross to take it away.  ``value`` and ``set_value``
+    are the whole of what the panel asks of it; the row knows nothing about
+    searching, and nothing about the other rows.
+
+    The text box suggests the collection's own property lines, by containment
+    rather than by prefix: the vocabulary is a list of sentences the items
+    happen to say, and a player who remembers ``fire damage`` should not have
+    to remember which words come before it.
+    """
+
+    def __init__(self, vocabulary: Sequence[str], on_remove, parent=None) -> None:
+        super().__init__(parent)
+        line = QHBoxLayout(self)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(6)
+
+        self.text = QLineEdit()
+        self.text.setObjectName("advstat")
+        self.text.setPlaceholderText("a stat, as the item says it")
+        self.text.setClearButtonEnabled(True)
+        self.text.setMinimumWidth(150)
+        self.text.setCompleter(_completer(vocabulary, self.text))
+        self.text.setToolTip(
+            "The words to look for among the item's own lines.\n"
+            "Start typing and the stats your items show are offered."
+        )
+
+        self.low = _spin(
+            0,
+            NUMBER_MAX,
+            "The lowest the number on such a line may be.\n"
+            f"Left at 0 and {NUMBER_MAX} the row asks only whether\n"
+            "the item says it at all.",
+            step=STEP_BY,
+        )
+        self.high = _spin(
+            NUMBER_MAX, NUMBER_MAX, "The highest it may be.", step=STEP_BY
+        )
+        self.remove = QPushButton("✕")
+        self.remove.setObjectName("arem")
+        self.remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove.setToolTip("Take this row away.")
+        self.remove.clicked.connect(lambda: on_remove(self))
+
+        line.addWidget(self.text, stretch=1)
+        line.addWidget(self.low)
+        between = QLabel("to")
+        between.setStyleSheet(f"color: {DIM};")
+        line.addWidget(between)
+        line.addWidget(self.high)
+        line.addWidget(self.remove)
+
+    def value(self) -> tuple[str, int, int]:
+        """This row as the search spells it: the words, and the two ends."""
+        return self.text.text().strip(), self.low.value(), self.high.value()
+
+    def set_value(self, text: str, low: int, high: int) -> None:
+        """Put one of a search's rows on the controls."""
+        self.text.setText(text)
+        self.low.setValue(low)
+        self.high.setValue(high)
+
+
 #: The panel's own rules, over the window's.  The ground and the edge are the
 #: card's -- the panel is the same kind of thing as a card, a surface the
 #: window's own colour does not reach -- and everything else is the window's
@@ -439,6 +614,27 @@ _STYLE = f"""
     font-size: 12px;
 }}
 #areset:hover, #asearch:hover {{ color: {CHALK}; border-color: {CHALK}; }}
+/* The two that are not part of the form's own grammar: the way to add a
+   property row, and the way to take one away.  Both are the footer's outline
+   in the dimmer ink -- they are means rather than ends, and the one control
+   here that ends anything is `Search`. */
+#aadd {{
+    color: {PALE};
+    background: transparent;
+    border: 1px solid {PALE};
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: 11px;
+}}
+#aadd:hover {{ color: {CHALK}; border-color: {CHALK}; }}
+#arem {{
+    color: {DIM};
+    background: transparent;
+    border: 0;
+    font-size: 13px;
+    padding: 0 4px;
+}}
+#arem:hover {{ color: {HEAD}; }}
 /* The commit, in the ink the reference gives the button that ends a form: the
    one control here that is not an alternative to anything. */
 #asearch {{ color: {GOLD}; border-color: {GOLD}; }}
@@ -497,12 +693,20 @@ class AdvancedSearchOverlay(QWidget):
         self._shape = wanted
         self.types.set_kinds(wanted)
 
-    def open_for(self, state: Advanced, classes: Sequence[str] = CLASSES) -> None:
+    def open_for(
+        self,
+        state: Advanced,
+        classes: Sequence[str] = CLASSES,
+        vocabulary: Sequence[str] = (),
+    ) -> None:
         """Open on this search, with the class boxes only if there are classes.
 
         ``classes`` is the four words when the reference database was found and
-        nothing at all when it was not.
+        nothing at all when it was not.  ``vocabulary`` is the collection's own
+        property lines, with their rolls taken off, for the Stats section's
+        suggestions -- see :meth:`app.window.MainWindow._stat_vocabulary`.
         """
+        self._offer_vocabulary(vocabulary)
         self._write(state)
         self._offer_classes(classes)
 
@@ -515,7 +719,14 @@ class AdvancedSearchOverlay(QWidget):
         self.setFocus()
 
     def draft(self) -> Advanced:
-        """What the controls say right now, as one search."""
+        """What the controls say right now, as one search.
+
+        Two of the fields are *reduced* rather than read off a control one for
+        one: an element row left covering everything is not part of the search,
+        and neither is a property row nobody has written a word into -- a row
+        added and abandoned is a row the player did not mean.
+        """
+        rows = [row.value() for row in self.stat_rows]
         return Advanced(
             text=self.name.text(),
             tiers=frozenset(
@@ -537,6 +748,10 @@ class AdvancedSearchOverlay(QWidget):
                 for word, box in self.class_boxes.items()
                 if box.isChecked() and box.isEnabled()
             ),
+            damage=_elements_chosen(self.damage_spins),
+            armor=_elements_chosen(self.armor_spins),
+            stats=tuple(row for row in rows if row[0]),
+            bonuses=self.bonuses_box.isChecked(),
             places=frozenset(self.types.ticks()),
         )
 
@@ -607,8 +822,8 @@ class AdvancedSearchOverlay(QWidget):
 
         The reference folds its sections; this scrolls them instead, because a
         fold is a state the panel would have to remember and the panel is
-        thrown away on every Esc -- and four sections of a form is a short
-        scroll.
+        thrown away on every Esc -- and seven sections of a form is a longer
+        scroll than four, but a scroll either way.
         """
         scroll = QScrollArea()
         scroll.setObjectName("abody")
@@ -620,11 +835,16 @@ class AdvancedSearchOverlay(QWidget):
         column = QVBoxLayout(content)
         column.setContentsMargins(PAD, PAD - 4, PAD, PAD)
         column.setSpacing(PAD + 4)
+        damage, self.damage_spins = self._elements("Damage")
+        armor, self.armor_spins = self._elements("Armor")
         for section in (
             self._general(),
             self._type_section(),
             self._requirements(),
             self._classes(),
+            damage,
+            armor,
+            self._stats_section(),
         ):
             column.addWidget(section)
         column.addStretch(1)
@@ -760,6 +980,108 @@ class AdvancedSearchOverlay(QWidget):
         section.row("", self.class_note)
         return section
 
+    def _elements(self, title: str) -> tuple[Section, dict]:
+        """One of the two number sections: a range per element, and its boxes.
+
+        Two of these are built, and they are built by the same code on purpose:
+        the Damage section and the Armor section ask the same question of the
+        same five types with the same rule, and two hand-written copies of five
+        rows is two places for the fifth element to be missing from.
+
+        The five rows are the whole vocabulary, so a row has no way to be
+        *named* without a bound -- which is what the reference's own form does
+        with an empty pair of boxes.  Here a row that has been moved at all is
+        the naming, and the range it was moved to is the rest of the question.
+        """
+        section = Section(title)
+        spins: dict[str, tuple[SpinBox, SpinBox]] = {}
+        for element in ELEMENTS:
+            name = element.title()
+            low = _spin(
+                0,
+                NUMBER_MAX,
+                f"The lowest {element} {title.lower()} to show.\n"
+                "An item that has none of it is left out as soon as either\n"
+                "box of this row moves.",
+                step=STEP_BY,
+            )
+            high = _spin(
+                NUMBER_MAX,
+                NUMBER_MAX,
+                f"The highest {element} {title.lower()} to show.",
+                step=STEP_BY,
+            )
+            spins[element] = (low, high)
+            section.row(name, _pair(low, high))
+        section.note(ELEMENTS_HINT)
+        return section, spins
+
+    def _stats_section(self) -> Section:
+        """The property rows, the button that adds one, and the widening box.
+
+        The rows are built and thrown away with the panel rather than made
+        once: what a row holds is a *draft*, and a draft is thrown away on
+        every Esc, so a row that outlived the panel would be a piece of a
+        search nobody can see.
+        """
+        section = Section("Stats")
+        self.stat_rows: list[StatRow] = []
+        self._vocabulary: list[str] = []
+
+        holder = QWidget()
+        self._stat_list = QVBoxLayout(holder)
+        self._stat_list.setContentsMargins(0, 0, 0, 0)
+        self._stat_list.setSpacing(6)
+
+        add = QPushButton("+ Add stat")
+        add.setObjectName("aadd")
+        add.setCursor(Qt.CursorShape.PointingHandCursor)
+        add.setToolTip("Look for one more property.")
+        add.clicked.connect(lambda: self._add_stat())
+        self._stat_list.addWidget(add, alignment=Qt.AlignmentFlag.AlignLeft)
+        section.row("", holder)
+
+        self.bonuses_box = QCheckBox("Include set bonuses")
+        self.bonuses_box.setToolTip(
+            "Answer a row from the item's set bonuses as well as from its own\n"
+            "lines.  A stat that exists only on a set's ladder is found by a\n"
+            "row only while this is ticked."
+        )
+        section.row("", self.bonuses_box)
+        section.note(STATS_HINT)
+        return section
+
+    def _add_stat(
+        self, text: str = "", low: int = 0, high: int = NUMBER_MAX
+    ) -> StatRow:
+        """Put one more row above the add button, and hand it back."""
+        row = StatRow(self._vocabulary, self._drop_stat)
+        row.set_value(text, low, high)
+        self.stat_rows.append(row)
+        # Under the button rather than over it: the button is the section's
+        # floor, and a row arriving above it keeps the pointer where it was.
+        self._stat_list.insertWidget(self._stat_list.count() - 1, row)
+        return row
+
+    def _drop_stat(self, row: StatRow) -> None:
+        """Take one row away -- the cross, and nothing else."""
+        if row in self.stat_rows:
+            self.stat_rows.remove(row)
+        row.setParent(None)
+
+    def _offer_stats(self, rows) -> None:
+        """Fill the Stats section from a search: one row each, and no more."""
+        for row in list(self.stat_rows):
+            self._drop_stat(row)
+        for text, low, high in rows:
+            self._add_stat(text, low, high)
+
+    def _offer_vocabulary(self, words: Sequence[str]) -> None:
+        """Offer the collection's own property lines to the rows' text boxes."""
+        self._vocabulary = sorted(words)
+        for row in self.stat_rows:
+            row.text.setCompleter(_completer(self._vocabulary, row.text))
+
     def _offer_classes(self, classes: Sequence[str]) -> None:
         """Offer the class boxes, or say why there are none to offer."""
         known = bool(classes)
@@ -799,6 +1121,10 @@ class AdvancedSearchOverlay(QWidget):
             self.req_spins[word][1].setValue(high)
         for word, box in self.class_boxes.items():
             box.setChecked(word in state.classes)
+        _write_elements(self.damage_spins, state.damage)
+        _write_elements(self.armor_spins, state.armor)
+        self._offer_stats(state.stats)
+        self.bonuses_box.setChecked(state.bonuses)
         self.types.set_kinds(self._shape)
         self.types.tick(state.places)
 

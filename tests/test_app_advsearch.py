@@ -38,6 +38,7 @@ from PySide6.QtGui import QKeyEvent, QMouseEvent, QPalette  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QCheckBox,
+    QLabel,
     QPushButton,
     QWidget,
 )
@@ -45,15 +46,28 @@ from PySide6.QtWidgets import (  # noqa: E402
 from app.advsearch import (  # noqa: E402
     ALL_TYPES,
     CLASSES_HINT,
+    ELEMENTS_HINT,
     NO_CLASSES,
     PANEL_MAX,
+    STATS_HINT,
     AdvancedSearchOverlay,
+    vocabulary,
 )
 from app.card import GOLD  # noqa: E402
 from app.compare import MIN_INSET, SCRIM  # noqa: E402
-from app.models import CLASSES, LEVEL_MAX, REQ_MAX, REQ_REST, Advanced  # noqa: E402
+from app.models import (  # noqa: E402
+    CLASSES,
+    ELEMENTS,
+    ELEMENT_REST,
+    LEVEL_MAX,
+    NUMBER_MAX,
+    REQ_MAX,
+    REQ_REST,
+    Advanced,
+)
 from app.sidebar import UNCLASSIFIED  # noqa: E402
 from app.theme import CHALK  # noqa: E402
+from tl2stash.card import Rung  # noqa: E402
 
 from test_app_filters import BOOTS, BROKEN, HELMET, SWORD  # noqa: E402
 
@@ -74,7 +88,7 @@ PLACES = [BOOTS, HELMET, SWORD, BROKEN]
 PLACE_WORDS = ["Boots", "Helmet", "Sword", UNCLASSIFIED]
 
 
-def opened(state=None, places=PLACES, classes=None, size=(900, 600)):
+def opened(state=None, places=PLACES, classes=None, vocabulary=(), size=(900, 600)):
     """A panel over a window-sized widget, opened on this search.
 
     The host is shown, which is not decoration: a hidden widget's children are
@@ -90,6 +104,7 @@ def opened(state=None, places=PLACES, classes=None, size=(900, 600)):
     overlay.open_for(
         Advanced() if state is None else state,
         CLASSES if classes is None else classes,
+        vocabulary,
     )
     QApplication.processEvents()
     return host, overlay
@@ -137,9 +152,23 @@ def tabs(grid) -> dict[str, QPushButton]:
     return {button.text(): button for button in grid.findChildren(QPushButton)}
 
 
-#: A search with every one of the nine facets moved, so that "the panel opened
-#: on it" and "the panel handed it back" are statements about all nine at once
-#: rather than about whichever control a test happened to look at.
+def element_pairs(spins: dict) -> dict[str, tuple[int, int]]:
+    """Where an element section's rows stand, with the resting ones left out.
+
+    Which is the reading the panel itself does -- a row nobody has moved is not
+    part of the search -- so a test asserting against this is asserting against
+    the same rule the draft applies, one element at a time.
+    """
+    return {
+        element: (low.value(), high.value())
+        for element, (low, high) in spins.items()
+        if (low.value(), high.value()) != ELEMENT_REST
+    }
+
+
+#: A search with every one of the twelve facets moved, so that "the panel
+#: opened on it" and "the panel handed it back" are statements about all twelve
+#: at once rather than about whichever control a test happened to look at.
 EVERYTHING = Advanced(
     text="drill",
     tiers=frozenset({"Unique"}),
@@ -150,6 +179,10 @@ EVERYTHING = Advanced(
     sockets=frozenset({2, 3}),
     reqs=((30, REQ_MAX), (0, REQ_MAX), (10, 400), REQ_REST[3]),
     classes=frozenset({"Embermage"}),
+    damage=(("fire", 20, 40),),
+    armor=(("physical", 100, NUMBER_MAX),),
+    stats=(("to fire damage", 0, NUMBER_MAX), ("to strength", 20, 60)),
+    bonuses=True,
     places=frozenset({SWORD}),
 )
 
@@ -283,6 +316,13 @@ def test_every_control_the_panel_has_is_in_that_draft(qapp):
     assert {
         word for word, box in overlay.class_boxes.items() if box.isChecked()
     } == {"Embermage"}
+    assert element_pairs(overlay.damage_spins) == {"fire": (20, 40)}
+    assert element_pairs(overlay.armor_spins) == {"physical": (100, NUMBER_MAX)}
+    assert [row.value() for row in overlay.stat_rows] == [
+        ("to fire damage", 0, NUMBER_MAX),
+        ("to strength", 20, 60),
+    ]
+    assert overlay.bonuses_box.isChecked()
     assert overlay.types.ticks() == {SWORD}
 
 
@@ -376,6 +416,223 @@ def test_the_class_section_says_so_when_there_is_nothing_to_narrow_by(qapp):
     assert not overlay.class_note.isHidden()
     assert overlay.class_note.text() == NO_CLASSES
     assert overlay.draft().classes == frozenset(), "a dark box is not a tick"
+
+
+# --------------------------------------------------------------------------
+# The two element sections and the property rows
+# --------------------------------------------------------------------------
+
+
+def test_the_two_element_sections_offer_the_game_s_five_elements_each(qapp):
+    """Damage and Armor are the same five rows drawn twice, which is the whole
+    reason they are built by one piece of code: a hand-written copy is a place
+    for the fifth element to go missing from."""
+    _, overlay = opened()
+
+    assert list(overlay.damage_spins) == list(ELEMENTS)
+    assert list(overlay.armor_spins) == list(ELEMENTS)
+    assert [row[0].value() for row in overlay.damage_spins.values()] == [0] * 5
+    assert [row[1].value() for row in overlay.damage_spins.values()] == [
+        NUMBER_MAX
+    ] * 5
+
+
+def test_a_row_nobody_has_moved_is_not_part_of_the_search(qapp):
+    """The rest reading, which is what makes a form of ten number boxes free.
+
+    A row at 0 to :data:`~app.models.NUMBER_MAX` covers everything there is,
+    so leaving it in the search would be asking a question with no answer but
+    *yes* -- and the model would have to compare every pair against that range
+    a second time to find out.
+    """
+    _, overlay = opened()
+
+    assert overlay.draft().damage == ()
+
+    overlay.damage_spins["fire"][1].setValue(60)
+    assert overlay.draft().damage == (("fire", 0, 60),)
+
+    overlay.damage_spins["fire"][1].setValue(NUMBER_MAX)
+    assert overlay.draft().damage == (), "and back to the rest it goes"
+
+
+def test_the_five_elements_come_out_in_the_game_s_own_order(qapp):
+    """The model keys them, so the order is not what a dict happened to hold:
+    it is the order the five rows are drawn in, which is the order the card
+    draws its own parts in."""
+    _, overlay = opened()
+
+    overlay.damage_spins["poison"][0].setValue(1)
+    overlay.damage_spins["physical"][0].setValue(1)
+
+    assert overlay.draft().damage == (
+        ("physical", 1, NUMBER_MAX),
+        ("poison", 1, NUMBER_MAX),
+    )
+
+
+def test_the_element_rows_say_what_the_two_boxes_mean(qapp):
+    """Both halves of the rule, under the rows they are about -- including the
+    one a reader would not guess: an item that carries none of the element
+    falls out as soon as either box moves."""
+    _, overlay = opened()
+
+    assert ELEMENTS_HINT in [
+        label.text() for label in overlay.findChildren(QLabel)
+    ]
+    assert "overlap" in ELEMENTS_HINT
+    assert "has to be one the item carries" in ELEMENTS_HINT
+
+
+def test_a_property_row_can_be_added_typed_in_and_taken_away(qapp):
+    """The dynamic half of the reference's Stats section: rows arrive from the
+    button, and a row that was a mistake leaves by its own cross rather than by
+    Reset throwing the rest of the form away with it."""
+    _, overlay = opened()
+    assert overlay.draft().stats == ()
+
+    overlay.findChild(QPushButton, "aadd").click()
+    overlay.stat_rows[0].text.setText("to fire damage")
+    overlay.stat_rows[0].low.setValue(20)
+
+    assert overlay.draft().stats == (("to fire damage", 20, NUMBER_MAX),)
+
+    overlay.stat_rows[0].remove.click()
+
+    assert overlay.stat_rows == []
+    assert overlay.draft().stats == ()
+
+
+def test_a_row_nobody_wrote_a_word_into_is_not_part_of_the_search(qapp):
+    """An added-and-abandoned row is a row the player did not mean, and the
+    same reading the element rows get from the other side: what has not been
+    said is not being asked."""
+    _, overlay = opened()
+
+    overlay.findChild(QPushButton, "aadd").click()
+    overlay.stat_rows[0].low.setValue(50)
+
+    assert overlay.draft().stats == ()
+
+
+def test_the_rows_offer_the_collection_s_own_stats_as_they_are_typed(qapp):
+    """The suggestion list is what the items actually say, with the roll taken
+    off the front -- which is the part that differs from item to item, so
+    ``+15% to Fire Damage`` and ``+38% to Fire Damage`` are one suggestion.
+
+    The match is by containment rather than from the start, which is the same
+    reading the filter gives a row: a player who remembers ``fire damage``
+    should not have to remember which words come before it.
+    """
+    _, overlay = opened(vocabulary=["to fire damage", "to strength"])
+
+    assert overlay.draft() == Advanced(), "the vocabulary narrows nothing"
+
+    overlay.findChild(QPushButton, "aadd").click()
+    row = overlay.stat_rows[0]
+    completer = row.text.completer()
+    completer.setCompletionPrefix("fire")
+
+    offered = completer.completionModel()
+    assert [
+        offered.index(i, 0).data() for i in range(offered.rowCount())
+    ] == ["to fire damage"]
+
+
+def test_the_set_bonus_box_is_the_last_thing_in_the_section(qapp):
+    """It widens where a row may be answered from rather than being a row of
+    its own, so it is offered under the rows and says what it does."""
+    _, overlay = opened()
+
+    assert overlay.draft().bonuses is False
+
+    overlay.bonuses_box.setChecked(True)
+
+    assert overlay.draft().bonuses is True
+    assert "widens" in overlay.bonuses_box.toolTip() or "as well as" in (
+        overlay.bonuses_box.toolTip()
+    )
+
+
+class Said:
+    """A card standing in for a real one: the vocabulary reads one field off it."""
+
+    def __init__(self, *lines: str) -> None:
+        self.properties = lines
+
+
+def test_the_vocabulary_strips_the_roll_and_deduplicates(qapp):
+    """What the suggestions are made of.
+
+    The roll is the part that differs from item to item -- two swords with the
+    same affix say ``+15% to Fire Damage`` and ``+38% to Fire Damage`` -- so it
+    is the part taken off, and what is left is the one name they share.  Sorted
+    and deduplicated, so a collection of two hundred items with the same six
+    stats offers six suggestions rather than two hundred.
+    """
+    said = [
+        Said("+15% to Fire Damage", "+38 to Strength"),
+        Said("+38% to Fire Damage", "Silence for 1 sec."),
+    ]
+
+    assert vocabulary(said) == [
+        "silence for 1 sec.",
+        "to fire damage",
+        "to strength",
+    ]
+
+
+def test_a_card_with_nothing_to_say_offers_nothing(qapp):
+    """The empty case, which is every piece of armour in a young collection: a
+    suggestion list built from no lines is an empty list, not a broken one."""
+    assert vocabulary([]) == []
+    assert vocabulary([Said()]) == []
+
+
+def test_only_the_item_s_own_lines_are_offered(qapp):
+    """The vocabulary is what the items *show*, and a set's ladder is not the
+    item's own lines -- it is what wearing more of the set would grant.  So the
+    box offers it only as far as the card calls it a property, which is the
+    same line the Stats filter draws (see
+    :meth:`app.models.CollectionFilter._line_says`)."""
+    card = Said("+22 to Strength")
+    card.set_ladder = (Rung(3, ("+15% to Fire Damage",)),)
+
+    assert vocabulary([card]) == ["to strength"]
+
+
+def test_search_hands_over_the_three_new_fields_like_the_rest(qapp):
+    """The panel is one move whatever the controls are: the fields the last
+    commit added travel by the same road as the ones the first commit added."""
+    _, overlay = opened()
+    heard = watched(overlay)
+
+    overlay.damage_spins["ice"][0].setValue(10)
+    overlay.armor_spins["poison"][1].setValue(500)
+    overlay.findChild(QPushButton, "aadd").click()
+    overlay.stat_rows[0].text.setText("to strength")
+    overlay.bonuses_box.setChecked(True)
+    overlay.search_button.click()
+
+    assert len(heard) == 1
+    assert heard[0].damage == (("ice", 10, NUMBER_MAX),)
+    assert heard[0].armor == (("poison", 0, 500),)
+    assert heard[0].stats == (("to strength", 0, NUMBER_MAX),)
+    assert heard[0].bonuses is True
+
+
+def test_reset_empties_the_rows_and_the_boxes_with_the_rest(qapp):
+    """`Reset` is the resting state, and the resting state of a dynamic list is
+    an empty list rather than the rows that happened to be there."""
+    _, overlay = opened(EVERYTHING)
+    assert overlay.stat_rows, "the fixture has rows to lose"
+
+    overlay.reset_button.click()
+
+    assert overlay.stat_rows == []
+    assert overlay.draft().damage == ()
+    assert overlay.draft().armor == ()
+    assert overlay.draft().bonuses is False
 
 
 # --------------------------------------------------------------------------

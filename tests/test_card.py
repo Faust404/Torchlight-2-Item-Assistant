@@ -243,6 +243,42 @@ def test_armour_is_its_own_kind_of_block():
     ]
 
 
+def test_the_parts_are_the_numbers_beside_the_lines():
+    """Both halves of the same reading, on the same card.
+
+    The lines are what the player reads and the parts are what a filter asks
+    about, and they are filled from one walk of the item rather than two -- so
+    the pair below is one assertion about a card that could not disagree with
+    itself.
+    """
+    card = build(item(max_damage=72, armor=20), None)
+
+    assert [block.lines for block in card.blocks] == [("Damage 72",), ("Armor 20",)]
+    assert card.damage == (("physical", 72, 72),)
+    assert card.armor == (("physical", 20, 20),)
+
+
+def test_properties_are_the_items_own_lines_and_nothing_else():
+    """What the Stats filter reads: the affix block, and only the affix block.
+
+    Not the damage the item *is* -- a sword is not a stat -- and not its
+    requirements, which are what it takes to use it.  What is left is the list
+    of things the item says about itself, which is what a row of the advanced
+    search is answered from.
+    """
+    it = item(armor=20, added_damages=[AddedDamage(0, word(13.0), 0, 0x00)])
+    card = build(it, None)
+
+    assert card.properties == ("+13 Physical Damage",)
+    assert "Armor 20" not in card.properties
+
+
+def test_a_card_with_no_affixes_says_nothing_about_itself():
+    """Empty rather than ``None``: nothing said is a real answer, and a filter
+    iterating it should find nothing rather than raise."""
+    assert build(item(max_damage=72), None).properties == ()
+
+
 def test_a_section_with_nothing_in_it_is_not_a_block():
     """A heading with nothing under it draws as a rule with nothing under it."""
     assert build(item(), None).blocks == ()
