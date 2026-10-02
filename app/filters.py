@@ -51,10 +51,10 @@ from .theme import WHITE
 
 __all__ = ["FilterBar", "SpinBox"]
 
-#: How dim a chip is drawn when it is not ticked.  The border stays white
-#: either way -- what is ticked is the chip's *ink*, and a chip the player has
-#: not ticked is still a chip.
-OFF_INK = "#6f6963"
+#: How much of a tier's colour a ticked pill is filled with, of 255.  A wash
+#: rather than the colour itself, so that the white word on it stays the
+#: brightest thing in the chip.
+WASH = 77
 
 #: The two white steppers: six pixels across at the base and three rows deep,
 #: with each edge placed half a pixel off the grid.  That last is the whole of
@@ -113,31 +113,39 @@ class SpinBox(QSpinBox):
         ]
 
 
+def _wash(ink: str) -> str:
+    """A tier's colour as a fill a white word can be written on."""
+    colour = QColor(ink)
+    return f"rgba({colour.red()}, {colour.green()}, {colour.blue()}, {WASH})"
+
+
 def _chip_style(ink: str) -> str:
-    """A rarity chip: the tier's own colour, in the reference's pill shape.
+    """A rarity chip: a white word over the tier's own colour, in a pill.
 
-    Tinted while ticked and grey while not, so that a glance down the bar says
-    which rarities are in play without reading a single word.  The indicator is
-    collapsed to nothing and the pill itself is the control -- a checkbox's box
-    beside a coloured pill is two things saying one thing.
+    The word is white in *both* states and the tier is what the pill is
+    *filled* with, which is the other way round from how this started: the word
+    used to be inked in the tier and dimmed to a grey while unticked, and that
+    grey was the thing the user could not read -- five words a shade off the
+    ground they were drawn on, blending into the bar they sit on.  A word the
+    player has to read is white here, as every other word on a control is.
 
-    The outline is white rather than the ink it used to be, which is the one
-    change here that is about being *seen*: an unticked chip was drawn in a
-    grey so close to the ground that the row read as four words rather than as
-    four buttons.  The colour a chip is in is what it says; the white is what
-    says it can be pressed.
+    So what a tick changes is the fill: a washed pill for a rarity that is in
+    play, the bare ground for one that is not, and the white outline either
+    way.  The wash is what says *on* at a glance down the bar, and the colour
+    it is a wash of says which rarity the chip is.
+
+    The indicator is collapsed to nothing and the pill itself is the control --
+    a checkbox's box beside a coloured pill is two things saying one thing.
     """
     return (
         "QCheckBox {"
-        f" color: {ink};"
+        f" color: {WHITE};"
         f" border: 1px solid {WHITE};"
         " border-radius: 9px; padding: 3px 8px;"
-        " background: rgba(255, 255, 255, 0.05);"
+        f" background: {_wash(ink)};"
         "}"
         "QCheckBox::indicator { width: 0px; height: 0px; }"
-        "QCheckBox:!checked {"
-        f" color: {OFF_INK}; background: transparent;"
-        "}"
+        "QCheckBox:!checked { background: transparent; }"
     )
 
 

@@ -2,9 +2,10 @@
 
 One claim, and it is a claim about a *palette* rather than about the forty
 lines that build it: the application is dark, its text is legible on it, and
-the ground it is drawn on is the ground the cards are drawn on -- because a
-window that is merely dark, and not the same dark as the thing it holds, is a
-window with a seam down the middle of it.
+its surfaces are a ramp of their own -- a shade *above* the cards the player
+reads, and, in the one pane that holds them, a shade below.  What is not the
+window's is the words: those are the cards' own greys, so a label on the window
+and a label on a card are the same colour.
 
 These are the only tests here that touch the process-wide QApplication, so
 they put it back the way they found it: every other GUI test in the suite
@@ -30,8 +31,16 @@ pytest.importorskip("PySide6", reason="PySide6 is not installed")
 from PySide6.QtGui import QColor, QFont, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleFactory  # noqa: E402
 
-from app.card import BODY, GROUND, LABEL, TABULAR, _serif  # noqa: E402
-from app.theme import BODY_PX, SANS, WHITE, _load_fonts, apply_theme  # noqa: E402
+from app.card import BODY, GROUND, LABEL, PANEL, TABULAR, _serif  # noqa: E402
+from app.theme import (  # noqa: E402
+    BODY_PX,
+    SANS,
+    SHELL,
+    WALL,
+    WHITE,
+    _load_fonts,
+    apply_theme,
+)
 
 
 @pytest.fixture(scope="session")
@@ -67,32 +76,46 @@ def themed(qapp):
 
 
 def test_the_window_is_dark(themed):
-    """Dark is the claim: the ground is darker than the text standing on it."""
+    """Dark is the claim: the shell is darker than the words standing on it.
+
+    And it is dark from *above*: the shell sits a shade higher than the cards
+    do, which is the lightening the user asked for and the reason they asked
+    for it -- what the player operates is outlined in :data:`app.theme.WHITE`,
+    and a white hairline on the cards' own near-black ground is glare rather
+    than contrast.
+    """
     palette = themed.palette()
     window = palette.color(QPalette.ColorRole.Window)
     text = palette.color(QPalette.ColorRole.WindowText)
 
-    assert window.name() == GROUND
+    assert window.name() == SHELL
     assert text.name() == BODY
     assert window.lightness() < text.lightness()
     # Not merely darker: dark.  A mid-grey window with white text would pass
     # the line above and is not what "dark by default" means.
     assert window.lightness() < 64
+    # And up rather than level: a shade above the surface the cards are drawn
+    # on, which is what puts the white controls in tune with it.
+    assert window.lightness() > QColor(GROUND).lightness()
 
 
-def test_the_ground_is_the_cards_ground(themed):
-    """The window and the cards are one surface rather than two.
+def test_the_tool_s_ground_goes_below_the_cards(themed):
+    """The one surface that goes the other way, and it goes further.
 
-    The cards are drawn on :data:`app.card.GROUND` by the wall itself, so the
-    window behind them has to be the same colour -- otherwise the wall is a
-    lighter rectangle floating in a darker window, which is the seam this
-    avoids.
+    :data:`app.theme.WALL` is what the tool's cards are drawn on -- the wall
+    paints it in :mod:`app.tiles` -- and it is darker than a card, so an item
+    lying in the tool reads as a card in a drawer rather than as a panel in a
+    panel.  The window around it is lighter than the cards and the wall behind
+    them is darker than them, which is the contrast the user asked for between
+    the item cards and the pane they sit in.
+
+    What is written on the shell is still the card's own body colour, so a
+    label on the window and a label on a card are the same grey.
     """
     palette = themed.palette()
-    assert palette.color(QPalette.ColorRole.Window).name() == GROUND
 
-    # And what is written on it is the card's own body colour, so a label on
-    # the window and a label on a card are the same grey.
+    assert QColor(WALL).lightness() < QColor(PANEL).lightness(), "not below a card"
+    assert QColor(WALL).lightness() < QColor(SHELL).lightness()
     assert palette.color(QPalette.ColorRole.Text).name() == BODY
 
 

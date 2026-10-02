@@ -4,22 +4,27 @@ The things the eye spends its time on here are the cards, and a card is dark --
 it is the game's own look, taken from the reference site's stylesheet, and
 :mod:`app.card` says why.  An application that drew those cards on the
 platform's light chrome would be arguing with itself about which of the two is
-the screen.  So the window is built out of the card's own palette, which is to
-say out of the reference stylesheet's colours under the names it gives them,
-and the whole of the window is one surface rather than a document with cards
-pasted onto it.
+the screen.  So the window is dark too, and the colours below are its own: a
+short ramp of black-greys, given from the ground up.
 
-Three colours the card palette cannot supply, because a web page has no
-buttons, no rows to select and nothing below a rule.  Each is derived here
-rather than invented, one step from a colour that is already in the palette --
-and each says which, so the next person who moves the palette can move these
-with it.
+The ramp is anchored on -- and is not -- the card palette.  A card is what an
+item is *compared against*, so its colours are the site's and are not the
+window's to move: ``PANEL`` is the surface of every card in the tool, and it
+stays that.  The window's own surfaces are a shade up from it, which is the
+change the user asked for and the reason it was asked for: what the player
+*operates* is outlined in :data:`WHITE` (:data:`WHITE` alone -- a web page has
+no controls to outline, so there is nothing in the card palette to derive it
+from), and a white hairline on near-black is glare rather than contrast.  One
+surface goes the other way, and it goes further: :data:`WALL` is what the
+tool's cards are drawn on, and it is darker than the cards, so that an item
+lying in the tool reads as a card in a drawer rather than as a panel in a
+panel.
 
-A fourth is not derived from the palette at all: :data:`WHITE` outlines the
-controls.  A web page has no controls to outline, so there is nothing in the
-palette to derive it from -- and a control has to be the brightest thing on a
-dark screen, or a box the player ticks reads as a decoration rather than as
-something to press.
+Each colour says below what it is a shade *of* -- a wall, a shell, a field --
+and the shades that are derived say what they are derived from, so the ramp can
+be moved by moving one end of it.  The one thing the window takes from the
+cards is the words: the four text colours are :mod:`app.card`'s, so a label on
+the window and a label on a card are the same grey.
 
 **The types.**  The site sets its page in 13px ``"Segoe UI", Roboto, Helvetica,
 Arial, sans-serif`` and its stat lines in Bitter, which it ships; this sets the
@@ -58,18 +63,13 @@ from PySide6.QtWidgets import QApplication, QStyleFactory
 from .card import (
     BODY,
     DIM,
-    DIV,
-    GROUND,
     HEAD,
     LABEL,
-    LINE,
-    PANEL,
     TABULAR,
     TABULAR_ON,
-    TILE_BG,
 )
 
-__all__ = ["WHITE", "apply_theme"]
+__all__ = ["EDGE", "FIELD", "SHELL", "WALL", "WHITE", "apply_theme"]
 
 #: Where the faces that travel with the tool live.  Beside this file when the
 #: tool runs out of a checkout, and under the bundle's own root when it is a
@@ -77,28 +77,62 @@ __all__ = ["WHITE", "apply_theme"]
 #: the extracted copy, so the two layouts resolve the same way.
 FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
-#: A button, and anything else that sits *on* the ground rather than in a
-#: panel.  The palette has no raised neutral -- the site's cards are flat and
-#: its buttons are its links -- so this is ``DIV`` (the chip border) with just
-#: enough light added to read as a surface.
-RAISED = "#232220"
+#: What the tool's cards are drawn on: the darkest surface in the window, and
+#: the one place the ramp goes *below* the cards.  A card is the same object in
+#: both panes -- the game's stash and the tool -- so the two cannot differ in
+#: what they put on a card; they differ in what they put a card on, and this is
+#: the tool's: darker than a card, so an item in the tool reads as a card in a
+#: drawer rather than as a panel in a panel.  The site has the same idea one
+#: step gentler -- its page is darker than its cards -- and this is that idea
+#: taken as far as the window's own ramp allows.
+WALL = "#0b0a09"
 
-#: A selected row.  The same step again from ``DIV``: the tile a click lands on
-#: is outlined in ``HEAD``, and a table row has no outline to give, so it takes
-#: the fill instead.  ``HEAD`` written on it is legible; ``BODY`` would not be.
-SELECT = "#3a3227"
+#: The window itself, and every pane in it.  A shade *up* from the cards rather
+#: than level with them: what the player operates is outlined in :data:`WHITE`
+#: (below), and a white hairline on a near-black ground is glare rather than
+#: contrast -- the reason the user asked for the lightening, and what it buys.
+SHELL = "#1e1c19"
 
-#: The bevels below every rule.  The darkest the palette goes, so that a
+#: A field: a table's rows, the box a value is typed into.  The palette's
+#: ``Base``, one step up from the shell so that a field reads as a surface with
+#: something on it rather than as a hole in the pane.
+FIELD = "#242220"
+
+#: The alternate row.  *Darker* than the field, because the two have to read as
+#: two shades of one thing and not as a stripe -- and the recessed shade is the
+#: one that says "every other", where the raised one would say "these ones".
+STRIPE = "#1b1916"
+
+#: A button, and anything else that sits *on* the ground rather than in a panel:
+#: the header's sections, a tooltip.  The site's cards are flat and its buttons
+#: are its links, so there is nothing in the card palette to take this from; it
+#: is :data:`FIELD` with the same step added again.
+RAISED = "#2e2b27"
+
+#: The window's own hairlines -- a pane's frame, a gridline, the handle between
+#: two panes.  The card palette's ``LINE`` is a hairline *inside* a card, drawn
+#: a shade from the surface it is drawn on; on the shell that is invisible, so
+#: the window's edges are their own colour, two steps further up the ramp.  The
+#: cards keep ``LINE``: this is the window's, not theirs.
+EDGE = "#37332e"
+
+#: A selected row.  Warm rather than grey, because it is the same statement a
+#: card's title makes and ``HEAD`` -- the card's own title colour -- is written
+#: on it.  ``HEAD`` on this is legible; ``BODY`` would not be.
+SELECT = "#453a29"
+
+#: The bevels below every rule: shading rather than a surface, so :data:`WALL`
+#: is darker without displacing it -- a wall is something to look at, and this
+#: is what is drawn under one.  The darkest the *shading* goes, so that a
 #: shadowed edge reads as an edge and not as dirt.
 SHADOW = "#0c0b0a"
 
 #: What everything the player operates is outlined in -- the check boxes in the
 #: rail, the search box, the two filter boxes over the collection and the
-#: number boxes in them.  The one colour in the window that is not the card
-#: palette's and not derived from it: nothing in a dark warm palette is close
-#: enough to read as *contrast*, and a hairline in ``DIV`` or ``LINE`` -- which
-#: is what these were drawn in -- is a control the eye has to find before it
-#: can use it.
+#: number boxes in them.  The one colour in the window that is not a shade of
+#: anything: nothing in a dark warm ramp is close enough to read as *contrast*,
+#: and a hairline in ``EDGE`` or ``DIV`` -- which is what these were drawn in --
+#: is a control the eye has to find before it can use it.
 WHITE = "#ffffff"
 
 #: The site's own body font -- ``body{font:13px/1.45 "Segoe UI",Roboto,...}``
@@ -158,26 +192,29 @@ def _base_font() -> QFont:
 
 
 def _palette() -> QPalette:
-    """The card palette, as Qt's roles.
+    """The window's ramp, as Qt's roles.
 
-    The mapping is the obvious one wherever the palette has a counterpart:
-    the ground is the window, a panel is a table's background, the hairline is
-    every border.  The rest are the roles Qt fills in from nothing, and each
-    is chosen from the card palette rather than defaulted, because a default
-    is a light-theme value.
+    The mapping is the obvious one wherever the palette has a counterpart: the
+    shell is the window, a field is a table's background, an edge is a border.
+    The rest are the roles Qt fills in from nothing, and each is chosen from
+    the ramp rather than defaulted, because a default is a light-theme value.
+
+    The words are the cards' own -- ``BODY``, ``DIM``, ``HEAD``, ``LABEL`` --
+    and that is the one thing here that is *not* the window's.  A window in the
+    same voice as what it holds is the point of a theme at all; the surfaces
+    are what the user asked to move.
     """
     role = QPalette.ColorRole
     group = QPalette.ColorGroup
     palette = QPalette()
 
-    palette.setColor(role.Window, QColor(GROUND))
+    palette.setColor(role.Window, QColor(SHELL))
     palette.setColor(role.WindowText, QColor(BODY))
-    #: A table's rows and an input's field: the card's panel, which is what a
-    #: panel is.  Its alternate is the darker of the two grounds the site has,
-    #: so alternating rows read as two shades of the same thing rather than as
-    #: a stripe.
-    palette.setColor(role.Base, QColor(PANEL))
-    palette.setColor(role.AlternateBase, QColor(TILE_BG))
+    # A table's rows and an input's field: the ramp's field, with the recessed
+    # shade for the alternate, so alternating rows read as two shades of one
+    # surface rather than as a stripe.
+    palette.setColor(role.Base, QColor(FIELD))
+    palette.setColor(role.AlternateBase, QColor(STRIPE))
     palette.setColor(role.Text, QColor(BODY))
     palette.setColor(role.PlaceholderText, QColor(DIM))
     palette.setColor(role.Button, QColor(RAISED))
@@ -188,10 +225,13 @@ def _palette() -> QPalette:
     palette.setColor(role.ToolTipBase, QColor(RAISED))
     palette.setColor(role.ToolTipText, QColor(BODY))
     palette.setColor(role.Link, QColor(LABEL))
+    # The bevel, read off the ramp: lit at the top-left, an edge through the
+    # middle, shaded at the bottom-right.  A frame is the one thing Fusion draws
+    # from all five, so they are given in the order the light would fall.
     palette.setColor(role.Light, QColor(RAISED))
-    palette.setColor(role.Midlight, QColor(DIV))
-    palette.setColor(role.Mid, QColor(DIV))
-    palette.setColor(role.Dark, QColor(LINE))
+    palette.setColor(role.Midlight, QColor(EDGE))
+    palette.setColor(role.Mid, QColor(EDGE))
+    palette.setColor(role.Dark, QColor(SHADOW))
     palette.setColor(role.Shadow, QColor(SHADOW))
 
     # Disabled, said out loud.  Qt's own greys for this group are the light
@@ -199,9 +239,9 @@ def _palette() -> QPalette:
     # around it.  The point of a disabled control here is that it recedes.
     for text in (role.WindowText, role.Text, role.ButtonText):
         palette.setColor(group.Disabled, text, QColor(DIM))
-    palette.setColor(group.Disabled, role.Base, QColor(GROUND))
-    palette.setColor(group.Disabled, role.Button, QColor(GROUND))
-    palette.setColor(group.Disabled, role.Highlight, QColor(LINE))
+    palette.setColor(group.Disabled, role.Base, QColor(SHELL))
+    palette.setColor(group.Disabled, role.Button, QColor(SHELL))
+    palette.setColor(group.Disabled, role.Highlight, QColor(EDGE))
     palette.setColor(group.Disabled, role.HighlightedText, QColor(DIM))
     return palette
 
@@ -222,7 +262,7 @@ def _palette() -> QPalette:
 #: group boxes too, and a pane is a region rather than a control.
 _STYLE = f"""
 QGroupBox {{
-    border: 1px solid {LINE};
+    border: 1px solid {EDGE};
     border-radius: 4px;
     margin-top: 9px;
     padding-top: 8px;
@@ -241,17 +281,17 @@ QHeaderView::section {{
     background-color: {RAISED};
     color: {DIM};
     border: 0;
-    border-bottom: 1px solid {LINE};
+    border-bottom: 1px solid {EDGE};
     padding: 3px 6px;
 }}
 QTableView {{
-    border: 1px solid {LINE};
-    gridline-color: {LINE};
+    border: 1px solid {EDGE};
+    gridline-color: {EDGE};
     selection-background-color: {SELECT};
     selection-color: {HEAD};
 }}
 QTreeView {{
-    border: 1px solid {LINE};
+    border: 1px solid {EDGE};
 }}
 /* A ticked box is a filled one rather than a ticked one: Qt's stylesheet
    language can draw a box's fill and its border but not a check mark, which
@@ -276,7 +316,7 @@ QTreeView::indicator:indeterminate {{
         stop: 0.5 rgba(255, 255, 255, 0), stop: 1 rgba(255, 255, 255, 0));
 }}
 QSplitter::handle {{
-    background-color: {LINE};
+    background-color: {EDGE};
 }}
 QSplitter::handle:horizontal {{
     width: 3px;
@@ -290,7 +330,7 @@ QStatusBar::item {{
 QToolTip {{
     background-color: {RAISED};
     color: {BODY};
-    border: 1px solid {LINE};
+    border: 1px solid {EDGE};
     padding: 4px;
 }}
 /* The search box is found by name because a spin box holds a line edit of its

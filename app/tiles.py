@@ -9,7 +9,7 @@ Two decisions are the whole of it.
 
 A tile is not a *summary* of an item -- it is the card, the same
 :class:`~app.card.ItemCard` the details pane used to draw, with a footer under
-it saying where the thing was found and how many copies of it the tool holds.
+it saying how many copies of it the tool holds and what can be done with them.
 The pane that drew one card beside the table is gone: with the cards in the
 grid there is nothing left for it to draw, and a second drawing of the same
 item could only disagree with the first.
@@ -34,7 +34,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -51,7 +50,6 @@ from tl2stash.card import Card, lines
 from .card import (
     DIM,
     DIV,
-    GROUND,
     HEAD,
     LABEL,
     LINE,
@@ -61,6 +59,7 @@ from .card import (
     IconCache,
     ItemCard,
 )
+from .theme import WALL
 
 __all__ = ["CardFrame", "CardWall", "ItemTile", "TileGrid", "TileRow"]
 
@@ -180,15 +179,29 @@ class CardWall(QScrollArea):
         outer.addStretch(1)
         self.setWidget(self._wall)
 
-        # The ground behind the cards, which is darker than the cards -- the
-        # site's own reason for the two being different colours.  A palette
-        # rather than a stylesheet, because a `background` rule on a scroll
-        # area does not reach its viewport, which is the widget that shows.
-        for widget in (self.viewport(), self._wall):
-            widget.setAutoFillBackground(True)
-            palette = widget.palette()
-            palette.setColor(QPalette.ColorRole.Window, QColor(GROUND))
-            widget.setPalette(palette)
+        # The ground behind the cards: the window's own wall, which is darker
+        # than a card -- see :data:`app.theme.WALL` for why the tool's half of
+        # the window is the one that goes below the cards.
+        #
+        # A rule in a *sheet* rather than a colour in the widget's palette, and
+        # that is not a preference.  Qt re-polishes a widget whenever a sheet
+        # reaches it -- the grid sets one, and the window's theme is one -- and
+        # a polish resolves a child's palette back to the one it inherits,
+        # taking a palette set here off it.  This started out as a palette, and
+        # it went unnoticed for as long as it did because the colour it asked
+        # for was the colour it fell back to: the wall wanted the cards' ground
+        # and the window *was* the cards' ground.  A sheet cannot be undone
+        # that way, because a sheet is what a polish applies.
+        #
+        # ``WA_StyledBackground`` is what makes a plain widget draw a sheet's
+        # background at all -- without it Qt draws nothing for a widget with no
+        # frame of its own.  The viewport underneath is left to the theme: the
+        # wall covers it, because a scroll area with a resizable widget resizes
+        # that widget to at least the viewport, so the only thing its colour
+        # ever shows through is a repaint one frame wide.
+        self._wall.setObjectName("wall")
+        self._wall.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._wall.setStyleSheet(f"#wall {{ background-color: {WALL}; }}")
 
     # -- what it shows ---------------------------------------------------
 

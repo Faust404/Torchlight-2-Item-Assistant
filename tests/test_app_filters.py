@@ -34,8 +34,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QPalette, QStandardItem  # noqa: E402
+from PySide6.QtCore import QRect, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QPalette, QStandardItem  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QStyle,
@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
-from app.filters import FilterBar  # noqa: E402
+from app.filters import WASH, FilterBar  # noqa: E402
 from app.theme import WHITE, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
@@ -756,23 +756,91 @@ def test_a_box_is_as_wide_as_what_is_in_it_and_no_wider(themed):
         assert box.sizeHint().width() == inside + margins.left() + margins.right() + 2
 
 
-def test_a_chip_is_outlined_in_white_whichever_way_it_is_ticked(qapp):
-    """The chip's ink is the rarity; the outline is that it can be pressed.
+def test_a_chip_is_a_white_word_whichever_way_it_is_ticked(qapp):
+    """The word is white; the rarity is what the pill is *filled* with.
 
-    An unticked chip was drawn in a grey close enough to the ground that the
-    row read as four words rather than as four buttons.  The border is white
-    in both states -- what a tick changes is the ink and a faint wash -- so
-    that where the chips are and what they are is said by two different
-    things.
+    Which is the other way round from how this started, and the user's own
+    complaint is why: the word used to be inked in the tier and dimmed to a
+    grey while unticked, and those greys sat so close to the bar they were
+    drawn on that the row read as five words blending into it.  So both the
+    outline and the word are white in both states, and what a tick changes is
+    the fill -- a wash of the tier's colour for a rarity in play, the bare
+    ground for one that is not.
     """
     bar = _bar()
 
     for chip in bar.chips.values():
         sheet = chip.styleSheet()
+        assert f"color: {WHITE}" in sheet, "the word is white in both states"
         assert f"border: 1px solid {WHITE}" in sheet
-        assert "border" not in sheet.split("QCheckBox:!checked")[1], (
+        unticked = sheet.split("QCheckBox:!checked")[1]
+        assert "border" not in unticked, (
             "the outline changes with the tick, so an unticked chip loses it"
         )
+        assert "color" not in unticked, (
+            "the word changes with the tick, so it blends in again when unticked"
+        )
+        assert "background: transparent" in unticked, (
+            "the fill changes with the tick, and that is all that changes"
+        )
+
+
+def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
+    """And the fill is really drawn, at the strength the sheet asked for.
+
+    Read off the pill's pixels rather than off the sheet, because a sheet is
+    where a mistake about ``rgba()`` would live in silence: an alpha the parser
+    does not understand is a declaration that is dropped, and a chip that was
+    meant to be washed comes out as the ground with a white outline.  So the
+    ground and the wash are both measured, and the wash is checked against the
+    arithmetic the sheet states -- the tier's colour at :data:`app.filters.
+    WASH` over what was underneath.
+
+    The white is counted in the *middle* of the pill, clear of the outline at
+    both ends, because the outline is white in both states: what is being
+    counted there is the word, which is the thing the user could not read.
+    """
+    bar = _bar()
+    bar.resize(bar.sizeHint())
+    bar.show()
+    themed.processEvents()
+
+    chip = bar.chips["Unique"]
+    # In the bar's own frame, which is what the grab below is in: a chip's
+    # geometry is measured against the box it sits in, and the box is not the
+    # widget being read.
+    rect = QRect(chip.mapTo(bar, chip.rect().topLeft()), chip.size())
+
+    def probe() -> tuple[QColor, int]:
+        """The fill at the pill's left end, and the white in the middle."""
+        image = bar.grab().toImage()
+        middle = rect.center()
+        word = sum(
+            1
+            for y in range(middle.y() - 4, middle.y() + 5)
+            for x in range(rect.left() + 3, rect.right() - 2)
+            if image.pixelColor(x, y).name() == WHITE
+        )
+        return image.pixelColor(rect.left() + 4, middle.y()), word
+
+    ground, word_off = probe()
+    chip.setChecked(True)
+    themed.processEvents()
+    washed, word_on = probe()
+
+    assert word_off > 0, "an unticked chip's word is not white"
+    assert word_on > 0, "a ticked chip's word is not white"
+
+    ink = QColor(TIER_INK["unique"])
+    share = WASH / 255
+    wanted = [
+        share * ink.red() + (1 - share) * ground.red(),
+        share * ink.green() + (1 - share) * ground.green(),
+        share * ink.blue() + (1 - share) * ground.blue(),
+    ]
+    assert [washed.red(), washed.green(), washed.blue()] == pytest.approx(
+        wanted, abs=2
+    ), "the tick's fill is not the tier's colour over the ground"
 
 
 def test_the_rails_boxes_are_outlined_in_white_and_fill_when_ticked(themed):

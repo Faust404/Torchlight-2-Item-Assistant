@@ -27,9 +27,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
-from app.card import ItemCard  # noqa: E402
+from app.card import PANEL, ItemCard  # noqa: E402
+from app.theme import WALL  # noqa: E402
 from app.tiles import (  # noqa: E402
     GAP,
     MARGIN,
@@ -286,6 +288,27 @@ def test_the_wall_says_when_it_has_nothing_to_show(qapp):
 
     wall(grid, [row(card())], width=600)
     assert empty.isHidden(), "the message stayed up over a card"
+
+
+def test_the_wall_draws_the_cards_on_a_ground_darker_than_they_are(qapp):
+    """The tool's half of the window is the one that goes below the cards.
+
+    A card is the same object in both panes -- the game's stash and the tool --
+    so the panes cannot differ in what they put on a card; they differ in what
+    a card is put on, and the tool's ground is the darker one, which is what
+    makes an item here read as a card in a drawer.
+
+    Read off the drawn pixel rather than off a palette, because a palette is
+    where this went wrong: the wall asked for its ground in one and Qt took it
+    back off at the next polish, which nothing could see while the colour it
+    asked for was the colour the window already was.
+    """
+    grid = TileGrid()
+    wall(grid, [row(card())], width=600)
+
+    # The wall's own margin, which is a strip of its ground with no card on it.
+    assert grid.grab().toImage().pixelColor(4, 4).name() == WALL
+    assert QColor(WALL).lightness() < QColor(PANEL).lightness(), "not below a card"
 
 
 def test_a_card_fills_its_column_rather_than_floating_in_one(qapp):

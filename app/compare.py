@@ -41,7 +41,6 @@ from .card import (
     BODY,
     DIM,
     DIV,
-    GROUND,
     HEAD,
     LABEL,
     LINE,
@@ -50,6 +49,7 @@ from .card import (
     Hairline,
     IconCache,
 )
+from .theme import WALL
 from .tiles import MARGIN, TILE_WIDTH, CardFrame, CardWall, TileRow
 
 __all__ = ["CompareOverlay", "ReplicaCard", "inset_for"]
@@ -66,7 +66,7 @@ _STYLE = STYLE + f"""
     border-radius: 4px;
 }}
 #replica {{
-    background-color: {GROUND};
+    background-color: {WALL};
     border: 1px solid {LINE};
     border-radius: 4px;
 }}
@@ -99,13 +99,12 @@ _STYLE = STYLE + f"""
 #cclose:hover {{ color: {HEAD}; }}
 """
 
-#: What the backdrop is painted in: the darkest colour in the window, at seven
-#: tenths.  Dark rather than black, because the cards on the panel are drawn
-#: on a near-black ground of their own and a backdrop that matched it would
-#: leave the panel with no edge; seven tenths rather than solid, because the
-#: collection is still there -- its own ground is nearly this dark, so what
-#: shows through is its cards and their words rather than a shape, which is
-#: what a dimmed window looks like.
+#: What the backdrop is painted in, at seven tenths.  Dark rather than black,
+#: because the cards on the panel are drawn on a near-black ground of their own
+#: and a backdrop that matched it would leave the panel with no edge; seven
+#: tenths rather than solid, because the collection is still there behind it --
+#: its cards and their words are what shows through, rather than a shape, which
+#: is what a dimmed window looks like.
 SCRIM = (12, 11, 10, 178)
 
 #: How far the panel's edge sits inside the window's: a share of the window's
