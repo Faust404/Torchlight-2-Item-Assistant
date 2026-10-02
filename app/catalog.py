@@ -126,6 +126,13 @@ class Entry:
     is the answer for an item the game gates on nothing.  A list with an
     unanswerable level in it falls back to the item's level, which is what the
     tool showed before it could ask; see :func:`app.models._describe`.
+
+    ``set_name`` is the *display* name of the set the item belongs to --
+    ``True North``, not ``U_TRUE_NORTH`` -- and ``None`` for everything that
+    belongs to no set, which is nearly everything.  It is here because the
+    card's set ladder names the set in the same words and the click on that
+    name has to reach a row: the one string is what makes the two the same
+    question, see :data:`app.models.SET_ROLE`.
     """
 
     tier: str
@@ -135,6 +142,7 @@ class Entry:
     subgroup: str | None
     icon: QIcon | None
     gate: int | None
+    set_name: str | None
 
     @property
     def place(self) -> Place:
@@ -182,6 +190,7 @@ class Catalog:
                 subgroup=None,
                 icon=None,
                 gate=None,
+                set_name=None,
             )
 
         # What the item gates on, which the level filter needs and the row
@@ -204,6 +213,7 @@ class Catalog:
                 subgroup=None,
                 icon=self._tile(TIER_NONE, None, ""),
                 gate=None if requires is None else requires.level,
+                set_name=None,
             )
 
         word = display_tier(appearance.tier, facts)
@@ -216,6 +226,7 @@ class Catalog:
             subgroup=subgroup,
             icon=self._tile(word, appearance.icon, appearance.type_name),
             gate=None if requires is None else requires.level,
+            set_name=appearance.set_name,
         )
 
     def _tile(self, tier_word: str, icon_name: str | None, kind: str) -> QIcon:

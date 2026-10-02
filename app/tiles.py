@@ -292,6 +292,16 @@ class CardFrame(QFrame):
     shorter cards would float their footers up into the middle.
     """
 
+    #: A click on the card's set name, with the name that was clicked.
+    set_chosen = Signal(str)
+    #: Whether that name is a link.  False here and True on :class:`ItemTile`,
+    #: which is the difference between the two walls: in the collection a
+    #: click takes the player to the rest of the set, and in the comparison
+    #: there is nowhere to take them -- the overlay is already showing every
+    #: copy of the one item, and the name of its set is a fact about it rather
+    #: than a way out.
+    LINKS_SETS = False
+
     def __init__(
         self, row: TileRow, icons: IconCache | None = None, parent=None
     ) -> None:
@@ -318,7 +328,12 @@ class CardFrame(QFrame):
         self._clear()
         card = self.row.card
         if isinstance(card, Card):
-            self._column.addWidget(ItemCard(card, self._icons))
+            drawn = ItemCard(card, self._icons, links_sets=self.LINKS_SETS)
+            # Connected either way: a card that was not asked to link its set
+            # name has nothing to emit, and one that was is this frame's to
+            # pass on.
+            drawn.set_clicked.connect(self.set_chosen)
+            self._column.addWidget(drawn)
         else:
             # An item that would not parse is a sentence rather than a card:
             # there is no tier to ink it with and no picture to draw.
@@ -358,6 +373,10 @@ class ItemTile(CardFrame):
     #: buttons mean the same thing and differ only in what they say they are
     #: sending: one copy, or every copy the card stands for.
     transfer = Signal(object)
+
+    #: This is the collection's wall, so the set name on the card is a link:
+    #: the set is a thing the tool holds and the window can show it.
+    LINKS_SETS = True
 
     def __init__(
         self, row: TileRow, icons: IconCache | None = None, parent=None
@@ -507,6 +526,10 @@ class TileGrid(CardWall):
     #: A tile's transfer button, passed on with the tile's row -- one copy or
     #: all of them, the button says which and the row says what they are.
     transfer = Signal(object)
+    #: A tile's set name, passed on with the name that was clicked.  The grid
+    #: does not know what a set is or what showing one would mean; the window
+    #: does, and this is how it hears about it.
+    set_chosen = Signal(str)
 
     def __init__(self, icons: IconCache | None = None, parent=None) -> None:
         super().__init__(parent)
@@ -550,6 +573,7 @@ class TileGrid(CardWall):
                 )
                 tile.compare.connect(self.compare)
                 tile.transfer.connect(self.transfer)
+                tile.set_chosen.connect(self.set_chosen)
                 self._pool[row.fingerprint] = tile
             else:
                 tile.set_row(row)

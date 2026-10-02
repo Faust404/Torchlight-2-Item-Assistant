@@ -19,6 +19,12 @@ them.  Its one piece of judgement is the site's own emphasis rule -- every
 number in a line lifts to the header colour -- which is one regular expression,
 and which is what makes a card scannable rather than merely coloured.
 
+A card is a drawing, and drawing is all it does -- bar one word.  A set's name
+is a link on the cards that are asked to link it: the set is a thing the tool
+holds more of, and :class:`LinkLabel` is how the name says so and how the click
+gets out.  Which cards those are is the holder's decision, not this module's --
+see :meth:`ItemCard._set_name`.
+
 A card is built once per item and then left alone: it is a hundred widgets, and
 :mod:`app.tiles` draws one per thing the tool holds and rebuilds that wall on
 every save.  So the cost of a card is paid when the item is first seen and
@@ -32,7 +38,7 @@ import math
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -74,6 +80,7 @@ __all__ = [
     "IconTile",
     "ItemCard",
     "LOCKED",
+    "LinkLabel",
     "MARK",
     "TIER_INK",
     "element_of",
@@ -562,6 +569,78 @@ class IconTile(QWidget):
         paint_tile(painter, self.width(), self.height(), self.ink, self.icon, self.letter)
 
 
+class LinkLabel(QLabel):
+    """A word on a card that can be clicked, and says so.
+
+    The card has exactly one of these and it is a set's name: the ladder under
+    it is what the *set* grants rather than what this piece does, so a player
+    reading one piece wants the rest of the set -- and the collection has it,
+    one click away.  See :meth:`app.window.MainWindow._show_set`.
+
+    What makes a word a link is that something happens when it is clicked, so
+    this is drawn only where something does.  The same set name on the same
+    card in the comparison overlay is not a link, because that overlay is
+    already showing every copy of one item and has nowhere to take anyone.
+
+    The mark is the hand and the underline and nothing else.  The name is
+    already in the set's purple -- the one colour on the card that is neither
+    a tier's nor a stat's -- and a second colour meaning "this is a link" would
+    be a second meaning for one word.
+
+    The underline is written into the text as rich text rather than set on the
+    widget's font, because the card's sheet owns the font: a ``#setname`` rule
+    is what sizes this word, and a font set here would be a second account of
+    the same thing, resolved by whichever of the two Qt applied last.
+    """
+
+    clicked = Signal()
+
+    def __init__(self, text: str, parent=None) -> None:
+        super().__init__(parent)
+        #: The word as the item has it, kept so that the two drawings of it --
+        #: plain, and underlined under the pointer -- cannot drift apart.
+        self._word = text
+        #: Whether the last press landed here and has not been let go of yet.
+        self._down = False
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._draw(False)
+
+    def word(self) -> str:
+        """The name as written, without the markup that underlines it."""
+        return self._word
+
+    # -- the mouse -------------------------------------------------------
+
+    def enterEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        self._draw(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        self._draw(False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        # Accepted rather than passed on, because the card this sits on reads a
+        # press as "this card was picked" -- and clicking the name inside the
+        # card you are already reading is not picking it again.
+        self._down = event.button() == Qt.MouseButton.LeftButton
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        was = self._down
+        self._down = False
+        # A press that wandered off the word before letting go is not a click
+        # on it, which is what every link everywhere means by letting go.
+        if was and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        event.accept()
+
+    def _draw(self, underlined: bool) -> None:
+        word = html.escape(self._word)
+        self.setText(f"<u>{word}</u>" if underlined else word)
+
+
 class Hairline(QFrame):
     """The rule the site draws before every section but the first."""
 
@@ -671,13 +750,26 @@ class ChipRow(QWidget):
 class ItemCard(QFrame):
     """One item, drawn: the headline, then the sections under it."""
 
+    #: A click on the set name, with the name that was clicked -- drawn only
+    #: where the card was asked to link it; see :class:`LinkLabel`.
+    set_clicked = Signal(str)
+
     def __init__(
-        self, card: Card, icons: IconCache | None = None, parent=None
+        self,
+        card: Card,
+        icons: IconCache | None = None,
+        parent=None,
+        *,
+        links_sets: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("card")
         self.card = card
         self._icons = icons
+        #: Whether this card's set name is a link.  Off unless the holder says
+        #: otherwise, because the one thing worse than a name that does not
+        #: take you anywhere is a name that *looks* like it will.
+        self._links_sets = links_sets
 
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
@@ -969,12 +1061,12 @@ class ItemCard(QFrame):
         an item is drawn in, because a set is not a tier -- and each rung under
         it as ``(2) Set`` with its lines below, which is how the site draws a
         ladder and how the game words one.
+
+        The name is the card's one clickable word, on the cards that link it:
+        it is the name of a thing the collection holds more of, so a click on
+        it is a question the tool can answer.  See :meth:`_set_name`.
         """
-        title = QLabel(card.set_name or "")
-        title.setObjectName("setname")
-        title.setStyleSheet(f"color:{TIER_INK['set']}")
-        title.setWordWrap(True)
-        column.addWidget(title)
+        column.addWidget(self._set_name(card))
 
         for rung in card.set_ladder:
             heading = QLabel(f"({rung.count}) Set")
@@ -984,6 +1076,31 @@ class ItemCard(QFrame):
                 # A rung's lines are affix lines -- a set's bonus is an effect
                 # like any other -- so they are drawn like the item's own.
                 column.addWidget(self._stat(text, AFFIX))
+
+    def _set_name(self, card: Card) -> QLabel:
+        """The set's name: a link where a click on it means something.
+
+        Which is the collection, and only the collection.  The card there
+        stands for an item the tool holds and the set it belongs to is very
+        likely in the tool as well, so a click can show it.  A card in the
+        comparison overlay draws the same name and does not link it: that
+        overlay is already showing every copy of one item, and a hand there
+        would promise a place to go that does not exist.
+        """
+        name = card.set_name or ""
+        if not self._links_sets:
+            title = QLabel(name)
+        else:
+            title = LinkLabel(name)
+            title.setToolTip(
+                f"Show every piece of {name} in the collection,\n"
+                "and nothing else."
+            )
+            title.clicked.connect(lambda: self.set_clicked.emit(name))
+        title.setObjectName("setname")
+        title.setStyleSheet(f"color:{TIER_INK['set']}")
+        title.setWordWrap(True)
+        return title
 
     def _augment(self, column: QVBoxLayout, augment: Augment) -> None:
         """A task, and the stats finishing it would grant.

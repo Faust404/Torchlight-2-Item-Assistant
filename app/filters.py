@@ -1,13 +1,15 @@
 """The row over the collection: the search box, the rarities, the level range.
 
-Three of the four things that narrow a collection, in one row above the cards
+Three of the things that narrow a collection, in one row above the cards
 rather than in a column beside them -- which is where the reference tool puts
 them, and where they cost the wall none of its width.  The row sits over the
 collection and not across the whole window, so that the controls are next to
-the only pane they narrow.  The fourth, the kinds, stays in the rail: a kind
-has a path (a sword is a one-handed weapon) and a tree is the only control
-that says so, while a tree drawn across the top of a window is a tree nobody
-reads.
+the only pane they narrow.  The kinds stay in the rail: a kind has a path (a
+sword is a one-handed weapon) and a tree is the only control that says so,
+while a tree drawn across the top of a window is a tree nobody reads.  The
+sets are not here either, and have no control at all: a set is arrived at by
+clicking its name on a card, and what this row does with one is stand in for
+it until the player clicks the cross -- see :meth:`FilterBar.show_set`.
 
 The rarities and the levels are each in a box of their own, in the window's own
 control ink like every other control the player operates
@@ -21,7 +23,7 @@ leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
 a chip stays worth reading while another one is ticked.
 
 Nothing here decides anything.  It draws what it is told to draw, says what is
-ticked, and emits :attr:`FilterBar.changed`; :class:`~app.models.
+ticked or shown, and emits :attr:`FilterBar.changed`; :class:`~app.models.
 CollectionFilter` is what makes that mean anything.
 """
 
@@ -167,6 +169,28 @@ def _chip_style(ink: str) -> str:
     )
 
 
+def _set_style() -> str:
+    """The chip a shown set stands in: the rarity pills' treatment, in purple.
+
+    A button rather than a tick box, because it is not a thing the player
+    chooses between: it is *on* for as long as a card's set name has been
+    clicked, and clicking it is the way back to the whole collection.  So it
+    takes the same pill as the rarity chips -- the window's own ink for the
+    word and the outline, a wash of one colour for the fill -- and the one
+    difference is what is written on it: the name, and the cross that says the
+    chip comes off.  A chip with nothing to say how it comes off is a filter
+    the player is stuck behind.
+    """
+    return (
+        "QPushButton {"
+        f" color: {CHALK};"
+        f" border: 1px solid {CHALK};"
+        " border-radius: 9px; padding: 3px 8px;"
+        f" background: {_wash(TIER_INK['set'])};"
+        "}"
+    )
+
+
 def _box(title: str, controls: Iterable[QWidget]) -> QGroupBox:
     """A group of controls in its own outlined box.
 
@@ -200,6 +224,10 @@ class FilterBar(QWidget):
         #: -- so that its own writes do not come back round as the player
         #: having changed something.
         self._updating = False
+        #: The set being shown, if one is.  Unlike every other facet this is
+        #: not read off a control: the chip below is written *from* it, so
+        #: that the two cannot disagree about what is being shown.
+        self._set = ""
 
         row = QHBoxLayout(self)
         row.setContentsMargins(INSET, 0, 0, 0)
@@ -236,6 +264,31 @@ class FilterBar(QWidget):
         # lands here rather than as a gap in the middle of the bar, which is
         # what the user was looking at when they asked for this.
         row.addWidget(self.search, 1)
+
+        # The set, when one is being shown.  It sits with the search box
+        # because it is the other half of what the box is for -- both answer
+        # "which items", one by a word the player types and one by a name they
+        # clicked -- and it is drawn only while there is a set: an empty chip
+        # in the row every other day would be furniture.  A hidden widget takes
+        # no room in a layout, so the row is the row it always was until the
+        # click that puts one here.
+        #
+        # While it is here the row is as wide as the chip, and the collection
+        # pane's own floor with it -- a button's layout minimum is its own
+        # width, and this row is what sets the window's minimum.  That is the
+        # trade taken deliberately: the alternative is a chip that can be
+        # squeezed to a sliver exactly when the window is small, and the status
+        # line sends the player to this chip to get back.  It is bounded in any
+        # case by the longest set name the game has, which is seventeen
+        # characters.
+        self.set_chip = QPushButton()
+        self.set_chip.setObjectName("setchip")
+        self.set_chip.setStyleSheet(_set_style())
+        self.set_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.set_chip.setToolTip("Show the whole collection again.")
+        self.set_chip.clicked.connect(self.clear_set)
+        self.set_chip.setVisible(False)
+        row.addWidget(self.set_chip)
 
         row.addSpacing(10)
         self.chips: dict[str, QCheckBox] = {}
@@ -322,21 +375,83 @@ class FilterBar(QWidget):
         """
         return (self.low.value(), self.high.value())
 
+    def shown_set(self) -> str:
+        """The set being shown, or the empty string for all of them."""
+        return self._set
+
+    # -- the set ---------------------------------------------------------
+
+    def show_set(self, name: str) -> None:
+        """Show one set and nothing else, whatever the bar was showing before.
+
+        A set is arrived at by clicking a *name on a card*, and a player who
+        does that is asking to see the set -- not asking to see the set as well
+        as the uniques they happened to have ticked a moment ago.  A narrowing
+        inside a narrowing is the way to a wall with two cards on it and no
+        explanation, so this one switch clears the rest: the search box, the
+        chips and the level range go back to where the window starts, and the
+        set is the only thing left saying anything.  The rail is cleared by the
+        window, which is where the rail lives.
+
+        All of it behind :attr:`_updating` and one :attr:`changed` at the end,
+        because to the window this is one move and not five.
+        """
+        self._updating = True
+        try:
+            self._clear_controls()
+            self._show(name)
+        finally:
+            self._updating = False
+        self.changed.emit()
+
+    def clear_set(self) -> None:
+        """Show the whole collection again, keeping the rest of the bar.
+
+        What the chip's cross does.  It is the one facet with a control of its
+        own that is *off* a tick -- the chip is not a box the player ticks but
+        a statement of what is being shown -- so taking it off leaves whatever
+        else the player had set exactly where it was.
+        """
+        if not self._set:
+            return
+        self._updating = True
+        try:
+            self._show("")
+        finally:
+            self._updating = False
+        self.changed.emit()
+
+    def _show(self, name: str) -> None:
+        """Put a set on the chip, or take the chip off.  Silent, and internal."""
+        self._set = name or ""
+        self.set_chip.setText(f"{self._set}  ✕" if self._set else "")
+        self.set_chip.setVisible(bool(self._set))
+
     # -- the user --------------------------------------------------------
 
     def _moved(self, *_) -> None:
         if not self._updating:
             self.changed.emit()
 
+    def _clear_controls(self) -> None:
+        """Every control in the row back to the value the window starts it at.
+
+        Silent, and the caller's to guard: two of the three callers below want
+        the clearing *and* something else, and only the last of them wants the
+        signal.
+        """
+        self.search.clear()
+        for chip in self.chips.values():
+            chip.setChecked(False)
+        self.low.setValue(0)
+        self.high.setValue(LEVEL_MAX)
+
     def reset(self) -> None:
         """Put every control back, which is the state the window starts in."""
         self._updating = True
         try:
-            self.search.clear()
-            for chip in self.chips.values():
-                chip.setChecked(False)
-            self.low.setValue(0)
-            self.high.setValue(LEVEL_MAX)
+            self._clear_controls()
+            self._show("")
         finally:
             self._updating = False
         self.changed.emit()

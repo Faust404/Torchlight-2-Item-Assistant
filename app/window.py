@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
         self.grid = TileGrid(self._icons())
         self.grid.compare.connect(self._compare_copies)
         self.grid.transfer.connect(self._transfer_row)
+        self.grid.set_chosen.connect(self._show_set)
         right.addWidget(self.grid, stretch=1)
 
         # The filters stand directly over the collection and span nothing else.
@@ -795,20 +796,43 @@ class MainWindow(QMainWindow):
         assert self.service is not None
         return len(self.service.stash_items())
 
+    def _show_set(self, name: str) -> None:
+        """Show every piece of one set, and nothing else.
+
+        What a click on a set name on a card means.  The ladder under that name
+        is what the *set* grants rather than what this one piece does, so a
+        player reading one piece of a set is the player most likely to want the
+        rest of it -- and the tool is where the rest of it is, because the tool
+        is where the items went.
+
+        A switch rather than a narrowing: the rail goes back to showing every
+        kind and the bar back to its defaults, so what is left on the wall is
+        the set.  The bar's own clearing is
+        :meth:`app.filters.FilterBar.show_set`'s; the rail is not part of the
+        bar, so it is cleared here -- which is two rebuilds of the wall for one
+        click, and a click is not a poll.
+        """
+        self.sidebar.reset()
+        self.filters.show_set(name)
+        self._set_status(
+            f"showing every piece of {name} · click its chip to see everything again"
+        )
+
     def _filters_changed(self) -> None:
         """Apply every facet, then say what each one would leave.
 
-        One slot for the whole job, whether it was a kind ticked in the rail or
-        a chip ticked in the bar: the proxy holds all four facets at once, so
-        applying three of them and rebuilding would be a redraw of a list the
-        player is not looking at.  Each setter returns without touching the
-        rows when its facet has not moved, which is what keeps this free on the
-        polls that changed nothing.
+        One slot for the whole job, whether it was a kind ticked in the rail, a
+        chip ticked in the bar or a set name clicked on a card: the proxy holds
+        all five facets at once, so applying four of them and rebuilding would
+        be a redraw of a list the player is not looking at.  Each setter
+        returns without touching the rows when its facet has not moved, which
+        is what keeps this free on the polls that changed nothing.
         """
         self.collection_proxy.setFilterFixedString(self.filters.search_text())
         self.collection_proxy.set_places(self.sidebar.places())
         self.collection_proxy.set_tiers(self.filters.tiers())
         self.collection_proxy.set_level_range(*self.filters.level_range())
+        self.collection_proxy.show_set(self.filters.shown_set())
         self._count_facets()
         self._rebuild_collection()
 

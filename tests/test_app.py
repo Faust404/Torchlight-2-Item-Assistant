@@ -32,7 +32,9 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 import app.window as window_module  # noqa: E402
+from app.card import LinkLabel  # noqa: E402
 from app.filters import INSET  # noqa: E402
+from app.models import LEVEL_MAX  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
 
 #: The real search, kept before any fixture can stand in front of it.
@@ -704,10 +706,85 @@ def test_the_transfer_all_button_sends_every_copy_at_once(
         win.close()
 
 
+def test_a_click_on_a_set_name_shows_every_piece_of_that_set(
+    qapp, tmp_path, game_install, monkeypatch
+):
+    """The user's fifth change, end to end: the name on the card is a link.
+
+    The ladder under that name is what the *set* grants rather than what this
+    one piece does, so a player reading one piece of a set is the player most
+    likely to want the rest -- and the tool is where the rest of it is, because
+    the tool is where the items went.
+
+    A switch rather than a narrowing: the player clicked a name, not a control,
+    and they are asking to see the set rather than to see the set as well as
+    whatever they had ticked a moment ago.  So every other facet goes back to
+    where the window starts it -- including the rail, which is the one part of
+    that clearing the bar cannot do.  What the click is worth is both pieces
+    under one name, where the search for one of them showed one.
+    """
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            parse_item(synthetic_item(name="Test Set Blade", guid=0x7007, level=20)[0]),
+            parse_item(synthetic_item(name="Test Set Edge", guid=0x7008, level=20)[0]),
+            parse_item(synthetic_item(name="Test Plain", guid=0x7001, level=10)[0]),
+        ],
+    )
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.count() == 3, "the three were not all absorbed"
+
+        # A player who had narrowed the collection by hand, and is about to
+        # click a set name: all of this is what the click switches off.
+        win.sidebar.tree.topLevelItem(0).setCheckState(0, Qt.CheckState.Checked)
+        win.filters.chips["Unique"].setChecked(True)
+        win.filters.search.setText("Edge")
+        assert win.grid.count() == 1, "the narrowing did not narrow"
+
+        # The gesture itself, on the card: the set's name, which is a link
+        # there and a bare word in the comparison overlay.
+        names = win.grid.findChildren(LinkLabel)
+        assert [name.word() for name in names] == ["Test Set"]
+        win.show()
+        qapp.processEvents()
+        QTest.mouseClick(names[0], Qt.MouseButton.LeftButton)
+
+        assert win.filters.shown_set() == "Test Set"
+        assert win.filters.search_text() == ""
+        assert win.filters.tiers() == set()
+        assert win.filters.level_range() == (0, LEVEL_MAX)
+        assert win.sidebar.places() == set(), "the rail was left ticked"
+        assert win.filters.set_chip.isVisible()
+        assert win.filters.set_chip.text() == "Test Set  ✕"
+        assert [row.name for row in win.grid.rows()] == [
+            "Test Set Blade",
+            "Test Set Edge",
+        ], "the wall is not the set"
+        assert "showing every piece of Test Set" in win.status.currentMessage()
+
+        # And the chip is the way back: the whole collection again, with the
+        # item that is in no set back on the wall.
+        win.filters.set_chip.click()
+        assert win.filters.shown_set() == ""
+        assert not win.filters.set_chip.isVisible()
+        assert win.grid.count() == 3
+    finally:
+        win.close()
+
+
 # --------------------------------------------------------------------------
 # The stats
 # --------------------------------------------------------------------------
-
 
 def test_the_stash_tooltip_names_the_tab_the_player_counts(game_window):
     """The file numbers containers; the player counts tabs from one.

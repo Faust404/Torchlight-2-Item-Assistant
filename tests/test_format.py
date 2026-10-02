@@ -66,6 +66,7 @@ def synthetic_item(
     prefix: str = "",
     suffix: str = "",
     *,
+    guid: int = 0x1122334455667788,
     slot: int = 10,
     container: int = 24,
     level: int = 5,
@@ -87,6 +88,13 @@ def synthetic_item(
     ``quantity`` is how many of the item the stack holds, the field right
     before the socket count; one is what everything that does not stack
     carries, which is why it is the default here.
+
+    ``guid`` is the item's own id, and it is the one field here that is not
+    about the item's *shape*: the game's data files are indexed by it, so a
+    test that wants an item the game knows passes the guid of a file it built
+    (see ``tests/test_gamedata.install``).  The default is a number no game
+    file has, which is an item the tool can parse and the files cannot
+    describe -- the ordinary case on a machine with no game installed.
     """
     assert len(extra_records) % 8 == 0
     out = bytearray()
@@ -110,7 +118,7 @@ def synthetic_item(
         out.extend(s.encode("utf-16-le"))
 
     u8(0)
-    u64(0x1122334455667788)
+    u64(guid)
     text(name)
     text(prefix)
     text(suffix)

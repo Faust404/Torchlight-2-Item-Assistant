@@ -57,6 +57,7 @@ from app.models import (  # noqa: E402
     LEVEL_MAX,
     LEVEL_ROLE,
     PLACE_ROLE,
+    SET_ROLE,
     TIER_ROLE,
     TIER_CHIPS,
     CollectionFilter,
@@ -135,8 +136,15 @@ ITEMS = [
 ]
 
 
-def _built(items=ITEMS):
-    """A collection model carrying the roles, with no game and no catalog."""
+def _built(items=ITEMS, sets=None):
+    """A collection model carrying the roles, with no game and no catalog.
+
+    ``sets`` names the set an item belongs to, which is the one role of a row
+    that is not one of the four fields above: it comes off the item's own
+    appearance rather than off the registry, and a row built by hand has to be
+    told.  Every item not named in it is in no set, which is the empty string
+    a real row carries rather than nothing.
+    """
     model = new_model(COLLECTION_COLUMNS)
     for name, tier, place, gate in items:
         cell = QStandardItem(name)
@@ -145,13 +153,14 @@ def _built(items=ITEMS):
         cell.setData(place, PLACE_ROLE)
         cell.setData(gate, LEVEL_ROLE)
         cell.setData(gate, GATE_ROLE)
+        cell.setData((sets or {}).get(name, ""), SET_ROLE)
         model.appendRow(
             [cell, QStandardItem(str(gate)), QStandardItem("0"), QStandardItem("")]
         )
     return model
 
 
-def _proxy(items=ITEMS) -> CollectionFilter:
+def _proxy(items=ITEMS, sets=None) -> CollectionFilter:
     """A proxy over the hand-built collection, wired the way the window wires it.
 
     The key column and the case sensitivity are not decoration: the window sets
@@ -159,7 +168,7 @@ def _proxy(items=ITEMS) -> CollectionFilter:
     player never gets.
     """
     proxy = CollectionFilter()
-    proxy.setSourceModel(_built(items))
+    proxy.setSourceModel(_built(items, sets))
     proxy.setFilterKeyColumn(0)
     proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
     return proxy
@@ -353,6 +362,81 @@ def test_the_search_box_narrows_and_still_combines_with_the_ticks(qapp):
 
     proxy.setFilterFixedString("beta")
     assert _shown(proxy) == ["Beta"]
+
+
+# --------------------------------------------------------------------------
+# The set, which is arrived at rather than ticked
+# --------------------------------------------------------------------------
+
+#: Two of the seven are pieces of one set.  Written as the card draws the name,
+#: because that is the whole interface between the card and this filter: an
+#: item is of a set when the game's own file says that name for it.
+SETS = {"Alpha": "Test Set", "Gamma": "Test Set"}
+
+
+def test_showing_a_set_leaves_only_its_own_pieces(qapp):
+    proxy = _proxy(sets=SETS)
+
+    proxy.show_set("Test Set")
+
+    assert _shown(proxy) == ["Alpha", "Gamma"]
+
+
+def test_an_item_in_no_set_is_in_no_set(qapp):
+    """The empty string a real row carries is not a name any click can produce --
+    no card draws a set name for an item in no set -- so an item of none is out
+    of every shown set, and showing *nothing* is the whole collection rather
+    than the items of no set.
+    """
+    proxy = _proxy(sets=SETS)
+    proxy.show_set("Test Set")
+    assert "Beta" not in _shown(proxy)
+
+    proxy.show_set("")
+    assert _shown(proxy) == [name for name, *_ in ITEMS]
+
+
+def test_a_set_and_every_other_facet_and_together(qapp):
+    """The one facet that is not set from a control is a facet all the same.
+
+    The clearing of the other controls happens in the *bar*, one layer up --
+    :meth:`app.filters.FilterBar.show_set` is what switches the player's other
+    filters off -- so what the proxy has to do with a set is what it does with
+    every other facet: narrow, and let the rest narrow further.
+    """
+    proxy = _proxy(sets=SETS)
+    proxy.show_set("Test Set")
+
+    proxy.set_places({BOOTS})
+    assert _shown(proxy) == ["Alpha", "Gamma"]
+
+    proxy.set_tiers({"Unique"})
+    assert _shown(proxy) == ["Alpha"]
+
+    proxy.set_level_range(40, 40)
+    assert _shown(proxy) == ["Alpha"]
+
+    proxy.set_level_range(0, 11)
+    assert _shown(proxy) == []
+
+
+def test_a_count_is_about_the_set_being_shown(qapp):
+    """The counts ignore the three ticked facets and not this one.
+
+    Those three exist to be chosen between, so the number beside one of them
+    says what ticking it *would* leave.  A set is not chosen between -- it is
+    the list in front of the player, arrived at by a click and left by clicking
+    the chip -- so the numbers describe that list, exactly as they describe
+    what the search box has already narrowed to.
+    """
+    proxy = _proxy(sets=SETS)
+    proxy.show_set("Test Set")
+
+    assert proxy.counts(TIER_ROLE) == {"Unique": 1, "Rare": 1}
+    assert proxy.counts(PLACE_ROLE) == {BOOTS: 2}
+    # And the kind ticks beside it are still ignored, set or no set.
+    proxy.set_tiers({"Rare"})
+    assert proxy.counts(TIER_ROLE) == {"Unique": 1, "Rare": 1}
 
 
 # --------------------------------------------------------------------------
@@ -704,6 +788,119 @@ def test_clearing_the_bar_is_one_change_rather_than_four(qapp):
 
 
 # --------------------------------------------------------------------------
+# The chip the bar grows when a set is shown
+# --------------------------------------------------------------------------
+
+
+def test_the_chip_is_there_only_while_a_set_is_shown(qapp):
+    """An empty chip in the row every other day would be furniture.
+
+    Shown for real rather than merely not hidden, because that is the question
+    -- a widget in a layout takes width whether or not anyone can see it, and
+    the row is the row it always was until the click that puts one here.
+    """
+    bar = _bar()
+    bar.show()
+
+    assert bar.shown_set() == ""
+    assert not bar.set_chip.isVisible()
+
+    bar.show_set("Test Set")
+    assert bar.set_chip.isVisible()
+    assert bar.set_chip.text() == "Test Set  ✕", "the cross says how it comes off"
+
+    bar.clear_set()
+    assert not bar.set_chip.isVisible()
+    assert bar.set_chip.text() == ""
+
+
+def test_showing_a_set_switches_the_rest_of_the_bar_off(qapp):
+    """A narrowing inside a narrowing is the way to a wall with two cards on it
+    and no explanation, so the click that shows a set takes the other four
+    controls back to where the window starts them: whatever the player had
+    typed or ticked is asking about a list they have just left.
+    """
+    bar = _bar()
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+    bar.low.setValue(20)
+    bar.high.setValue(30)
+
+    bar.show_set("Test Set")
+
+    assert bar.shown_set() == "Test Set"
+    assert bar.search_text() == ""
+    assert bar.tiers() == set()
+    assert bar.level_range() == (0, LEVEL_MAX)
+    # The chip is written *from* the set rather than read back off the widget,
+    # so there is one account of what is being shown and nothing to disagree.
+    assert bar.set_chip.text() == "Test Set  ✕"
+
+
+def test_showing_a_set_is_one_change_rather_than_five(qapp):
+    """To the window this is one move: re-apply every facet and re-count, once."""
+    bar = _bar()
+    bar.search.setText("drill")
+    bar.chips["Unique"].setChecked(True)
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.show_set("Test Set")
+
+    assert len(heard) == 1
+
+
+def test_the_cross_on_the_chip_leaves_the_rest_of_the_bar_alone(qapp):
+    """The other way round from showing one, and deliberately.
+
+    The set is the one facet whose control is not a tick -- the chip is a
+    statement of what is being shown rather than a box the player chose -- so
+    taking it off is taking *it* off: a player who had narrowed the collection
+    and then followed a set name back to it gets their own filters again, not
+    a cleared bar.
+    """
+    bar = _bar()
+    bar.show_set("Test Set")
+    bar.search.setText("Blade")
+    bar.chips["Unique"].setChecked(True)
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.clear_set()
+
+    assert bar.shown_set() == ""
+    assert bar.set_chip.text() == ""
+    assert bar.search_text() == "Blade"
+    assert bar.tiers() == {"Unique"}
+    assert len(heard) == 1
+
+
+def test_taking_a_set_off_when_none_is_shown_says_nothing(qapp):
+    """The chip's cross is uncountable, and a move that changes nothing is not
+    a change: emitting here would be a rebuild of the list per stray click."""
+    bar = _bar()
+    heard = []
+    bar.changed.connect(lambda: heard.append(1))
+
+    bar.clear_set()
+
+    assert heard == []
+
+
+def test_clearing_the_bar_takes_the_set_off_too(qapp):
+    """``Clear filters`` is the whole window's starting state, and the set is
+    part of it -- the rail is cleared by the window, which is where the rail
+    lives; this is the half that lives in the bar."""
+    bar = _bar()
+    bar.show_set("Test Set")
+
+    bar.reset()
+
+    assert bar.shown_set() == ""
+    assert bar.set_chip.text() == ""
+
+
+# --------------------------------------------------------------------------
 # What the bar is drawn in, which is the one thing it does not say itself
 # --------------------------------------------------------------------------
 
@@ -909,6 +1106,55 @@ def test_ticking_a_chip_washes_it_in_the_rarity_s_own_colour(themed):
     assert [washed.red(), washed.green(), washed.blue()] == pytest.approx(
         wanted, abs=2
     ), "the tick's fill is not the tier's colour over the ground"
+
+
+def test_the_set_chip_wears_the_set_s_own_purple(themed):
+    """The rarity pills' treatment, in the one colour no tier uses.
+
+    A set is not a rarity, so the chip cannot wear a rarity's colour; what it
+    wears is the colour the set's own name is drawn in on the cards.  That is
+    what makes the chip read as the name the player clicked, standing in the
+    row, rather than as a sixth rarity that happens to be purple.
+
+    Read off the pixels for the reason the wash above is: an ``rgba()`` the
+    parser does not understand is a declaration that is dropped, and a chip
+    that was meant to be filled comes out as the bare ground with an outline.
+    """
+    bar = _bar()
+    bar.show_set("Test Set")
+    bar.resize(bar.sizeHint())
+    bar.show()
+    themed.processEvents()
+
+    chip = bar.set_chip
+    assert chip.isVisible()
+    image = bar.grab().toImage()
+    rect = QRect(chip.mapTo(bar, chip.rect().topLeft()), chip.size())
+    middle = rect.center()
+
+    # The bar's own background, which is what the chip's wash is over: the
+    # row's left inset, where nothing stands in any state of the bar.
+    ground = image.pixelColor(2, middle.y())
+    washed = image.pixelColor(rect.left() + 4, middle.y())
+    ink = QColor(TIER_INK["set"])
+    share = WASH / 255
+    wanted = [
+        share * ink.red() + (1 - share) * ground.red(),
+        share * ink.green() + (1 - share) * ground.green(),
+        share * ink.blue() + (1 - share) * ground.blue(),
+    ]
+    assert [washed.red(), washed.green(), washed.blue()] == pytest.approx(
+        wanted, abs=2
+    ), "the chip is not the set's colour over the ground"
+    assert washed.blue() > washed.red() > washed.green(), "which is a purple"
+
+    # And the word on it is the window's own ink, as it is on every control the
+    # player reads -- the name, and the cross that says how it comes off.
+    assert any(
+        image.pixelColor(x, y).name() == CHALK
+        for y in range(middle.y() - 4, middle.y() + 5)
+        for x in range(rect.left() + 3, rect.right() - 2)
+    ), "the chip's word is not in the ink"
 
 
 def test_the_rail_s_words_are_a_step_up_from_the_window_s_body(themed):

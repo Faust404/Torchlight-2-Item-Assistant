@@ -260,6 +260,29 @@ def install(tmp_path: Path) -> Path:
     # the general one rather than being extrapolated.
     item_file("SWORDS/TEST_OFF_CURVE.DAT", "Test Off Curve", "SWORD", 50, 0x7006)
 
+    # Two pieces of the set above.  Membership is one field on the item's own
+    # file and it holds the set's *internal* name -- the display one is the set
+    # file's business, and turning one into the other is what
+    # ``appearance_for`` does.  Two of them, because a set of one is a set
+    # nothing can be shown *apart* from: ``tests/test_app.py`` clicks one of
+    # these names and has to see the other.
+    item_file(
+        "SWORDS/TEST_SET_BLADE.DAT",
+        "Test Set Blade",
+        "UNIQUESWORD",
+        20,
+        0x7007,
+        {VAR_SET: (TEXT, string("TEST_SET"))},
+    )
+    item_file(
+        "SWORDS/TEST_SET_EDGE.DAT",
+        "Test Set Edge",
+        "UNIQUESWORD",
+        20,
+        0x7008,
+        {VAR_SET: (TEXT, string("TEST_SET"))},
+    )
+
     # Containers: each names itself and declares the id the save file records.
     # The ARMS tab also names the slot file its cells come from, which is how
     # the game ties a container to the numbers its slots carry: the container
@@ -592,9 +615,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Thirty-nine parse; the fortieth is a DAT that will not, and the
-    forty-first is not a DAT at all."""
-    assert game.files_read == 39
+    """Forty-one parse; the forty-second is a DAT that will not, and the
+    forty-third is not a DAT at all."""
+    assert game.files_read == 41
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -1547,6 +1570,40 @@ def test_an_attribute_stated_as_zero_is_no_requirement(game):
 
     assert "Vitality" not in dict(requires.stats)
     assert "Dexterity" not in dict(requires.stats)
+
+
+def test_an_item_the_data_does_not_know_has_no_appearance(game):
+    """A guid no file in the install carries: nothing raises and nothing is
+    guessed."""
+    assert game.appearance_for(item(guid=0xDEAD)) is None
+
+
+def test_a_set_piece_carries_its_set_s_display_name(game):
+    """The field is the set's *file* name; what the card draws is its title.
+
+    ``TEST_SET`` is what the item states and ``Test Set`` is what the card, the
+    collection row and the set filter all say -- one string, resolved here, so
+    that a click on a name and a filter over names cannot be two different
+    spellings of the same set.  The ladder is reachable by either name, which is
+    what makes the click a lookup rather than a translation.
+    """
+    appearance = game.appearance_for(item(guid=0x7007))
+
+    assert appearance.set_name == "Test Set", "the internal id reached the card"
+    assert game.set_ladder(appearance.set_name), "the name does not find the set"
+    # Everything else about the item is the item's own: membership rides beside
+    # the rarity the file states rather than replacing it.
+    assert appearance.tier == "Unique"
+
+
+def test_an_item_of_no_set_says_so_with_nothing(game):
+    """``None`` and not the empty string, which is what a mod's item gets too.
+
+    The card draws a set's name only where there is one, and the collection
+    stores the empty string for "no set" -- so the two have to be told apart
+    somewhere, and this is where.
+    """
+    assert game.appearance_for(item(guid=0x7001)).set_name is None
 
 
 def test_an_item_the_data_does_not_know_has_no_requirements(game):

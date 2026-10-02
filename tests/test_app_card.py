@@ -2,8 +2,8 @@
 
 :mod:`tl2stash.card` is the model and ``tests/test_card.py`` is its business --
 what an item says.  This is the drawing: which colour a tier is inked with,
-where the rules fall, what the corner says, and what happens to an item whose
-icon is in no sheet.
+where the rules fall, what the corner says, what happens to an item whose icon
+is in no sheet, and which one word on a card answers a click.
 
 No pixels are asserted.  Qt resolves fonts through the platform, and under the
 offscreen platform it resolves none -- every glyph measures as a box -- so a
@@ -30,8 +30,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtCore import QPoint  # noqa: E402
-from PySide6.QtGui import QPixmap  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QEnterEvent, QPixmap  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from app.card import (  # noqa: E402
@@ -50,6 +51,7 @@ from app.card import (  # noqa: E402
     IconCache,
     IconTile,
     ItemCard,
+    LinkLabel,
     _dps,
     element_of,
     emphasis,
@@ -833,6 +835,93 @@ def test_an_item_in_no_set_draws_no_ladder_at_all(qapp):
     assert texts(drawn, "setname") == []
     assert texts(drawn, "rung") == []
     assert drawn.findChildren(Hairline) == []
+
+
+# --------------------------------------------------------------------------
+# The one word on a card that can be clicked
+# --------------------------------------------------------------------------
+
+
+def ladder_card(*, links_sets: bool = False) -> ItemCard:
+    """A set piece's card, with the one flag these four tests are about."""
+    return ItemCard(
+        card(set_name="Test Set", set_ladder=(Rung(2, ("+6 Set damage",)),)),
+        links_sets=links_sets,
+    )
+
+
+def test_a_set_name_that_links_says_so_and_hands_over_its_word(qapp):
+    """The click, and what a listener is told: the name as the card draws it.
+
+    The name rather than a membership test, because that string is the whole
+    interface between this card and the collection's filter -- an item is of a
+    set when the game's file says that name for it, so a click that handed over
+    an id would be a second spelling of the same set for something to disagree
+    with.  See :meth:`app.models.CollectionFilter.show_set`.
+    """
+    drawn = ladder_card(links_sets=True)
+
+    title = drawn.findChild(QLabel, "setname")
+    assert isinstance(title, LinkLabel)
+    assert title.word() == "Test Set"
+    assert title.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+    seen: list[str] = []
+    drawn.set_clicked.connect(seen.append)
+    QTest.mouseClick(title, Qt.MouseButton.LeftButton)
+    assert seen == ["Test Set"]
+
+
+def test_the_link_is_the_hand_and_the_underline_and_nothing_else(qapp):
+    """The name is in the set purple already -- the one colour on a card that
+    is neither a tier's nor a stat's -- so a second colour meaning "this is a
+    link" would be a second meaning for one word.  What changes under the
+    pointer is the underline, and it comes off when the pointer leaves.
+    """
+    title = ladder_card(links_sets=True).findChild(QLabel, "setname")
+    assert title.text() == "Test Set", "not underlined until the pointer is on it"
+
+    away = QPointF(1, 1)
+    QApplication.sendEvent(title, QEnterEvent(away, away, away))
+    assert title.text() == "<u>Test Set</u>"
+    assert TIER_INK["set"] in title.styleSheet(), "and still in the set's own colour"
+
+    QApplication.sendEvent(title, QEvent(QEvent.Type.Leave))
+    assert title.text() == "Test Set"
+
+
+def test_a_press_that_wanders_off_the_word_is_not_a_click_on_it(qapp):
+    """What every link everywhere means by letting go, and the reason the press
+    is remembered rather than acted on: the card under this word reads a press
+    as "this card was picked", so a drag that starts on the name and ends on
+    the card must not also be a jump to another list.
+    """
+    drawn = ladder_card(links_sets=True)
+    title = drawn.findChild(QLabel, "setname")
+
+    seen: list[str] = []
+    drawn.set_clicked.connect(seen.append)
+    QTest.mousePress(title, Qt.MouseButton.LeftButton)
+    QTest.mouseRelease(title, Qt.MouseButton.LeftButton, pos=QPoint(500, 500))
+    assert seen == []
+
+
+def test_a_card_that_was_not_asked_to_link_its_set_draws_a_plain_name(qapp):
+    """Where the one thing worse than a name that does not take you anywhere is
+    a name that *looks* like it will.
+
+    The comparison overlay is that place: it is already showing every copy of
+    one item, so it has nowhere to take anyone and draws the name as the word
+    it is.  The purple and the ladder stay -- those are what the item is.
+    """
+    drawn = ladder_card()
+
+    title = drawn.findChild(QLabel, "setname")
+    assert not isinstance(title, LinkLabel)
+    assert title.text() == "Test Set"
+    assert TIER_INK["set"] in title.styleSheet()
+    assert texts(drawn, "rung") == ["(2) Set"]
+    assert title.cursor().shape() != Qt.CursorShape.PointingHandCursor
 
 
 # --------------------------------------------------------------------------

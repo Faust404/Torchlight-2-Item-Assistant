@@ -29,6 +29,7 @@ __all__ = [
     "LEVEL_ROLE",
     "MEMBERS_ROLE",
     "PLACE_ROLE",
+    "SET_ROLE",
     "STASH_COLUMNS",
     "TIER_ROLE",
     "CollectionFilter",
@@ -114,11 +115,19 @@ LEVEL_MAX = 110
 #: Zero is a real gate value and the reason the two roles are not merged: an
 #: item the game gates on nothing at all, a potion, is usable at any level and
 #: is shown whatever range is asked for.
+#:
+#: ``SET_ROLE`` holds the display name of the set the item belongs to
+#: (``True North``), and the empty string for the great majority that belong
+#: to none.  It is the one facet of the collection that is not set from a
+#: control: it is what a click on a card's set name puts there, and the name
+#: is the same string the card draws because both come from the item's own
+#: appearance -- see :meth:`CollectionFilter.show_set`.
 FINGERPRINT_ROLE = Qt.ItemDataRole.UserRole
 TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
 PLACE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
 LEVEL_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 3)
 MEMBERS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 4)
+SET_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 5)
 GATE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 6)
 
 
@@ -173,6 +182,7 @@ def _describe(cell: QStandardItem, entry: Entry, level: int) -> None:
     cell.setData(entry.place, PLACE_ROLE)
     cell.setData(level, LEVEL_ROLE)
     cell.setData(level if entry.gate is None else entry.gate, GATE_ROLE)
+    cell.setData(entry.set_name or "", SET_ROLE)
     cell.setForeground(QBrush(QColor(TIER_INK[entry.tier])))
     if entry.icon is not None:
         cell.setIcon(entry.icon)
@@ -312,8 +322,11 @@ def fill_collection(
 class CollectionFilter(QSortFilterProxyModel):
     """The collection, narrowed by what the controls above it have ticked.
 
-    Four things narrow it and they AND: the search box, the kinds ticked in
-    the rail, the rarity chips, and a range of player levels.  A facet with
+    Five things narrow it and they AND: the search box, the kinds ticked in
+    the rail, the rarity chips, a range of player levels, and one set -- which
+    is the odd one of the five, because it is arrived at by clicking a *name on
+    a card* rather than by a control, and because it is a name rather than a
+    tick: a set is not a property an item may have several of.  A facet with
     nothing ticked is not a filter at all, so a window whose controls have just
     been cleared shows the whole collection -- which is what makes them safe to
     ignore.
@@ -338,6 +351,9 @@ class CollectionFilter(QSortFilterProxyModel):
         #: whole of it, so the default is a range and not a special case.
         self._low: int = 0
         self._high: int = LEVEL_MAX
+        #: The one set being shown, by the name the cards draw, or empty for
+        #: all of them.
+        self._set: str = ""
 
     # -- what is ticked --------------------------------------------------
 
@@ -352,6 +368,19 @@ class CollectionFilter(QSortFilterProxyModel):
         wanted = set(tiers)
         if wanted != self._tiers:
             self._tiers = wanted
+            self._refilter()
+
+    def show_set(self, name: str) -> None:
+        """Keep only the items of this set, or all of them when given nothing.
+
+        A name rather than a membership test, because the string that arrives
+        is the one a card has just drawn: the click and the filter are the same
+        word, and an item is in the set when the game's own file says that name
+        for it.
+        """
+        wanted = name or ""
+        if wanted != self._set:
+            self._set = wanted
             self._refilter()
 
     def set_level_range(self, low: int, high: int) -> None:
@@ -388,7 +417,11 @@ class CollectionFilter(QSortFilterProxyModel):
 
         The search box is *not* ignored: it is a text filter rather than a
         facet, and a count that ignored what the player had typed would be a
-        number for a list they are not looking at.
+        number for a list they are not looking at.  Neither is the set, for
+        the same reason -- a click on a set name is a switch to a list of that
+        set, and the numbers beside the rail are about the list in front of
+        the player.  The three ticked facets *are* ignored, because they are
+        the ones a count is meant to talk someone out of ticking.
         """
         tally: dict = {}
         for row in range(self.sourceModel().rowCount()):
@@ -425,6 +458,12 @@ class CollectionFilter(QSortFilterProxyModel):
         if ignoring != TIER_ROLE and self._tiers:
             if self._value(parent, row, TIER_ROLE) not in self._tiers:
                 return False
+
+        # A name, not a set of them: an item belongs to one set or none, so
+        # this is the one facet with no "ticked" state to be empty of -- it is
+        # either showing a set or showing everything.
+        if self._set and self._value(parent, row, SET_ROLE) != self._set:
+            return False
 
         if ignoring != GATE_ROLE:
             # Not ``or 0``: zero is an item the game gates on nothing, and an

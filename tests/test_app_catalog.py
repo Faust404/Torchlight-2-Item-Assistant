@@ -47,15 +47,16 @@ from app.models import (  # noqa: E402
     GATE_ROLE,
     LEVEL_ROLE,
     PLACE_ROLE,
+    SET_ROLE,
     TIER_ROLE,
     fill_collection,
     new_model,
 )
-from tl2stash.gamedata import Requirements  # noqa: E402
+from tl2stash.gamedata import GameData, Requirements  # noqa: E402
 from tl2stash.taxonomy import OTHER  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
-from test_gamedata import _bashdrill  # noqa: E402
+from test_gamedata import _bashdrill, install as synthetic_install  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -63,6 +64,17 @@ def qapp():
     """One QApplication for the whole session; Qt allows no more."""
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture
+def synthetic_game(tmp_path):
+    """The install ``tests/test_gamedata.py`` builds, loaded.
+
+    No reference database, for the reason that file's own fixture gives: the
+    augment table is not game data, and a machine with a checkout of the
+    reference beside this one must not change what a test sees.
+    """
+    return GameData.load(synthetic_install(tmp_path), augments={})
 
 
 # --------------------------------------------------------------------------
@@ -149,6 +161,7 @@ def test_with_no_game_every_item_is_an_item_with_no_rarity(qapp):
     assert (entry.group, entry.subgroup) == (OTHER, None)
     assert entry.icon is None
     assert entry.gate is None
+    assert entry.set_name is None
 
 
 def test_the_answer_for_an_item_is_remembered_and_not_computed_twice(qapp):
@@ -352,7 +365,39 @@ def test_a_filled_row_shows_its_tier_without_changing_its_text(qapp):
     assert cell.data(TIER_ROLE) == ""
     assert cell.data(PLACE_ROLE) == (OTHER, None, "")
     assert cell.data(LEVEL_ROLE) == 12
+    # An item of no set carries the empty string rather than nothing, which is
+    # what the set filter compares against when no set is being shown.
+    assert cell.data(SET_ROLE) == ""
     assert cell.foreground().color().name() == "#8a8a8a"
+
+
+def test_a_set_piece_s_row_carries_the_name_the_card_draws(qapp, synthetic_game):
+    """The one facet of a row that is not read off a data file by the *model*.
+
+    The set is on the item's appearance, resolved once per item by the
+    catalogue, and the row keeps the same string the card's ladder is titled
+    with -- which is what makes a click on that title a filter over these rows
+    and not a translation between two spellings of one set.
+    """
+    row = _a_row(
+        fingerprint="1" * 40,
+        name="Test Set Blade",
+        level=20,
+        num_sockets=0,
+        prefix="",
+        suffix="",
+        num_enchants=0,
+        guid=f"{0x7007:016X}",
+    )
+    model = new_model(COLLECTION_COLUMNS)
+
+    fill_collection(model, [row], Catalog(synthetic_game))
+    assert model.item(0, 0).data(SET_ROLE) == "Test Set"
+
+    # And the item beside it, which belongs to no set, is not one of its rows.
+    plain = dict(row, fingerprint="2" * 40, name="Test Unique", guid=f"{0x7002:016X}")
+    fill_collection(model, [_a_row(**plain)], Catalog(synthetic_game))
+    assert model.item(0, 0).data(SET_ROLE) == ""
 
 
 def test_a_row_keeps_the_gate_beside_the_item_s_own_level(qapp):
