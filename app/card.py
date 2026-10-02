@@ -56,6 +56,7 @@ from tl2stash.card import (
     AFFIX,
     ARMOR,
     DAMAGE,
+    DAMAGE_PER_SECOND,
     Card,
     TIER_INK,
     requirements_lines,
@@ -72,6 +73,7 @@ __all__ = [
     "element_of",
     "emphasis",
     "paint_tile",
+    "plain",
 ]
 
 # -- the site's palette (``web/app.css``), by the name it gives each colour --
@@ -92,6 +94,11 @@ LABEL = "#a88054"
 #: The card's ordinary text, and the kind line's muted grey.
 BODY = "#c9c2b6"
 DIM = "#8b837b"
+#: The site's ``--gold``, which it keeps for one thing: a weapon's Damage per
+#: Second.  It is the only number on the card that is a verdict rather than a
+#: stat -- the reason a weapon is picked up at all -- and the two lines that
+#: qualify it are written in the dim above.
+GOLD = "#e3ba6b"
 #: The game's magical-item green, which is what an affix line is written in.
 MAGIC = "#7cc24a"
 MUTED = "#999999"
@@ -159,6 +166,19 @@ def mark(text: str) -> str:
 def emphasis(text: str, ink: str) -> str:
     """A whole line of the card, in ``ink`` with its numbers lifted."""
     return f'<span style="color:{ink}">{mark(text)}</span>'
+
+
+def plain(text: str, ink: str) -> str:
+    """A whole line of the card in ``ink``, with nothing lifted out of it.
+
+    For a line that is already the emphasis: a weapon's Damage per Second is
+    written in the one gold the card has, number and words together, so
+    lifting its number would lift it out of the colour -- the brightest thing
+    in the line would be the words that name the number rather than the
+    number.  The site writes this line the same way, in one colour, with the
+    words a shade quieter than the number beside them.
+    """
+    return f'<span style="color:{ink}">{html.escape(text)}</span>'
 
 
 def _serif() -> QFont:
@@ -600,9 +620,16 @@ class ItemCard(QFrame):
         column.setContentsMargins(13, 12, 13, 13)
         column.setSpacing(2)
 
+        # A weapon's output comes first under its name, and what the item asks
+        # of the character after it -- the same order ``tl2stash.card.lines``
+        # flattens them in, because the drawing and the flat list are one card.
+        first = True
+        if card.weapon_lead:
+            first = self._part(column, first)
+            for text in card.weapon_lead:
+                column.addWidget(self._lead_line(text))
         self._requires(column, card)
 
-        first = True
         for kind, found in _sections(card.blocks):
             first = self._part(column, first)
             for text in found:
@@ -636,8 +663,39 @@ class ItemCard(QFrame):
             column.addWidget(flavour)
         return body
 
+    def _lead_line(self, text: str) -> QLabel:
+        """One of the three lines a weapon leads with.
+
+        The site's own treatment of them, and its reason for it: the Damage per
+        Second is the number a weapon is chosen for, so it takes the one gold
+        the card has, and the two lines that qualify it -- how fast it swings
+        and how far it reaches -- are dim, their numbers lifted like any other
+        line's.  The dps is the one line on the card written *without* the
+        lift, because it does not need it: it is already the loudest thing
+        here, and lifting its number would take it out of the gold.
+
+        Which line is which is read off the text rather than carried beside it,
+        because the model is one list of strings and a card says what an item
+        says and nothing else.  It is the same bargain :func:`element_of` makes.
+
+        The site splits the two qualifying lines finer than this -- the band
+        word brighter than the words around it, the seconds a shade fainter
+        still -- and this does not, because the card has one rule for a number
+        in a line and one for the words around it, and a second rule for these
+        two lines would be the only place on the card where a number is not the
+        brightest thing in its line.
+        """
+        if text.endswith(DAMAGE_PER_SECOND):
+            label = QLabel(plain(text, GOLD))
+        else:
+            label = QLabel(emphasis(text, DIM))
+        label.setObjectName("lead")
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setWordWrap(True)
+        return label
+
     def _requires(self, column: QVBoxLayout, card: Card) -> None:
-        """What the item asks of the character, first under its name.
+        """What the item asks of the character, above every stat.
 
         The game writes these above every stat, and they are the one thing on
         the card that decides whether any of the rest can be used at all -- so

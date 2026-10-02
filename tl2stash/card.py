@@ -29,6 +29,7 @@ __all__ = [
     "Block",
     "Card",
     "DAMAGE",
+    "DAMAGE_PER_SECOND",
     "Rung",
     "TIER_INK",
     "TIER_KEYS",
@@ -208,6 +209,12 @@ class Card:
     how many are filled -- the gems that fill them are ``gems``, each a card of
     its own because that is how the game draws one.
 
+    ``weapon_lead`` is the three lines a weapon leads with -- its Damage per
+    Second, its attack speed and its reach -- and is empty on everything that
+    is not a weapon.  They are the item's own numbers and the first thing the
+    card shows of it, so they are a field rather than a block: a block is a
+    section of the card, and this is the headline's other half.
+
     ``set_name`` is the set the item belongs to, when it belongs to one.  It is
     not a tier: a set piece is shown as the rare or unique thing its own file
     says it is, and this is the one place the membership is drawn out -- the
@@ -251,6 +258,7 @@ class Card:
     set_ladder: tuple[Rung, ...]
     flavor: str | None
     requires: Requirements | None = None
+    weapon_lead: tuple[str, ...] = ()
 
 
 #: The two words the game writes in front of the two kinds of gate, taken off
@@ -270,6 +278,13 @@ REQUIRES_ITEM_LEVEL = "Requires item level"
 #: attributes, whichever comes first.  Drawing the two as a conjunction would
 #: be a lie about the item, so the warning is kept in the line itself.
 THE_ALTERNATIVE = "or"
+
+#: The tail of a weapon's headline line -- ``110 Damage per Second``.  Named
+#: here because two modules need it: :mod:`tl2stash.tooltip` writes the line
+#: with it, and ``app.card`` picks the line out by it to draw the one number
+#: the card reserves a colour for.  A line is a string and the window reads it
+#: as one, the same bargain ``element_of`` makes.
+DAMAGE_PER_SECOND = "Damage per Second"
 
 
 def requirements_lines(card: Card) -> list[str]:
@@ -310,6 +325,9 @@ def lines(card: Card) -> list[str]:
     out: list[str] = []
     if card.name:
         out.append(card.name)
+    # A weapon's output, first under its name: the number a weapon is chosen
+    # for is not one of its stats but what the stats are about.
+    out.extend(card.weapon_lead)
     out.extend(requirements_lines(card))
     for block in card.blocks:
         out.extend(block.lines)

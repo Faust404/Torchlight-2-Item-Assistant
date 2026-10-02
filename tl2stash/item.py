@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import struct
 from dataclasses import dataclass, field
 
 from .binary import ParseError, Reader
@@ -27,6 +28,7 @@ __all__ = [
     "Location",
     "Stat",
     "Triggerable",
+    "as_float",
     "parse_item",
 ]
 
@@ -81,6 +83,23 @@ _ITEM_TAG = "[ITEM]"
 def strip_markup(text: str) -> str:
     """Remove colour markup and the trailing NUL from a Torchlight string."""
     return _MARKUP.sub("", text).rstrip("\x00")
+
+
+def as_float(word: int | float) -> float:
+    """A save file's four bytes that are really a float.
+
+    A number this file records -- an effect's value, a share of an item's
+    damage added to it -- arrives as the integer the bytes spell, because that
+    is what the file holds: a value of 15.0 comes back as 1097859072.
+
+    A float is passed through, because not every value comes out of a save
+    file: a set's bonus is read out of the game's own data, where the same
+    four bytes arrive already unpacked.  One reader for both is what lets a
+    set bonus go through the same substitution an item's affix does.
+    """
+    if isinstance(word, float):
+        return word
+    return struct.unpack("<f", struct.pack("<I", word & 0xFFFFFFFF))[0]
 
 
 @dataclass

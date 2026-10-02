@@ -32,6 +32,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
+from .card import DAMAGE_PER_SECOND
 from .dat import (
     VAR_AFFIX,
     VAR_AFFIX_EFFECT,
@@ -71,9 +72,11 @@ from .dat import (
     VAR_MAGIC_REQUIRED,
     VAR_MAXDAMAGE,
     VAR_MINDAMAGE,
+    VAR_RANGE,
     VAR_RARITY_DMG_MOD,
     VAR_SET,
     VAR_SLOT_BASE,
+    VAR_SPEED,
     VAR_SPEED_DMG_MOD,
     VAR_STRENGTH_REQUIRED,
     VAR_UNITTYPE,
@@ -82,6 +85,7 @@ from .dat import (
     DatFile,
     DatNode,
 )
+from .item import as_float
 from .pak import PakFile, PakIndex
 from .taxonomy import canonical_kind
 
@@ -252,6 +256,110 @@ NO_MODIFIER = 100.0
 
 #: The divisor that turns an armour weight into a multiplier.
 ARMOR_SCALE = 1e6
+
+# -- what a weapon's output is -----------------------------------------------
+#
+# Three numbers a weapon is chosen for and the save file holds none of: the
+# Damage per Second, the seconds between swings, and the reach.  All three come
+# out of the item's own data file, and the field that states the speed does not
+# state seconds -- see :data:`VAR_SPEED`.
+
+#: The divisor that turns the DAT's raw ``SPEED`` into seconds per swing,
+#: written as the two whole numbers it actually is rather than as a decimal:
+#: ``(250, 3)`` reads *divided by 250 thirds*, and :meth:`GameData._swing_seconds`
+#: multiplies by the fraction's underside instead of dividing by it, which is
+#: the arithmetic that comes out whole.
+#:
+#: A constant per weapon class, measured rather than assumed: over the items
+#: the reference database and the game's own tooltips both carry, a raw speed
+#: over this reproduces the rendered seconds to within 0.005 on all but three,
+#: and those three are items whose own UNITTYPE contradicts the weapon they
+#: are.  It is *not* a one-handed/two-handed split, which is a different axis:
+#: bows and crossbows are held in two hands and divide by 125 exactly like the
+#: one-handers, and a rifle divides by 100.
+#:
+#: The archive states twelve raw speeds -- 50, 60, 70, 75, 80, 90, 100, 110,
+#: 120, 130, 140, 150 -- and over them the divisors above are the ones the
+#: data warrants: 250/3 turns 60 into 0.72 and 140 into 1.68 exactly, where
+#: the decimal 83.3333 turns them into 0.7200003 and 1.6800007.  That dust is
+#: not cosmetic.  It costs the reference two things it does not get back: the
+#: corpus comes out with 36 distinct second-values where the exact divisors
+#: give 30, and 1.6800007 is over :data:`MAX_SWING`, so a Mace of the Twin
+#: Gods loses the very lines it leads with -- which the reference then restores
+#: out of a second database, the one whose own numbers say the seconds are
+#: 1.68.  The dust also reaches the Damage per Second, because the reference
+#: divides by the unrounded value while printing the rounded one: over the
+#: 1,351 weapons it prices, its published dps is one lower than this tool's on
+#: 42, every one of them two-handed, and on 28 of those the game's own data
+#: agrees with this tool.
+SPEED_DIVISOR = {
+    "1HAXE": (125, 1),
+    "1HMACE": (125, 1),
+    "1HSWORD": (125, 1),
+    "FIST": (125, 1),
+    "WAND": (125, 1),
+    "PISTOL": (125, 1),
+    "BOW": (125, 1),
+    "CROSSBOW": (125, 1),
+    "2HAXE": (250, 3),
+    "2HMACE": (250, 3),
+    "2HSWORD": (250, 3),
+    "POLEARM": (250, 3),
+    "STAFF": (250, 3),
+    "CANNON": (1000, 11),
+    "RIFLE": (100, 1),
+}
+
+#: The class tokens a weapon's UNITTYPE is searched for, longest first so that
+#: ``1HSWORD`` wins over ``SWORD`` and ``CROSSBOW`` over ``BOW``.  The bare
+#: spellings at the end are for the weapons that carry no handedness at all --
+#: monster and NPC weapons, nearly all of which are items the game never hands
+#: a player -- and :data:`BARE_CLASS` reads those as the one-handed class of
+#: their kind.
+SPEED_CLASS_TOKENS = (
+    "1HAXE",
+    "1HMACE",
+    "1HSWORD",
+    "2HAXE",
+    "2HMACE",
+    "2HSWORD",
+    "CROSSBOW",
+    "POLEARM",
+    "PISTOL",
+    "CANNON",
+    "RIFLE",
+    "STAFF",
+    "SWORD",
+    "MACE",
+    "BOW",
+    "AXE",
+    "WAND",
+    "FIST",
+)
+
+#: What a bare class token is read as.  Axe, sword and mace are the one-handed
+#: ones; a polearm or a staff says so in its own token.
+BARE_CLASS = {"AXE": "1HAXE", "SWORD": "1HSWORD", "MACE": "1HMACE"}
+
+#: The slowest swing the game ships, and the fastest.  Every speed in the
+#: corpus sits in 0.4-1.68 -- 30 distinct values, and the reference database
+#: publishes exactly those 30, no more and no fewer -- so anything outside the
+#: range is not a speed and is dropped rather than shown as one.  The ceiling
+#: is one of the 30 rather than a round number above them: the Mace of the
+#: Twin Gods swings at exactly 1.68.
+MAX_SWING = 1.68
+
+#: The words the game puts in front of an attack speed, by the slowest swing
+#: each one covers -- the bands off the game's own tooltips, which cover all 30
+#: of its speeds with no ambiguity.  The middle one is "Average": the game has
+#: no "Normal" attack speed, and anything past the last cutoff is "Very Slow".
+SPEED_BANDS = (
+    ("Very Fast", 0.72),
+    ("Fast", 0.88),
+    ("Average", 1.08),
+    ("Slow", 1.21),
+)
+SLOWEST_BAND = "Very Slow"
 
 #: The inventory files that name a *container*.  Not the ones beside them:
 #: ``MEDIA/INVENTORY/BAG_ARMS_SLOT.DAT`` and its neighbours declare the block
@@ -1154,6 +1262,75 @@ class GameData:
                 )
         return Derived("armor", parts) if parts else None
 
+    def weapon_lead(self, item) -> tuple[str, ...]:
+        """The lines a weapon leads with, and none for anything else.
+
+        ``110 Damage per Second``, ``Fast attack speed (0.8 seconds)``,
+        ``Weapon Range 12`` -- the headline number, and the two things that
+        qualify it.  They come from three fields the save file does not hold at
+        all: the speed, which the data file states raw and a weapon class's own
+        divisor turns into seconds, the reach, and the damage the two are
+        applied to, which :meth:`derived_for` works out.
+
+        A list rather than three fields because each line stands or falls on
+        its own, which is what the reference does and what the data warrants:
+        a weapon whose damage the data does not resolve has no Damage per
+        Second to lead with and still has a swing and still reaches.  The two
+        that need the speed go together -- a dps is a damage range over a
+        swing, so with no swing there is no number to divide -- and the reach
+        needs nothing.
+
+        Empty for everything that is not a weapon, which the reach's own field
+        settles: every weapon in the archive states a ``RANGE`` and nothing
+        else does, so an item that states none -- a piece of armour, a ring, an
+        item with no data file behind it -- has nothing to lead with.
+        """
+        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
+        if data is None:
+            return ()
+
+        stated = self._inherited(data)
+        reach = _number(stated, VAR_RANGE)
+        if not reach:
+            return ()
+
+        lines: list[str] = []
+        seconds = self._swing_seconds(stated)
+        if seconds is not None:
+            dps = _damage_per_second(
+                self.derived_for(item), seconds, _flat_damage(item)
+            )
+            if dps is not None:
+                lines.append(f"{dps} {DAMAGE_PER_SECOND}")
+            lines.append(
+                f"{_speed_band(seconds)} attack speed ({_written(seconds)} seconds)"
+            )
+        lines.append(f"Weapon Range {_written(reach)}")
+        return tuple(lines)
+
+    def _swing_seconds(self, stated: dict[int, DatNode]) -> float | None:
+        """Seconds between swings, or ``None`` for a weapon that does not say.
+
+        The raw speed over its class's divisor, kept only when what comes out
+        is a speed the game could have shipped.  A raw number that names no
+        class -- or names one the table does not cover -- is nothing rather
+        than a guess: the number without its divisor is not seconds, so there
+        is no honest arithmetic that turns it into any.
+
+        The divisor is applied as its upside-down fraction -- ``raw * 3 / 250``
+        rather than ``raw / (250 / 3)``, which is the same sum and not the same
+        number: the second form lands 1.6800000000000002 on a raw 140 whose
+        seconds are exactly 1.68, and so loses a swing that sits right on the
+        ceiling.  See :data:`SPEED_DIVISOR`.
+        """
+        raw = _number(stated, VAR_SPEED)
+        divisor = SPEED_DIVISOR.get(_speed_class(_text(stated, VAR_UNITTYPE)))
+        if not raw or raw <= 0 or divisor is None:
+            return None
+        over, under = divisor
+        seconds = raw * under / over
+        return seconds if seconds <= MAX_SWING else None
+
     def requirements_for(self, item) -> Requirements | None:
         """What the item's own file says it asks of a character.
 
@@ -1553,6 +1730,102 @@ def _container_entry(data: DatFile) -> tuple[int, str] | None:
 def _percent(value: float | None) -> float:
     """A modifier stated as a percentage, or the neutral one."""
     return (NO_MODIFIER if value is None else value) / 100.0
+
+
+def _speed_class(unit_type: str | None) -> str | None:
+    """Which divisor applies to a weapon, from its own ``UNITTYPE``.
+
+    The tokens are searched longest first, so ``1HSWORD`` wins over ``SWORD``
+    and ``CROSSBOW`` over ``BOW``.  ``None`` for a field that names no weapon
+    class at all, and for an item that states none -- neither of which is a
+    weapon whose speed can be worked out.
+
+    One item in the archive is mislabelled rather than unnamed: the polearm the
+    game calls ``sturm_polearm`` states ``NORMAL SWORD`` and swings at the
+    polearm rate, so this reads it as a sword and gives it 0.8 seconds where
+    the game shows 1.2 -- the only one of the 1,351 weapons the reference
+    database prices where this tool's speed line disagrees with it.  The
+    reference fixes that with a table of names, and this does not: one item's
+    own file contradicting itself is a thing to know about, not a rule, and a
+    table of exceptions is not what the field says.
+    """
+    spelled = (unit_type or "").upper()
+    for token in SPEED_CLASS_TOKENS:
+        if token in spelled:
+            return BARE_CLASS.get(token, token)
+    return None
+
+
+def _speed_band(seconds: float) -> str:
+    """The word the game puts in front of an attack speed."""
+    for word, fastest in SPEED_BANDS:
+        if seconds <= fastest:
+            return word
+    return SLOWEST_BAND
+
+
+def _written(value: float) -> str:
+    """A number as the reference writes one: ``0.96``, ``12``, not ``12.0``.
+
+    ``%g`` rather than a format of its own because the reach is stored as a
+    32-bit float: a mace's 0.6 is in the file as 0.6000000238418579, and six
+    significant digits is what makes that read as the number the game shows.
+    """
+    return "%g" % value
+
+
+def _damage_per_second(derived: Derived | None, seconds: float, flat: int) -> int | None:
+    """A weapon's whole output: every damage type over the swing, plus the flat.
+
+    The average of each type's range, summed, over the seconds per swing,
+    rounded half *up* -- ``int(x + .5)``, because Python's ``round`` takes
+    halves to even and the game does not: Bonebreaker's 299 mean over 1.04 s is
+    287.5, and the reference reads 301 rather than 300, which is that half
+    going up and the flat 13 then added.
+
+    The flat is added to the total rather than folded into the damage before
+    the division, which is what the game does and what makes the Grimbone Wand
+    read 180 rather than 179.
+
+    ``None`` when there is no damage to divide: an item the data file gives no
+    range at all, or -- the Wraithboss weapons, the ones a monster swings --
+    one whose shares resolve to zero.  A weapon with nothing to hit for has no
+    output to state, which is not the same as an output of zero, and the
+    reference draws the same line: it writes a dps only where its mean is
+    non-zero and still writes the speed and the reach beside it.
+    """
+    if derived is None or derived.kind != "damage":
+        return None
+    mean = sum((low + high) / 2 for low, high in derived.parts.values())
+    if not mean:
+        return None
+    return int(mean / seconds + 0.5) + flat
+
+
+def _flat_damage(item) -> int:
+    """The damage the item has been *given*, summed over its elements.
+
+    One line per element on the card -- ``+13 Physical Damage`` -- and the same
+    number counted into the Damage per Second, because every one of these is
+    damage added to each hit.  It is not the weapon's own damage: the two
+    independent references both miss it, and the save file is the only place it
+    is written down.
+
+    A record's three parts are an effect, a socket and an enchantment, which
+    are three sources of one number; the player sees the total, so the total is
+    what is counted.  It is written as the whole number the card's line shows,
+    which is the ceiling -- ``format_value`` rounds a positive value up -- so
+    that the lead and the lines under it add up.
+    """
+    total = 0
+    for added in item.added_damages:
+        given = sum(
+            as_float(part)
+            for part in (added.from_effect, added.from_socket, added.from_enchant)
+        )
+        if given > 0:
+            total += math.ceil(given)
+    return total
 
 
 def _scaled(written: float, factor: int) -> int:

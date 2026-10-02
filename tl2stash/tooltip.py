@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import math
 import re
-import struct
 from typing import TYPE_CHECKING
 
 from .card import (
@@ -55,7 +54,7 @@ from .card import (
     lines,
 )
 from .dat import VAR_FLAVOR
-from .item import strip_markup
+from .item import as_float, strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
     from .gamedata import GameData, SetBonus
@@ -173,17 +172,10 @@ def format_value(value: float, precision: int = 1) -> str:
 def _as_float(word: int | float) -> float:
     """An effect value: four bytes that are really a float.
 
-    ``Item`` hands these over as integers, because that is what the file
-    holds.  A value of 15.0 arrives as 1097859072.
-
-    A float is passed through, because not every effect comes out of a save
-    file: a set's bonus is read out of the game's own data, where the same
-    four bytes arrive already unpacked.  One reader for both is what lets a
-    set bonus go through the same substitution an item's affix does.
+    The reading is ``tl2stash.item``'s, where the records that hold one are
+    defined; this name is the one the arithmetic below has always called it.
     """
-    if isinstance(word, float):
-        return word
-    return struct.unpack("<f", struct.pack("<I", word & 0xFFFFFFFF))[0]
+    return as_float(word)
 
 
 def _as_duration(seconds: float, precision: int) -> str:
@@ -562,6 +554,11 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         if item.armor not in (0, 0xFFFFFFFF):
             blocks.append((ARMOR, [f"Armor {item.armor}"]))
 
+    # A weapon's output, which is the headline's other half rather than a
+    # section: what the damage below is *for*.  Empty on everything that is
+    # not a weapon, and on a machine with no game to ask.
+    lead = data.weapon_lead(item) if data is not None else ()
+
     # Flat damage is a property of the item like any other -- it is what an
     # affix, a socket or an enchantment granted, recorded by the save file in
     # its own list -- so it is written *with* the properties rather than as a
@@ -628,6 +625,7 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         # the item's own file.  ``None`` without the game's files, and the
         # card falls back to the level the save records.
         requires=data.requirements_for(item) if data is not None else None,
+        weapon_lead=lead,
     )
 
 

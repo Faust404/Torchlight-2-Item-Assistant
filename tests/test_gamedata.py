@@ -62,7 +62,7 @@ from test_dat import (  # noqa: E402
     write_dat,
 )
 from test_pak import write_synthetic_pak  # noqa: E402
-from test_tooltip import item  # noqa: E402
+from test_tooltip import item, word  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -1117,6 +1117,132 @@ def test_a_skill_is_found_by_the_name_an_affix_shares_with_it(real_game):
 
 
 # --------------------------------------------------------------------------
+# What a weapon leads with, against the reference database
+#
+# The three lines a weapon leads with are the three numbers nothing else in
+# the tool has: the save file records a weapon's level and its own damage and
+# nothing about the swing.  Every expectation below is a line the reference
+# database publishes for the item, reached through the guid the save file
+# writes -- so agreeing with them is the game's own data agreeing, in the
+# order and the wording the player sees.
+# --------------------------------------------------------------------------
+
+
+@needs_game
+def test_a_weapon_leads_with_its_output(real_game):
+    """Three weapons with no added damage, so all three lines are the file's.
+
+    Item guid, then what ``out/items.json`` publishes as ``dps``, ``sp`` and
+    ``rng``.  The band words are not in that file -- it publishes seconds --
+    and come off the game's own tooltips: 0.8 and 0.88 are Fast (0.72 is the
+    last Very Fast), 0.56 is Very Fast, and the ranges are the floats the file
+    stores, printed by ``%g``.
+    """
+    expected = {
+        8006826267664839987: ("The Emperor's Wrath", "110", "0.8", "Fast", "12"),
+        15175802192847760921: ("The Scorpion", "226", "0.88", "Fast", "12"),
+        18055960497465174491: ("Bugstomper", "434", "0.56", "Very Fast", "0.5"),
+    }
+    for guid, (name, dps, seconds, band, reach) in expected.items():
+        lead = real_game.weapon_lead(item(guid=guid))
+        assert lead == (
+            f"{dps} Damage per Second",
+            f"{band} attack speed ({seconds} seconds)",
+            f"Weapon Range {reach}",
+        ), name
+
+
+@needs_game
+def test_the_flat_damage_an_item_carries_is_counted_whole_into_its_output(real_game):
+    """Two weapons whose reference dps is not their damage over their swing.
+
+    The Grimbone Wand's own range is 126-142 and 14-16, and 149 over 0.96 is
+    155.208 -- which is the tool's ``155``, and not the ``180`` the reference
+    publishes.  The 25 between them is the ``+25 Physical Damage`` the wand has
+    been given, added to the total rather than folded in before the division.
+    Bonebreaker is the same arithmetic with a half in it: its mean 299 over
+    1.04 s is 287.5, and 301 is that half rounded *up* (giving 288) plus the
+    flat 13.  Both flat numbers are the ones the items carry today, read out of
+    the registry the tool keeps.
+
+    Nothing but the save file has either number: the two flat lines are in the
+    item's own added-damage records, so they are passed in here the way a
+    registry row would carry them.
+    """
+    from tl2stash.item import AddedDamage
+
+    flat = {
+        9801002217302452269: (25.0, 180, "Grimbone Wand"),
+        6933962607845725281: (13.0, 301, "Bonebreaker"),
+    }
+    for guid, (damage, dps, name) in flat.items():
+        it = item(guid=guid, added_damages=[AddedDamage(0, word(damage), 0, 0x00)])
+        assert real_game.weapon_lead(it)[0] == f"{dps} Damage per Second", name
+
+        # Without it the number is the damage over the swing alone, which is
+        # what a weapon nobody has enchanted leads with.
+        bare = item(guid=guid)
+        assert bare.added_damages == []
+        assert int(real_game.weapon_lead(bare)[0].split()[0]) < dps, name
+
+
+@needs_game
+def test_a_swing_that_sits_on_the_ceiling_is_still_a_swing(real_game):
+    """The Mace of the Twin Gods, at exactly the slowest speed the game ships.
+
+    Its raw ``SPEED`` is 140 and its class divides by 250 thirds, which is
+    1.68 -- the ceiling itself, not past it.  The reference database reaches
+    the same two lines only by falling back to a second database, because it
+    divides by the decimal 83.3333 instead: 140 over that is 1.6800007, which
+    is past the ceiling and takes the whole lead with it.  So this is the item
+    that pins the divisors being the fractions they are.
+
+    Its dps is 575 there; 410 of it is the two 230-459 lines over the swing,
+    and the other 165 the flat damage it carries.
+    """
+    from tl2stash.item import AddedDamage
+
+    # Written negative, the way the archive spells this one's id.
+    it = item(guid=-621765789189705235, added_damages=[AddedDamage(0, word(165.0), 0, 0x00)])
+    assert real_game.weapon_lead(it) == (
+        "575 Damage per Second",
+        "Very Slow attack speed (1.68 seconds)",
+        "Weapon Range 0.8",
+    )
+
+
+@needs_game
+def test_a_weapon_with_no_damage_to_hit_for_still_leads_with_its_swing(real_game):
+    """Each line stands on its own field, as the reference draws them.
+
+    A greatmace the netherim swing states a speed and a reach and no damage at
+    all -- the range is rolled when the creature spawns, and no file holds it
+    -- so there is no Damage per Second to lead with and still something to
+    say.  The reference publishes the same shape for it: ``sp 1.32`` and
+    ``rng 0.8``, and no ``dps`` key at all.  Writing a zero instead would be a
+    claim about the weapon rather than the absence of one.
+    """
+    lead = real_game.weapon_lead(item(guid=792130739766287015))
+
+    assert lead == ("Very Slow attack speed (1.32 seconds)", "Weapon Range 0.8")
+    assert not any(line.endswith("Damage per Second") for line in lead)
+
+
+@needs_game
+def test_what_is_not_a_weapon_leads_with_nothing(real_game):
+    """The reach is the field that tells the two apart.
+
+    ``RANGE`` is stated on all 1,419 weapons in the archive and on nothing
+    else -- no piece of armour, no ring, no potion -- so an item that states
+    none has no lead.  The Chokehold is the armour piece the damage tests
+    already use, and an unknown guid is an item with no file behind it.
+    """
+    assert real_game.weapon_lead(item(guid=-7711194175558023803)) == ()
+    assert real_game.weapon_lead(item(guid=0)) == ()
+    assert real_game.weapon_lead(item(guid=0xDEADBEEF)) == ()
+
+
+# --------------------------------------------------------------------------
 # What an effect record names, settled against the game's own affix files
 # --------------------------------------------------------------------------
 
@@ -1204,6 +1330,12 @@ def test_bashdrill_reads_as_the_game_shows_it(real_game):
     """
     assert _tooltip(_bashdrill(), real_game) == [
         "Bashdrill",
+        # The weapon's own output, which the save file does not hold: the
+        # reference database has Bashdrill at 326, 0.48 s and range 0.5, and
+        # ``fist_u04.dat`` is where all three come from.
+        "326 Damage per Second",
+        "Very Fast attack speed (0.48 seconds)",
+        "Weapon Range 0.5",
         "Requires Level 51",
         "or 81 Strength and 40 Dexterity",
         "Physical Damage 52-74",

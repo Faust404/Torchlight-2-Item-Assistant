@@ -87,9 +87,11 @@ __all__ = [
     "VAR_MAXDAMAGE",
     "VAR_MINDAMAGE",
     "VAR_NAME",
+    "VAR_RANGE",
     "VAR_RARITY_DMG_MOD",
     "VAR_SET",
     "VAR_SLOT_BASE",
+    "VAR_SPEED",
     "VAR_SPEED_DMG_MOD",
     "VAR_STRENGTH_REQUIRED",
     "VAR_UNIDENTIFIED_NAME",
@@ -297,6 +299,19 @@ VAR_MAXDAMAGE = field_hash("MAXDAMAGE")
 #: class's own speed, one for its rarity.  Both default to 100.
 VAR_SPEED_DMG_MOD = field_hash("SPEED_DMG_MOD")
 VAR_RARITY_DMG_MOD = field_hash("RARITY_DMG_MOD")
+
+#: How fast the weapon swings, stated raw: the field is not seconds, and the
+#: divisor that turns it into the seconds the player is shown is a constant per
+#: weapon class -- the Grimbone Wand's 120 is 0.96 s, and 125 is the divisor
+#: every one-handed class uses, wands and fists included.  The rule and the
+#: divisors are in :data:`~tl2stash.gamedata.SPEED_DIVISOR`.
+VAR_SPEED = field_hash("SPEED")
+
+#: How far the weapon reaches, in the game's own units: 0.5 for a fist, 0.6
+#: for a mace, 8 for a wand, 12 for a crossbow.  Stored as a float, so a stored
+#: 0.6 comes back as 0.6000000238418579.  Absent on everything that is not a
+#: weapon, which is how a piece of armour is told from one.
+VAR_RANGE = field_hash("RANGE")
 
 #: How much of the damage is of each element.  They are shares of the whole,
 #: not absolute numbers, which is why they are read as a group.

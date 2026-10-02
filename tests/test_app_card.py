@@ -35,6 +35,8 @@ from PySide6.QtGui import QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from app.card import (  # noqa: E402
+    DIM,
+    GOLD,
     HEAD,
     MARK,
     MUTED,
@@ -46,11 +48,13 @@ from app.card import (  # noqa: E402
     element_of,
     emphasis,
     mark,
+    plain,
 )
 from tl2stash.card import (  # noqa: E402
     AFFIX,
     ARMOR,
     DAMAGE,
+    DAMAGE_PER_SECOND,
     Block,
     Card,
     Rung,
@@ -297,6 +301,87 @@ def test_what_was_added_to_a_weapon_is_a_property_and_not_a_damage_line(qapp):
         )
     )
     assert len(drawn.findChildren(Hairline)) == 1
+
+
+def test_a_weapon_leads_with_its_output_over_its_own_stats(qapp):
+    """The three lines a weapon leads with, first under its name.
+
+    They take no rule and no heading of their own: the number a weapon is
+    chosen for is not one of its stats, so it belongs to the headline rather
+    than to a section of the card -- but the damage *is* a section, so the
+    rule above it is still drawn, and the lead is what it is drawn under.
+    That is the reference's own card: the three lines, a rule, the damage.
+    """
+    drawn = ItemCard(
+        card(
+            weapon_lead=(
+                "326 Damage per Second",
+                "Very Fast attack speed (0.48 seconds)",
+                "Weapon Range 0.5",
+            ),
+            blocks=(
+                Block(DAMAGE, ("Physical Damage 52-74",)),
+                Block(AFFIX, ("Silence for 1 sec.",)),
+            ),
+        )
+    )
+
+    assert texts(drawn, "lead") == [
+        plain("326 Damage per Second", GOLD),
+        emphasis("Very Fast attack speed (0.48 seconds)", DIM),
+        emphasis("Weapon Range 0.5", DIM),
+    ]
+    # One rule under the lead, one under the damage: two sections below it,
+    # and nothing above the lead itself.
+    assert len(drawn.findChildren(Hairline)) == 2
+
+    # And a card with no lead draws none: an item the data files know nothing
+    # about, or one that is not a weapon at all.
+    assert texts(ItemCard(card()), "lead") == []
+
+
+def test_the_number_a_weapon_is_chosen_for_is_the_one_in_gold(qapp):
+    """The site's ``--gold`` is kept for this and nothing else on the card.
+
+    A weapon's Damage per Second is a verdict rather than a stat -- the reason
+    it is picked up at all -- and the two lines under it are what qualifies it,
+    so they are written in the dim the rest of the card's side-notes use.
+
+    The dps line is the one line drawn without the lift of :func:`emphasis`,
+    and that is the point of it: the number is already the loudest thing in
+    the line, so lifting it out would lift it out of the gold.
+    """
+    drawn = ItemCard(
+        card(
+            weapon_lead=(
+                "326 Damage per Second",
+                "Very Fast attack speed (0.48 seconds)",
+                "Weapon Range 0.5",
+            )
+        )
+    )
+    lead = texts(drawn, "lead")
+
+    assert GOLD in lead[0]
+    assert DIM not in lead[0], "the dps line is not one of the qualifying lines"
+    assert HEAD not in lead[0], "the gold line lifts nothing out of itself"
+    assert HEAD in lead[1], "and the lines under it lift their numbers as usual"
+    assert all(DIM in line for line in lead[1:])
+    # The card reserves gold for the lead: nothing else is written in it.
+    elsewhere = [
+        label.text()
+        for label in drawn.findChildren(QLabel)
+        if label.objectName() != "lead"
+    ]
+    assert not any(GOLD in text for text in elsewhere)
+
+
+def test_the_line_that_leads_is_read_off_the_text_and_not_beside_it(qapp):
+    """The model is one list of strings, so which line is the dps is the line's
+    own tail -- the same bargain :func:`element_of` makes with an element."""
+    assert DAMAGE_PER_SECOND in texts(
+        ItemCard(card(weapon_lead=(f"110 {DAMAGE_PER_SECOND}",))), "lead"
+    )[0]
 
 
 def test_what_the_item_asks_of_the_character_is_drawn_under_its_name(qapp):

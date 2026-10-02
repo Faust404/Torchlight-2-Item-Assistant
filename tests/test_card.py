@@ -294,6 +294,47 @@ def test_the_flat_lines_are_the_card_flattened():
     ]
 
 
+@needs_game
+def test_a_weapon_s_output_stands_between_its_name_and_its_gate(real_game):
+    """The lead is the headline's other half, and it is drawn as one.
+
+    Under the name and over the requirements, which is where the reference
+    puts it and what the game's own item page does: the number a weapon is
+    chosen for is not one of its stats, so it takes no rule and no heading,
+    and it is not part of the headline either -- it is a whole line about the
+    item rather than a word beside its name.
+
+    It is a field on the card rather than a block, which is the same
+    distinction the level requirement makes: a block is a *section* of stats,
+    and neither of these is one.
+    """
+    card = build(_bashdrill(), real_game)
+
+    assert card.weapon_lead == (
+        "326 Damage per Second",
+        "Very Fast attack speed (0.48 seconds)",
+        "Weapon Range 0.5",
+    )
+    in_blocks = [line for block in card.blocks for line in block.lines]
+    assert not any(line.endswith("Damage per Second") for line in in_blocks)
+    assert lines(card)[:4] == ["Bashdrill", *card.weapon_lead]
+
+
+def test_an_item_that_is_not_a_weapon_leads_with_nothing():
+    """Everything the card draws without the game's data has no lead either.
+
+    A weapon's output is worked out from the item's data file and the save
+    file holds none of it, so an item with no file behind it -- or a piece of
+    armour, which has a file and states no swing -- has no lines here at all.
+    """
+    assert build(item("Test Blade", level=7, max_damage=72), None).weapon_lead == ()
+    assert lines(build(item("Test Blade", level=7, max_damage=72), None)) == [
+        "Test Blade",
+        "Requires Level 7",
+        "Damage 72",
+    ]
+
+
 # --------------------------------------------------------------------------
 # What the item asks of the character who would use it
 # --------------------------------------------------------------------------
@@ -412,7 +453,9 @@ def test_a_real_item_s_gate_reaches_the_card(real_game):
     card = build(_bashdrill(), real_game)
 
     assert card.requires is not None
-    assert lines(card)[1:3] == [
+    # Under the weapon's output, which is what a fist leads with: the whole
+    # card is name, lead, gate, stats, and this is the gate's place in it.
+    assert lines(card)[4:6] == [
         "Requires Level 51",
         "or 81 Strength and 40 Dexterity",
     ]
