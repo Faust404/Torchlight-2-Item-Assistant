@@ -34,18 +34,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtCore import QRect, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QPalette, QStandardItem  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QGroupBox,
     QStyle,
     QStyleFactory,
     QStyleOptionSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
 
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
-from app.filters import WASH, FilterBar  # noqa: E402
+from app.filters import INSET, WASH, FilterBar  # noqa: E402
 from app.theme import CHALK, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
@@ -731,6 +734,69 @@ def test_the_two_boxes_hold_the_controls_they_are_named_for(qapp):
     low, to, high = _contents(bar.level_box)
     assert (low, high) == (bar.low, bar.high)
     assert to.text() == "to"
+
+
+def test_the_inset_is_what_a_group_box_puts_in_front_of_its_contents(themed):
+    """Where the row stands, measured against the thing it lines up with.
+
+    The bar is the collection box's *sibling* rather than its content -- the
+    pane stacks the two -- so the only way the search box can stand over the
+    cards' column is for the row's own inset to be the little a group box
+    leaves inside itself.  Which is :data:`app.filters.INSET`, and this is
+    that claim stated against a real box rather than against the number twice.
+
+    A *child* box, as the three panes are: a group box that is a window of its
+    own is laid out with a window's own margins, and would measure two pixels
+    wider than this row has any reason to be.
+    """
+    host = QWidget()
+    host.resize(400, 300)
+    box = QGroupBox("In the tool", host)
+    inside = QWidget(box)
+    QVBoxLayout(box).addWidget(inside)
+    QVBoxLayout(host).addWidget(box)
+    host.show()
+    themed.processEvents()
+
+    assert inside.mapTo(box, QPoint(0, 0)).x() == INSET, (
+        "a group box does not put the row's inset in front of its contents"
+    )
+
+
+def test_the_search_box_takes_every_width_the_row_has_over(themed):
+    """The user's other half of the request: the box is widened, and this is
+    where a wider pane has to put the width.
+
+    Of the four controls in the row only one is worth widening -- the two
+    facet boxes are as wide as the words in them, which is their own test, and
+    the reset at the end is a button -- so the width a wide window leaves over
+    belongs in the search box rather than as a gap between the controls, which
+    is what the user was looking at when they asked for this.  Themed, so that
+    the widths the row starts with are the ones the application ships rather
+    than whatever font the machine running the tests happens to have.
+    """
+    bar = _bar()
+    bar.show()
+    bar.resize(1500, 44)
+    themed.processEvents()
+
+    narrow = bar.search.width()
+    others = [bar.rarity_box.width(), bar.level_box.width(), bar.clear_button.width()]
+    assert narrow > bar.search.minimumWidth(), (
+        "the box opened on its floor, so nothing about its width can be read here"
+    )
+
+    bar.resize(1900, 44)
+    themed.processEvents()
+
+    assert bar.search.width() == narrow + 400, (
+        "the width the row gained did not all reach the search box"
+    )
+    assert [
+        bar.rarity_box.width(),
+        bar.level_box.width(),
+        bar.clear_button.width(),
+    ] == others, "a control that is not the search box grew with the row"
 
 
 def test_a_box_is_as_wide_as_what_is_in_it_and_no_wider(themed):

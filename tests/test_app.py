@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 import app.window as window_module  # noqa: E402
+from app.filters import INSET  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
 
 #: The real search, kept before any fixture can stand in front of it.
@@ -223,6 +224,36 @@ def test_the_filters_stand_over_the_pane_they_narrow(window):
     # And nothing of them is left in the window's own column, which is the
     # toolbar and the splitter.
     assert window.centralWidget().layout().indexOf(window.filters) == -1
+
+
+def test_the_row_stands_in_where_the_box_it_is_over_stands_out(window):
+    """The user's nudge, which is the row lining up with the cards under it.
+
+    The bar and the collection box are two children of one column, so the row
+    is inset from the pane's edge by exactly what a group box puts in front of
+    its contents -- :data:`app.filters.INSET`, measured against a real box in
+    ``tests/test_app_filters.py`` -- and not by that twice: the box is flush
+    with the pane's edge and the inset is the row's own.  Where three widgets
+    sit is most of what there is to say about a row like this, and a pane that
+    grew a margin or a box that no longer filled it would be the row drifting
+    off the cards with nothing else in the suite saying so.
+    """
+    window.show()
+    QApplication.processEvents()
+
+    pane = window.collection_pane
+    bar = window.filters.mapTo(pane, window.filters.rect().topLeft())
+    box = window.collection_group.mapTo(
+        pane, window.collection_group.rect().topLeft()
+    )
+    search = window.filters.search.mapTo(
+        pane, window.filters.search.rect().topLeft()
+    )
+
+    assert (bar.x(), box.x()) == (0, 0), (
+        "the row and the box no longer start on the pane's own edge"
+    )
+    assert search.x() == INSET, "the row is not inset from the box's frame"
 
 
 def test_the_collection_lists_only_what_the_tool_holds(window, monkeypatch):

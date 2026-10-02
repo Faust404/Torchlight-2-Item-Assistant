@@ -56,6 +56,22 @@ __all__ = ["FilterBar", "SpinBox"]
 #: thing in the chip.
 WASH = 77
 
+#: How far the row stands in from the left edge of the pane it is over.  The
+#: bar is the collection box's *sibling* rather than its content -- the pane
+#: stacks the two -- so with no inset the search box, which is the first
+#: control in the row, would stand over the box's frame while everything the
+#: box holds begins a little further in.  The inset is that little further:
+#: the nine pixels a layout leaves inside a group box -- a child box, as the
+#: three panes are; a box that is a window of its own is given a window's own
+#: margins, two pixels more -- and the one-pixel border the sheet draws round
+#: it.  The user's nudge, in other words, is the row lining up with what it is
+#: over, and ``tests/test_app_filters.py`` measures it against a real box
+#: rather than against the 10 written down twice.
+#:
+#: The left only.  What stands at the right end of the row is the reset, and a
+#: reset belongs under the pane's corner rather than over its contents.
+INSET = 10
+
 #: The two white steppers: six pixels across at the base and three rows deep,
 #: with each edge placed half a pixel off the grid.  That last is the whole of
 #: the geometry's care: a triangle of a dozen pixels whose edges land on whole
@@ -186,7 +202,7 @@ class FilterBar(QWidget):
         self._updating = False
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(INSET, 0, 0, 0)
         row.setSpacing(6)
 
         self.search = QLineEdit()
@@ -203,13 +219,23 @@ class FilterBar(QWidget):
         # what set the window's own minimum width.  Every pixel of floor here
         # is a pixel the window cannot open narrower, and the game's list
         # beside it is what pays for that; 180 still leaves the box readable.
+        #
+        # It is a floor and not the width: the box takes every pixel the row
+        # is not already spending (below), so it is as wide as the pane has
+        # room for and this is only what it cannot be squeezed under.
         self.search.setMinimumWidth(180)
         self.search.setToolTip(
             "Show only the items whose name contains this.\n"
             "It narrows what the ticks beside it leave."
         )
         self.search.textChanged.connect(self._moved)
-        row.addWidget(self.search)
+        # The one control here that is worth widening, so it is the one that
+        # takes what the row has over.  The two boxes beside it are as wide as
+        # the words in them and no wider -- that is their own test -- and the
+        # reset at the far end is a button, so what is left of a wide pane
+        # lands here rather than as a gap in the middle of the bar, which is
+        # what the user was looking at when they asked for this.
+        row.addWidget(self.search, 1)
 
         row.addSpacing(10)
         self.chips: dict[str, QCheckBox] = {}
@@ -230,7 +256,6 @@ class FilterBar(QWidget):
         )
         row.addWidget(self.level_box)
 
-        row.addStretch(1)
         self.clear_button = QPushButton("Clear filters")
         self.clear_button.setToolTip("Untick everything, in the bar and in the rail.")
         self.clear_button.clicked.connect(self.reset)
