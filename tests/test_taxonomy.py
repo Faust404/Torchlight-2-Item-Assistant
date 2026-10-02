@@ -87,6 +87,21 @@ def test_every_kind_the_game_has_is_in_one_of_the_named_groups(real_game):
     socketables = kinds.get("Socketable", 0) + sum(kinds[e] for e in embers)
     assert socketables == 178, "the socketable files no longer number what they did"
 
+    # The potion family, the same kind of claim: the game writes six words
+    # where the reference database has two, and all six are real in this
+    # archive -- 56 potion files and 7 scroll files, counted by the sweep.
+    family = {
+        "Potion": 32,
+        "Healthpotion": 8,
+        "Manapotion": 8,
+        "Rejuvpotion": 8,
+        "Scroll": 6,
+        "Identify Scroll": 1,
+    }
+    for word, count in family.items():
+        assert kinds.get(word) == count, f"{word} no longer numbers {count} files"
+    assert sum(family.values()) == 63, "the potion and scroll files moved"
+
     # And the sweep is reading the same tree the tool does: if it were not,
     # UNIQUECANNON would still be split into a tier and no kind.
     assert "Uniquecannon" not in kinds
@@ -155,8 +170,58 @@ def test_the_embers_are_socketables():
         assert group_of(ember) == ("Misc", None)
 
 
+def test_the_potion_family_is_one_kind_each():
+    """Six of the game's kind words are two of the reference's.
+
+    ``HEALTHPOTION``, ``MANAPOTION`` and ``REJUVPOTION`` are three kinds of
+    eight files each where the reference database has the one ``Potion``, and
+    ``IDENTIFY SCROLL`` is one file where it has the one ``Scroll``.  A player
+    browsing for a potion means all four words, and the reference's own records
+    carry both spellings of each: ``ut: "MANAPOTION"`` with ``t: "Potion"``.
+    """
+    for word in ("Healthpotion", "Manapotion", "Rejuvpotion"):
+        assert canonical_kind(word) == "Potion"
+        assert group_of(word) == ("Misc", None)
+    assert canonical_kind("Identify Scroll") == "Scroll"
+    assert group_of("Identify Scroll") == ("Misc", None)
+
+    # The plain words still mean themselves, and a kind that merely *sounds*
+    # like one is untouched.
+    assert canonical_kind("Potion") == "Potion"
+    assert canonical_kind("Scroll") == "Scroll"
+    assert canonical_kind("Healthpotionish") == "Healthpotionish"
+
+
+def test_misc_holds_one_potion_kind_and_one_scroll_kind():
+    """The four dead leaves are out of the list, and the two live ones stay.
+
+    ``Healthpotion``, ``Manapotion``, ``Rejuvpotion`` and ``Identify Scroll``
+    are absent from :data:`TYPE_GROUPS` for the same reason the embers are --
+    :data:`KIND_ALIASES` is where they are made one with ``Potion`` and
+    ``Scroll``.  Left in the list they would be four leaves the archive can no
+    longer fill, beside the two that hold everything.
+    """
+    misc = next(kinds for group, _, kinds in TYPE_GROUPS if group == "Misc")
+    assert [k for k in misc if "potion" in k.lower()] == ["Potion"]
+    assert [k for k in misc if "scroll" in k.lower()] == ["Scroll"]
+
+    # The order is the reference's, with the four spellings it does not have
+    # taken out: the rail draws Misc in exactly this order.
+    assert misc == (
+        "Spell",
+        "Socketable",
+        "Map",
+        "Fish",
+        "Potion",
+        "Gold",
+        "Scroll",
+        "Item",
+        "Dynamite",
+    )
+
+
 def test_canonical_kind_leaves_every_other_kind_alone():
-    """It renames four words, and the guard is that it renames nothing else."""
+    """It renames eight words, and the guard is that it renames nothing else."""
     assert canonical_kind("Socketable") == "Socketable"
     assert canonical_kind("1H Sword") == "1H Sword"
     assert canonical_kind("Shoulder Armor") == "Shoulder Armor"

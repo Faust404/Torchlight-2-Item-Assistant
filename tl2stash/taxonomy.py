@@ -27,6 +27,18 @@ Socketable, and measured over the archive the two spellings come to 178 files
 -- exactly its count -- so they are one kind, and :data:`KIND_ALIASES` is where
 they are made one.
 
+The potion family is the fourth case and the largest: the game writes
+``HEALTHPOTION``, ``MANAPOTION`` and ``REJUVPOTION`` as kinds of their own --
+eight files each -- beside the plain ``POTION`` kind's 32, and it writes
+``IDENTIFY SCROLL`` beside ``SCROLL``.  The reference database has one ``Potion``
+type and one ``Scroll``, and its own records say so: ``Health Potion`` and
+``Mana Potion`` both carry ``ut: "HEALTHPOTION"``/``"MANAPOTION"`` with
+``t: "Potion"``, and ``Identify Scroll`` carries ``ut: "IDENTIFY SCROLL"`` with
+``t: "Scroll"``.  So the six words are three kinds and two here, made one in
+:data:`KIND_ALIASES` the same way the embers are.  Which potion it is stays on
+the item's *name* -- ``Mana Potion``, ``Grand Health Potion`` -- which is where
+a player reads it anyway.
+
 Qt-free, like the rest of ``tl2stash``: this says how the game's kinds group,
 and ``app.sidebar`` says what that looks like.
 """
@@ -72,6 +84,14 @@ OTHER = "Other"
 #: the two spellings come to here.  So an ember is a socketable, and the alias
 #: is written down once rather than spelled out four times in the lists below.
 #:
+#: The potion family is the same story told twice more.  ``HEALTHPOTION``,
+#: ``MANAPOTION`` and ``REJUVPOTION`` are three kinds of eight files each where
+#: the reference database has the one ``Potion`` -- its own records carry the
+#: game's ``ut`` token and the reference's ``t: "Potion"`` side by side -- and
+#: ``IDENTIFY SCROLL`` is one file where it has the one ``Scroll``.  A player
+#: browsing for a potion wants the 32 plain potions and the 24 of the three
+#: family names in one leaf, not four.
+#:
 #: Upper-cased like the rest of the lookup, so a spelling difference in case
 #: cannot split the leaf in two.
 KIND_ALIASES: dict[str, str] = {
@@ -79,6 +99,10 @@ KIND_ALIASES: dict[str, str] = {
     "CHAOS EMBER": "Socketable",
     "IRON EMBER": "Socketable",
     "VOID EMBER": "Socketable",
+    "HEALTHPOTION": "Potion",
+    "MANAPOTION": "Potion",
+    "REJUVPOTION": "Potion",
+    "IDENTIFY SCROLL": "Scroll",
 }
 
 #: Every kind of thing the game has, by the group it belongs to.
@@ -96,7 +120,9 @@ KIND_ALIASES: dict[str, str] = {
 #: The four ember kinds are deliberately absent: they are one kind with
 #: ``Socketable``, and :data:`KIND_ALIASES` is where they are made one.  Listed
 #: here they would be four leaves of eight items each, beside the one leaf
-#: holding the 146 they belong with.
+#: holding the 146 they belong with.  The three potion family names and
+#: ``Identify Scroll`` are absent for the same reason, and ``Misc`` below reads
+#: the way the reference database's own list does without them.
 #:
 #: The empty kind is deliberately absent: see :func:`group_of`.
 TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
@@ -168,12 +194,8 @@ TYPE_GROUPS: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "Map",
             "Fish",
             "Potion",
-            "Healthpotion",
-            "Manapotion",
-            "Rejuvpotion",
             "Gold",
             "Scroll",
-            "Identify Scroll",
             "Item",
             "Dynamite",
         ),
@@ -193,11 +215,13 @@ _BY_KIND: dict[str, tuple[str, str | None]] = {
 def canonical_kind(kind: str) -> str:
     """The one word for a kind the game spells more than one way.
 
-    ``canonical_kind('Chaos Ember')`` is ``'Socketable'`` and every other kind
+    ``canonical_kind('Chaos Ember')`` is ``'Socketable'``,
+    ``canonical_kind('Healthpotion')`` is ``'Potion'``, and every other kind
     comes back untouched.  It is applied where a kind is *read* -- see
     :func:`tl2stash.gamedata._appearance` -- as well as by :func:`group_of`, so
     the rail, the filter and the card's type line all say the same word; the
-    item's own name, ``Chaos Ember``, is where the ember stays named.
+    item's own name, ``Chaos Ember`` or ``Grand Health Potion``, is where the
+    item stays named.
     """
     return KIND_ALIASES.get(kind.upper(), kind)
 

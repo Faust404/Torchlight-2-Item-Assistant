@@ -1760,6 +1760,66 @@ def test_an_ember_reads_as_the_socketable_it_is(real_game):
     assert appearance.type_name == "Socketable"
 
 
+#: The six kind words the game uses for what the reference database calls two
+#: things, and the word each one reads as.  ``read_unit_type`` spells the kind
+#: out, so these are keys in their readable form; the sweep upper-cases.
+_POTION_WORDS = {
+    "Potion": "Potion",
+    "Healthpotion": "Potion",
+    "Manapotion": "Potion",
+    "Rejuvpotion": "Potion",
+    "Scroll": "Scroll",
+    "Identify Scroll": "Scroll",
+}
+
+
+@needs_game
+def test_the_potion_family_reads_as_the_kinds_the_reference_has(real_game):
+    """Every potion and scroll file in the archive, card by card.
+
+    The archive writes ``HEALTHPOTION``, ``MANAPOTION`` and ``REJUVPOTION`` as
+    kinds of their own -- eight files each -- beside the plain ``POTION``
+    kind's 32, and ``IDENTIFY SCROLL`` beside ``SCROLL``.  The reference
+    database has one ``Potion`` type and one ``Scroll``, and its own records
+    carry both spellings at once: ``Health Potion`` is ``ut:
+    "HEALTHPOTION"`` with ``t: "Potion"``, ``Identify Scroll`` is ``ut:
+    "IDENTIFY SCROLL"`` with ``t: "Scroll"``.
+
+    Every file of the six words is read here rather than a sample of them,
+    because the failure this guards against is one spelling left out of the
+    alias table -- which would leave a leaf of eight items standing alone in
+    the rail, which is the thing the change is about.  The kind is read out of
+    the item's own file and the type line out of the tool, so the expectation
+    is the game's.
+    """
+    from tl2stash.pak import PakIndex
+
+    seen: dict[str, int] = {}
+    for entry in PakIndex.read(archive_path(real_game.install)).entries:
+        if not entry.startswith("MEDIA/UNITS/ITEMS/") or not entry.endswith(".DAT"):
+            continue
+        stated = real_game._item_files.get(entry.upper())
+        if stated is None:
+            continue
+        unit_type = _inherited_text(real_game, stated.root, VAR_UNITTYPE)
+        if not unit_type:
+            continue
+        kind = read_unit_type(unit_type)[1]
+        if kind not in _POTION_WORDS:
+            continue
+        guid = _inherited_text(real_game, stated.root, VAR_UNIT_GUID)
+        assert guid, f"{entry} states {unit_type} and no guid"
+
+        appearance = real_game.appearance_for(item(guid=int(guid) & 0xFFFFFFFFFFFFFFFF))
+
+        assert appearance is not None, entry
+        assert appearance.type_name == _POTION_WORDS[kind], (entry, unit_type)
+        seen[kind] = seen.get(kind, 0) + 1
+
+    assert set(seen) == set(_POTION_WORDS), "a spelling left the archive"
+    assert sum(seen.values()) == 63, f"the potion and scroll files moved: {seen}"
+
+
 #: The embers' two pools, as the reference database's socketables page writes
 #: them: an ``Armor / Trinket`` column and a ``Weapon`` column, each bonus by
 #: the name the archive's own affix carries for it.  Nothing else in the world
