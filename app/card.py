@@ -53,14 +53,16 @@ from PySide6.QtWidgets import (
 )
 
 from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, TIER_INK
-from tl2stash.icons import IconLibrary
+from tl2stash.icons import ELEMENT_MARKS, IconLibrary, Placement
 
 __all__ = [
     "STYLE",
     "IconCache",
     "IconTile",
     "ItemCard",
+    "MARK",
     "TIER_INK",
+    "element_of",
     "emphasis",
     "paint_tile",
 ]
@@ -162,6 +164,72 @@ def _serif() -> QFont:
     return font
 
 
+#: How big an element mark is drawn: the height of a stat line, so that a mark
+#: sits *in* its line rather than over it.  The game's own tiles are 27x29 --
+#: drawn at their own size they would be the loudest thing on the card, and the
+#: reference draws the same five at 15x16, which is legible on a web page and
+#: a little small for a glyph that is the point of the line.
+MARK = (18, 19)
+
+
+def element_of(text: str, kind: str) -> str | None:
+    """Which element a damage or armour line is about, or ``None``.
+
+    Read off the line rather than carried with it, which is a deliberate
+    bargain: the lines are :mod:`tl2stash.card`'s -- one list of strings that
+    the tooltip, the tests and the card all read -- and hanging an element on
+    each one would make the card's model richer than the item's own text.
+    The wording is this module's sibling's, so what the line leads with is
+    knowable: an element is the first word (``Fire Damage 52-74``), the second
+    on a line that leads with its value (``+13 Physical Damage``), and absent
+    on ``Damage 20`` -- which is physical, and is written without the word
+    precisely because saying so says nothing.
+
+    ``kind`` is the guard: only the damage, armour and added-damage blocks are
+    written this way, so an affix that happens to begin with a colour --
+    ``Fire Damage Taken is reduced by 10%`` -- is not a damage line and takes
+    no mark.
+    """
+    if kind not in _NUMERIC:
+        return None
+    words = text.lower().split()
+    if not words:
+        return None
+    if words[0] in ELEMENT_MARKS:
+        return words[0]
+    if len(words) > 1 and words[1] in ELEMENT_MARKS:
+        return words[1]
+    return "physical" if words[0] in ("damage", "armor") else None
+
+
+def _marked(picture: QPixmap, label: QLabel, indent: int) -> QWidget:
+    """A stat line with its element's mark in front of it.
+
+    Two widgets rather than one, because a picture cannot go in a label's
+    text: Qt will lay out a pixmap and a sentence side by side only if it is
+    given two things to lay out, so the row is built here.  The mark is pinned
+    to the top rather than centred -- a stat long enough to wrap would
+    otherwise leave its mark floating halfway down the card.
+    """
+    row = QWidget()
+    line = QHBoxLayout(row)
+    line.setContentsMargins(indent, 2, 0, 0)
+    line.setSpacing(5)
+
+    mark = QLabel()
+    mark.setObjectName("emark")
+    mark.setPixmap(picture)
+    mark.setFixedSize(picture.size())
+
+    holder = QVBoxLayout()
+    holder.setContentsMargins(0, 0, 0, 0)
+    holder.addWidget(mark)
+    holder.addStretch(1)
+    line.addLayout(holder)
+    line.addWidget(label, 1)
+    return row
+
+
 def _sections(blocks) -> list[tuple[str, tuple[str, ...]]]:
     """The card's blocks, run together where the game runs them together."""
     out: list[tuple[str, tuple[str, ...]]] = []
@@ -200,14 +268,51 @@ class IconCache:
         if not name:
             return None
         if name not in self._icons:
-            self._icons[name] = self._load(name)
+            self._icons[name] = self._crop(self._locate(name))
         return self._icons[name]
 
-    def _load(self, name: str) -> QPixmap | None:
+    def element(self, word: str | None) -> QPixmap | None:
+        """The mark for a damage element, or ``None`` if there is no game.
+
+        Cached with the icons and under a key of its own -- a mark's name and
+        an icon's name are different vocabularies, and ``element:fire`` cannot
+        collide with a file called ``fire``.  Scaled on the way out rather than
+        per line: the sheet's tiles are 27x29 and a card wants them smaller,
+        and the same five are on every card.
+        """
+        if not word:
+            return None
+        key = "element:" + word.lower()
+        if key not in self._icons:
+            placed = self._crop(self._place(word))
+            self._icons[key] = (
+                placed.scaled(
+                    *MARK,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                if placed is not None
+                else None
+            )
+        return self._icons[key]
+
+    def _locate(self, name: str) -> Placement | None:
         try:
-            placed = self._library.locate(name)
-            if placed is None:
-                return None
+            return self._library.locate(name)
+        except Exception:  # noqa: BLE001 -- an icon is never worth an error
+            return None
+
+    def _place(self, word: str) -> Placement | None:
+        try:
+            return self._library.mark(word)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _crop(self, placed: Placement | None) -> QPixmap | None:
+        """One rectangle of one sheet, decoded once per sheet."""
+        if placed is None:
+            return None
+        try:
             sheet = self._sheets.get(placed.atlas)
             if sheet is None:
                 sheet = QImage.fromData(self._library.read(placed))
@@ -375,6 +480,7 @@ class ItemCard(QFrame):
         super().__init__(parent)
         self.setObjectName("card")
         self.card = card
+        self._icons = icons
 
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
@@ -581,9 +687,9 @@ class ItemCard(QFrame):
 
         for kind, found in _sections(gem.blocks):
             for text in found:
-                line = self._stat(text, kind)
-                line.setIndent(12)
-                column.addWidget(line)
+                # Indented, because what is under a gem's name is the gem's
+                # rather than the item's.
+                column.addWidget(self._stat(text, kind, indent=12))
 
         if gem.flavor:
             flavour = QLabel(gem.flavor)
@@ -592,8 +698,15 @@ class ItemCard(QFrame):
             flavour.setIndent(12)
             column.addWidget(flavour)
 
-    def _stat(self, text: str, kind: str) -> QLabel:
-        """One line of stats: an affix in the game's green, the rest plain."""
+    def _stat(self, text: str, kind: str, indent: int = 0) -> QWidget:
+        """One line of stats: an affix in the game's green, the rest plain.
+
+        A damage or armour line leads with its element's mark when the game's
+        own pictures can be read, which is a thing a number cannot say: the
+        element is what a player scans a weapon for, and it is the one word in
+        ``Fire Damage 52-74`` that is already two colours of its own on the
+        card.  Without the game there is no picture and the line is the line.
+        """
         affix = kind == AFFIX
         label = QLabel(emphasis(text, MAGIC if affix else BODY))
         label.setTextFormat(Qt.TextFormat.RichText)
@@ -602,7 +715,13 @@ class ItemCard(QFrame):
             # The affix block is the card's serif one; the damage and armour
             # lines keep the window's own voice.
             label.setFont(_serif())
-        return label
+        label.setIndent(indent)
+
+        element = None if affix else element_of(text, kind)
+        picture = self._icons.element(element) if self._icons and element else None
+        if picture is None:
+            return label
+        return _marked(picture, label, indent)
 
 
 #: Everything the widgets above are drawn with.  One stylesheet on whatever

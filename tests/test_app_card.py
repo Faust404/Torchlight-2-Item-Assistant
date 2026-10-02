@@ -30,16 +30,20 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtGui import QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from app.card import (  # noqa: E402
     HEAD,
+    MARK,
     MUTED,
     TIER_INK,
     Hairline,
     IconCache,
     IconTile,
     ItemCard,
+    element_of,
     emphasis,
     mark,
 )
@@ -52,6 +56,7 @@ from tl2stash.card import (  # noqa: E402
     Card,
     Rung,
 )
+from tl2stash.icons import ELEMENT_MARKS  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
 
@@ -426,6 +431,109 @@ def test_an_item_in_no_set_draws_no_ladder_at_all(qapp):
 
 
 # --------------------------------------------------------------------------
+# The element marks
+# --------------------------------------------------------------------------
+
+
+class StubIcons:
+    """An :class:`IconCache` with no archive behind it.
+
+    Whether a mark is asked for is the rule; the pixels are the archive's.  So
+    this records what it was asked for and hands back a blank the size of one.
+    """
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def icon(self, name):
+        return None
+
+    def element(self, word):
+        self.asked.append(word)
+        return QPixmap(*MARK)
+
+
+def test_the_element_a_stat_line_is_about_is_read_off_the_line():
+    """The four shapes the game writes a damage line in, measured over the
+    reference corpus: the element first (``Fire Damage 52-74``), the element
+    second behind its value (``+13 Physical Damage``), and the bare word --
+    which is physical, and is written without the word precisely because
+    saying so says nothing."""
+    assert element_of("Fire Damage 52-74", DAMAGE) == "fire"
+    assert element_of("Ice Damage 12-30", DAMAGE) == "ice"
+    assert element_of("Electric Damage 1-40", DAMAGE) == "electric"
+    assert element_of("Poison Damage 8-12", DAMAGE) == "poison"
+    assert element_of("+13 Physical Damage", ADDED) == "physical"
+    assert element_of("Damage 20", DAMAGE) == "physical"
+    assert element_of("Armor 42", ARMOR) == "physical"
+
+    # ``All`` is written like an element and is not one: the game has no
+    # picture of it, and a mark would have to be invented.
+    assert element_of("+5 All Damage", ADDED) is None
+    assert element_of("", DAMAGE) is None
+
+
+def test_only_a_damage_or_armour_line_is_read_for_an_element():
+    """The guard, and the line that needs it: an affix may begin with an
+    element's name and be about something else entirely -- ``Fire Damage Taken
+    is reduced by 10%`` is not this item dealing fire."""
+    assert element_of("Fire Damage Taken is reduced by 10%", AFFIX) is None
+    assert element_of("+13 Physical Damage", AFFIX) is None
+
+
+def test_a_damage_line_leads_with_its_mark(qapp):
+    """In front of the line rather than beside it, and pinned to its top: a
+    stat long enough to wrap would otherwise leave its mark floating halfway
+    down the card."""
+    icons = StubIcons()
+    drawn = ItemCard(
+        card(blocks=(Block(DAMAGE, ("Fire Damage 52-74",)),)), icons=icons
+    )
+    assert icons.asked == ["fire"]
+
+    (marked,) = drawn.findChildren(QLabel, "emark")
+    (line,) = [
+        label
+        for label in drawn.findChildren(QLabel)
+        if label.objectName() == "" and "Fire Damage" in label.text()
+    ]
+
+    # Shown for this one: a hidden widget's children keep the geometry they
+    # were built with, so where a mark sits is only a fact once it is on
+    # screen -- offscreen, which is where this suite runs anyway.
+    drawn.resize(340, 200)
+    drawn.show()
+    qapp.processEvents()
+
+    mark_at = marked.mapTo(drawn, QPoint(0, 0))
+    line_at = line.mapTo(drawn, QPoint(0, 0))
+    assert mark_at.x() < line_at.x(), "the mark came after its line"
+    assert mark_at.y() <= line_at.y(), "the mark floated below the first line"
+
+
+def test_a_line_with_no_element_is_the_plain_label(qapp):
+    """No element, no row to build: the affix above is one, and so is a damage
+    line the game has no picture for."""
+    icons = StubIcons()
+    for blocks in (
+        (Block(AFFIX, ("Fire Damage Taken is reduced by 10%",)),),
+        (Block(ADDED, ("+5 All Damage",)),),
+    ):
+        drawn = ItemCard(card(blocks=blocks), icons=icons)
+        assert drawn.findChildren(QLabel, "emark") == []
+    assert icons.asked == []
+
+
+def test_without_the_game_a_damage_line_is_just_a_line(qapp):
+    """The card is built whether or not the archive can be read, and the mark
+    is the one thing on it that has nowhere else to come from."""
+    drawn = ItemCard(card(blocks=(Block(DAMAGE, ("Fire Damage 52-74",)),)))
+
+    assert drawn.findChildren(QLabel, "emark") == []
+    assert any("Fire Damage" in text for text in texts(drawn, ""))
+
+
+# --------------------------------------------------------------------------
 # The real archive
 # --------------------------------------------------------------------------
 
@@ -446,3 +554,25 @@ def test_a_real_item_s_icon_is_cut_out_of_a_real_sheet(qapp, real_game):
     # A name no sheet declares, and no name at all: both are the placeholder.
     assert icons.icon("gem_fish_eye") is None
     assert icons.icon(None) is None
+
+
+@needs_game
+def test_a_real_mark_is_cut_and_scaled_out_of_a_real_hud_sheet(qapp, real_game):
+    """The marks, from the archive to the size the card draws them.
+
+    The game's tiles are 27x29 and a card wants them the height of a stat
+    line, so the crop is scaled on the way out -- once per element, because
+    the same five are on every card in the grid.  ``all`` has no mark, and is
+    the one word a damage line can lead with that has none.
+    """
+    icons = IconCache(real_game.install)
+
+    for element in ELEMENT_MARKS:
+        cut = icons.element(element)
+        assert cut is not None, element
+        assert cut.height() == MARK[1], element
+        assert cut.width() <= MARK[0], element
+        assert icons.element(element) is cut, f"{element} was cut twice"
+
+    assert icons.element("all") is None
+    assert icons.element(None) is None

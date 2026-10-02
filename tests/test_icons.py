@@ -24,7 +24,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash.dat import VAR_ICON  # noqa: E402
-from tl2stash.icons import IconLibrary  # noqa: E402
+from tl2stash.icons import ELEMENT_MARKS, IconLibrary  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
 from test_pak import write_synthetic_pak  # noqa: E402
@@ -238,6 +238,83 @@ def test_nothing_is_read_until_something_is_looked_up(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# The element marks
+# --------------------------------------------------------------------------
+
+
+def test_a_mark_is_read_from_the_hud_sheet_and_not_from_the_icon_folder(tmp_path):
+    """The two routes, and the reason they are two rather than one.
+
+    A mark is not an item icon and does not live with them: it is on the sheet
+    the in-game tooltip is drawn from.  Both routes are made to declare the
+    *same word* here -- the icon folder a ``resist_firec`` of its own, the HUD
+    sheet the real one -- so a ``mark`` that went through the general index
+    would come back with the wrong picture.
+    """
+    lib = library(
+        tmp_path,
+        {
+            "MEDIA/UI/ICONS/HUD/HUD.IMAGESET": imageset(
+                ("resist_firec", 1, 1, 62, 62)
+            ),
+            "MEDIA/UI/ICONS/HUD/HUD.PNG": _PNG,
+            "MEDIA/UI/HUD/INGAMETEXTURESHEETS4.IMAGESET": imageset(
+                ("resist_physicalc", 996, 156, 27, 29),
+                ("resist_firec", 996, 342, 27, 29),
+            ),
+            "MEDIA/UI/HUD/INGAMETEXTURESHEETS4.PNG": _PNG,
+        },
+    )
+
+    fire = lib.mark("fire")
+    assert (fire.x, fire.y, fire.width, fire.height) == (996, 342, 27, 29)
+    assert fire.atlas.endswith("INGAMETEXTURESHEETS4.PNG")
+
+    # And the icon route still finds its own, which is what says the mark did
+    # not simply do a lookup in the index everyone else uses.
+    assert lib.locate("resist_firec").x == 1
+
+
+def test_a_mark_is_asked_for_by_the_element_s_name(tmp_path):
+    """``fire`` rather than ``resist_firec``: the game's file name for the
+    picture is this module's business, and no caller has it."""
+    lib = library(
+        tmp_path,
+        {
+            "MEDIA/UI/HUD/INGAMETEXTURESHEETS4.IMAGESET": imageset(
+                ("resist_firec", 996, 342, 27, 29)
+            ),
+            "MEDIA/UI/HUD/INGAMETEXTURESHEETS4.PNG": _PNG,
+        },
+    )
+    fire = lib.mark("fire")
+    assert lib.mark("FIRE") == fire, "the lookup is case-insensitive"
+    assert lib.locate("resist_firec") is None, "the sheet is not an icon sheet"
+
+    # An element with no mark -- ``all``, which some items are written as --
+    # and no element at all.
+    assert lib.mark("all") is None
+    assert lib.mark("") is None
+
+
+def test_only_the_one_HUD_sheet_is_looked_in_for_a_mark(tmp_path):
+    """The HUD has seven sheets and the five marks are on the fourth.  A
+    declaration of the same name on another one is a different picture, so it
+    is not a fallback -- naming the sheet is what keeps this from being a
+    sweep of the HUD."""
+    lib = library(
+        tmp_path,
+        {
+            "MEDIA/UI/HUD/INGAMETEXTURESHEETS3.IMAGESET": imageset(
+                ("resist_firec", 1, 1, 27, 29)
+            ),
+            "MEDIA/UI/HUD/INGAMETEXTURESHEETS3.PNG": _PNG,
+        },
+    )
+    assert lib.mark("fire") is None
+
+
+# --------------------------------------------------------------------------
 # The real archive
 # --------------------------------------------------------------------------
 
@@ -287,6 +364,28 @@ def test_almost_every_icon_a_real_item_asks_for_is_in_a_sheet(real_game):
 
     assert len(wanted) > 900, "the sweep stopped finding items"
     assert found / len(wanted) >= 0.98, f"only {found} of {len(wanted)} resolved"
+
+
+@needs_game
+def test_the_five_element_marks_come_off_the_real_hud_sheet(real_game):
+    """All five, measured on the archive rather than taken from the notes.
+
+    They are the one group of pictures this tool knows by a name the game
+    never gives a caller, so the names are the claim: four are the shield-less
+    ``...c`` variant of a resistance icon and ice is ``resist_iced``, with no
+    ``resist_icec`` beside it.  Every one is 27x29 and inside the sheet it
+    names, and none of them is in the icon folder -- which is what makes the
+    marks a second route rather than a lookup that happened to work.
+    """
+    lib = IconLibrary(real_game.install)
+    for element, name in ELEMENT_MARKS.items():
+        placed = lib.mark(element)
+        assert placed is not None, name
+        assert (placed.width, placed.height) == (27, 29), name
+        assert placed.atlas.endswith("INGAMETEXTURESHEETS4.PNG"), name
+        assert lib.locate(name) is None, f"{name} is not an item icon"
+
+    assert lib.mark("all") is None, "there is no mark for all damage"
 
 
 @needs_game
