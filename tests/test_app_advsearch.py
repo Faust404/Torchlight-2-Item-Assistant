@@ -50,10 +50,11 @@ from app.advsearch import (  # noqa: E402
     NO_CLASSES,
     PANEL_MAX,
     STATS_HINT,
+    SUBGROUP_INDENT,
     AdvancedSearchOverlay,
     vocabulary,
 )
-from app.card import GOLD  # noqa: E402
+from app.card import GOLD, HEAD, LABEL  # noqa: E402
 from app.compare import MIN_INSET, SCRIM  # noqa: E402
 from app.models import (  # noqa: E402
     CLASSES,
@@ -86,6 +87,22 @@ PLACES = [BOOTS, HELMET, SWORD, BROKEN]
 
 #: The words the grid draws over those four, in the rail's own order.
 PLACE_WORDS = ["Boots", "Helmet", "Sword", UNCLASSIFIED]
+
+#: A collection wide enough to say something about the grid's *shape*: six
+#: armour kinds, which is a full row of four and one of two, and two weapon
+#: subgroups, which is the one group that has headings inside it.
+WIDE = [
+    ("Armor", None, "Boots"),
+    ("Armor", None, "Chest Armor"),
+    ("Armor", None, "Gloves"),
+    ("Armor", None, "Helmet"),
+    ("Armor", None, "Pants"),
+    ("Armor", None, "Shoulder Armor"),
+    ("Weapons", "One-Handed", "Axe"),
+    ("Weapons", "One-Handed", "Sword"),
+    ("Weapons", "Two-Handed", "Bow"),
+    ("Other", None, ""),
+]
 
 
 def opened(state=None, places=PLACES, classes=None, vocabulary=(), size=(900, 600)):
@@ -150,6 +167,57 @@ def boxes(grid) -> dict[str, QCheckBox]:
 def tabs(grid) -> dict[str, QPushButton]:
     """The grid's group buttons, by the word on them."""
     return {button.text(): button for button in grid.findChildren(QPushButton)}
+
+
+def drawn(grid) -> list[str]:
+    """Every word the grid is drawing, in the order it draws them.
+
+    Read off a *shown* grid's geometry rather than off the list of widgets it
+    holds: a row is a ``y`` and the order within it is the ``x``, which is what
+    the player reads.  A grid that drew every kind at once but put the group
+    headings somewhere else would pass a test written against the widget list
+    and fail this one.
+    """
+    parts = [
+        widget
+        for widget in grid.findChildren(QWidget)
+        if isinstance(widget, (QLabel, QCheckBox)) and widget.text()
+    ]
+    parts.sort(key=lambda widget: (widget.y(), widget.x()))
+    return [widget.text() for widget in parts]
+
+
+def rows(grid) -> list[list[QCheckBox]]:
+    """The kind boxes as the grid draws them: one list per line."""
+    lines: dict[int, list[QCheckBox]] = {}
+    for box in grid.findChildren(QCheckBox):
+        lines.setdefault(box.y(), []).append(box)
+    return [
+        sorted(lines[y], key=lambda box: box.x()) for y in sorted(lines)
+    ]
+
+
+def only(grid, *words: str) -> None:
+    """Narrow the grid to these kinds, ticking them and unticking the rest.
+
+    The grid opens with every box ticked -- see :meth:`app.advsearch.TypeGrid.
+    tick` -- so asking for one kind is a matter of clearing the others, and
+    this is that, written once for the tests that want a narrowed grid.
+    """
+    for word, box in boxes(grid).items():
+        box.setChecked(word in words)
+
+
+def pressed(button) -> None:
+    """Press a button and lay out what the press built.
+
+    A press on a group button rebuilds the grid, and a widget has no geometry
+    until the layout has run -- so a test that read the boxes straight after
+    one would read a grid of widgets all sitting at the origin.  A window
+    lays out on the way back round the event loop, and so does this.
+    """
+    button.click()
+    QApplication.processEvents()
 
 
 def element_pairs(spins: dict) -> dict[str, tuple[int, int]]:
@@ -347,7 +415,7 @@ def test_search_hands_over_the_whole_search_and_closes(qapp):
     overlay.socket_chips[2].setChecked(True)
     overlay.req_spins["Strength"][0].setValue(30)
     overlay.class_boxes["Embermage"].setChecked(True)
-    boxes(overlay.types)["Sword"].setChecked(True)
+    only(overlay.types, "Sword")
 
     overlay.search_button.click()
 
@@ -640,86 +708,246 @@ def test_reset_empties_the_rows_and_the_boxes_with_the_rest(qapp):
 # --------------------------------------------------------------------------
 
 
-def test_the_grid_draws_the_kinds_the_collection_holds(qapp):
-    """The rail's own shape in the rail's own order: a button per group, and
-    the kinds of the chosen one under it -- the empty kind written with the
-    word the rail writes over it."""
-    _, overlay = opened()
+def test_the_grid_draws_every_group_at_once_under_its_own_heading(qapp):
+    """The rail's own shape in the rail's own order, all of it on screen.
 
-    grid = overlay.types
-    assert list(tabs(grid)) == [ALL_TYPES, "Armor", "Weapons", "Other"]
-    assert tabs(grid)[ALL_TYPES].isChecked()
-    assert [box.text() for box in grid.findChildren(QCheckBox)] == PLACE_WORDS
+    Which is the whole of what the user asked for: the strip over the grid is
+    a *bulk toggle* and not a set of tabs, so nothing is hidden behind a press
+    and there is no state a player can lose by making one.  The headings are
+    read where they are drawn -- the group's word, then its kinds, then the
+    next group's -- and the subgroup's is upper case, which is the rail's own
+    way of telling the two apart now that they are one size.
+    """
+    _, overlay = opened(places=WIDE)
+
+    assert drawn(overlay.types) == [
+        "Armor",
+        "Boots",
+        "Chest Armor",
+        "Gloves",
+        "Helmet",
+        "Pants",
+        "Shoulder Armor",
+        "Weapons",
+        "ONE-HANDED",
+        "Axe",
+        "Sword",
+        "TWO-HANDED",
+        "Bow",
+        "Other",
+        UNCLASSIFIED,
+    ]
+    assert list(tabs(overlay.types)) == [ALL_TYPES, "Armor", "Weapons", "Other"], (
+        "a group button per group the collection has, in the rail's order"
+    )
 
 
-def test_a_group_button_shows_only_that_group_s_kinds(qapp):
-    _, overlay = opened()
+def test_a_subgroup_is_set_in_under_the_group_it_belongs_to(qapp):
+    """The other half of telling the two headings apart, since they are one
+    size: the ink and the step in from the left, both drawn by the sheet."""
+    _, overlay = opened(places=WIDE)
+    headings = {label.text(): label for label in overlay.types.findChildren(QLabel)}
 
-    tabs(overlay.types)["Weapons"].click()
+    assert f"padding: 2px 0 1px {SUBGROUP_INDENT}px;" in headings["ONE-HANDED"].styleSheet()
+    assert f"{SUBGROUP_INDENT}px" not in headings["Weapons"].styleSheet(), (
+        "the group's own heading is flush with the grid, not set in"
+    )
+    assert HEAD in headings["Weapons"].styleSheet()
+    assert LABEL in headings["ONE-HANDED"].styleSheet(), (
+        "the two headings are the rail's two tans, a step apart"
+    )
 
-    assert [box.text() for box in overlay.types.findChildren(QCheckBox)] == ["Sword"]
+
+def test_four_kinds_stand_on_every_line_of_the_grid(qapp):
+    """The user's own number, read off a shown grid: lines by y, and the first
+    line of a group with six kinds holding four of them.
+
+    What it is for is legibility rather than arithmetic -- six armour kinds
+    down one column is a column twice as long as it needs to be -- so this is
+    about what is *drawn*, and a grid that laid its boxes out any other way
+    would fail it.
+    """
+    _, overlay = opened(places=WIDE)
+    lines = rows(overlay.types)
+
+    assert [len(line) for line in lines] == [4, 2, 2, 1, 1]
+    assert lines[0] == [
+        boxes(overlay.types)[word]
+        for word in ("Boots", "Chest Armor", "Gloves", "Helmet")
+    ]
+    assert lines[1][0].x() == lines[0][0].x(), (
+        "the fifth kind went back to the left margin instead of under a column"
+    )
+
+
+def test_the_grid_opens_with_every_kind_ticked(qapp):
+    """The panel is an allow-list whose empty state is *anything*, so the
+    resting state of this control is everything on -- the reference's own
+    reading of the same list, and the reason a Search pressed without touching
+    the grid leaves the rail exactly where it was."""
+    _, overlay = opened(places=PLACES)
+
+    assert all(box.isChecked() for box in boxes(overlay.types).values())
+    assert overlay.types.ticks() == set(), "the whole grid is no kind in particular"
+    assert overlay.draft().places == frozenset()
+
+
+def test_a_group_button_takes_the_whole_group_and_gives_it_back(qapp):
+    """The user's *"hitting the respective buttons should select all items
+    under that subsection"*, and the second press is how a group is cleared
+    out of a grid that opened fully ticked.
+
+    The reference's own rule: a button untickes its group when the group is
+    already whole and tickes it otherwise.  What is asserted is the *boxes*,
+    because a press that only moved the search and not the grid under it would
+    be a button lying about what it did.
+    """
+    _, overlay = opened(places=WIDE)
+    button = tabs(overlay.types)["Armor"]
+
+    pressed(button)
+
+    assert not any(box.isChecked() for box in rows(overlay.types)[0])
+    assert boxes(overlay.types)["Sword"].isChecked(), "a weapon went with it"
+    assert overlay.draft().places == {
+        ("Weapons", "One-Handed", "Axe"),
+        ("Weapons", "One-Handed", "Sword"),
+        ("Weapons", "Two-Handed", "Bow"),
+        ("Other", None, ""),
+    }
+
+    pressed(button)
+
+    assert all(box.isChecked() for box in boxes(overlay.types).values())
+    assert overlay.draft().places == frozenset(), "back to no narrowing at all"
+
+
+def test_all_is_the_same_press_over_every_kind_there_is(qapp):
+    """One button over the whole grid rather than over a group of it -- and
+    the two ends of that toggle mean the same thing to the search, which is
+    what makes an empty draft legal: no kind ticked is *any* kind, exactly as
+    every kind ticked is."""
+    _, overlay = opened(places=WIDE)
+    button = tabs(overlay.types)[ALL_TYPES]
+
+    pressed(button)
+
+    assert not any(box.isChecked() for box in boxes(overlay.types).values())
+    assert overlay.draft().places == frozenset()
+
+    pressed(button)
+
+    assert all(box.isChecked() for box in boxes(overlay.types).values())
+    assert overlay.draft().places == frozenset()
 
 
 def test_the_kinds_ticked_reach_the_search_as_places(qapp):
     """What makes the grid a second view rather than a second filter: what it
     hands over is the rail's own value, a set of places, so a player who ticks
     Boots here and one who ticks Boots on the rail have asked for the same
-    collection."""
-    _, overlay = opened()
+    collection.
 
-    boxes(overlay.types)["Helmet"].setChecked(True)
+    Read on a narrowed grid, because that is the one that says anything: a
+    grid left alone hands over nothing at all.
+    """
+    _, overlay = opened(places=PLACES, state=Advanced(places=frozenset({HELMET})))
+
+    assert boxes(overlay.types)["Helmet"].isChecked()
     assert overlay.draft().places == {HELMET}
 
-    boxes(overlay.types)["Helmet"].setChecked(False)
-    assert overlay.draft().places == frozenset()
+    only(overlay.types, "Boots", "Helmet")
+
+    assert overlay.draft().places == {BOOTS, HELMET}
 
 
 def test_a_tick_on_a_kind_the_collection_has_lost_goes_with_it(qapp):
     """The collection is thrown away and built again every poll, and a kind
-    that is no longer in it is no longer a thing to narrow by."""
-    _, overlay = opened(EVERYTHING)
+    that is no longer in it is no longer a thing to narrow by.
+
+    When the lost kind was the *only* one ticked there is nothing left to
+    narrow by, and the grid says so the way this control says everything: no
+    kind ticked is any kind, which is also where three of the four ticks went
+    when the grid opened -- see :meth:`app.advsearch.TypeGrid.set_kinds`.
+    """
+    _, overlay = opened(state=Advanced(places=frozenset({SWORD})))
 
     overlay.set_kinds([BOOTS, HELMET])
 
     assert SWORD not in overlay.types.ticks()
     assert overlay.draft().places == frozenset()
+    assert not any(box.isChecked() for box in boxes(overlay.types).values()), (
+        "a box for a kind that is gone stayed ticked"
+    )
 
 
 def test_a_grid_that_has_not_moved_is_not_built_again(qapp):
     """A grid rebuilt under the pointer is a grid that loses the click -- the
     same bargain the rail makes, and the reason the shape is compared first."""
     _, overlay = opened()
-    drawn = overlay.types.findChildren(QCheckBox)
+    drawn_before = overlay.types.findChildren(QCheckBox)
 
     overlay.types.set_kinds(list(PLACES))
 
-    assert overlay.types.findChildren(QCheckBox) == drawn, "the grid was rebuilt"
+    assert overlay.types.findChildren(QCheckBox) == drawn_before, "the grid was rebuilt"
 
 
-def test_a_group_the_collection_has_lost_goes_back_to_showing_everything(qapp):
-    """Rather than to a tab that matches nothing."""
-    _, overlay = opened()
-    tabs(overlay.types)["Weapons"].click()
+def test_a_grid_left_whole_stays_whole_when_the_collection_moves(qapp):
+    """A poll that gains a kind must not leave it unticked.
+
+    The collection changes under the panel whenever the game writes the stash
+    again, and the resting state of this control is *everything* -- so a grid
+    nobody has touched has to come back from a poll still saying that, rather
+    than coming back narrowed by whatever happened to arrive.  A grid the
+    player *has* narrowed keeps only the ticks it still has.
+    """
+    _, overlay = opened(places=PLACES)
+
+    overlay.set_kinds(PLACES + [("Weapons", "One-Handed", "Axe")])
+
+    assert all(box.isChecked() for box in boxes(overlay.types).values())
+    assert overlay.draft().places == frozenset()
+
+    only(overlay.types, "Helmet")
+    overlay.set_kinds(PLACES + [("Weapons", "One-Handed", "Axe")])
+
+    assert overlay.draft().places == {HELMET}, (
+        "a narrowed grid was widened by the poll rather than kept"
+    )
+
+
+def test_a_group_the_collection_has_lost_goes_off_the_strip(qapp):
+    """Rather than staying on it as a button that toggles nothing."""
+    _, overlay = opened(places=WIDE)
 
     overlay.set_kinds([BOOTS, HELMET])
 
-    assert tabs(overlay.types)[ALL_TYPES].isChecked()
-    assert [box.text() for box in overlay.types.findChildren(QCheckBox)] == [
-        "Boots",
-        "Helmet",
-    ]
+    assert list(tabs(overlay.types)) == [ALL_TYPES, "Armor"]
+    assert drawn(overlay.types) == ["Armor", "Boots", "Helmet"]
 
 
-def test_a_group_with_every_kind_under_it_ticked_is_drawn_in_gold(qapp):
-    """The rail's own statement about a heading, on the button: gold for a
-    group that is wholly ticked, the control ink for one that is not."""
-    _, overlay = opened()
+def test_a_group_s_button_says_how_much_of_it_is_ticked(qapp):
+    """The rail's own statement about a heading, on the button that toggles
+    it -- with the reference's *third* state, which its own note argues for:
+    with every kind ticked at rest, a player who unticks one armour kind would
+    otherwise see the Armor button go dark, which reads as *no armour* when it
+    means *nearly all armour*.  So the border is the channel that carries the
+    middle, and the ink is the one that carries the ends.
+    """
+    _, overlay = opened(places=WIDE)
     buttons = tabs(overlay.types)
 
-    assert GOLD not in buttons["Armor"].styleSheet()
+    assert GOLD in buttons["Armor"].styleSheet(), "Armor is wholly ticked at rest"
 
-    boxes(overlay.types)["Boots"].setChecked(True)
-    boxes(overlay.types)["Helmet"].setChecked(True)
+    boxes(overlay.types)["Helmet"].setChecked(False)
+    part = buttons["Armor"].styleSheet()
 
-    assert GOLD in buttons["Armor"].styleSheet()
-    assert CHALK in buttons["Weapons"].styleSheet(), "nothing under it is ticked"
+    assert GOLD in part and LABEL in part, "some of Armor: the middle state"
+    assert CHALK not in part
+
+    button = tabs(overlay.types)["Weapons"]
+    pressed(button)
+
+    assert not any(box.isChecked() for box in boxes(overlay.types).values() if
+                   box.text() in ("Axe", "Sword", "Bow"))
+    assert CHALK in buttons["Weapons"].styleSheet(), "none of Weapons"
+    assert GOLD not in buttons["Weapons"].styleSheet()

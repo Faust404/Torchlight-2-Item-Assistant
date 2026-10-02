@@ -543,9 +543,11 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
     rail's second view.
 
     Two swords of the fixture's at two levels and two rarities, so that both the
-    item level range and the rarity chip have something to separate, and both
-    kinds the collection holds are ticked in the grid -- which is what says the
-    rail's ticks came from the panel rather than from a click on the rail.
+    item level range and the rarity chip have something to separate, and a
+    socketable beside them, which is a second *kind* of item.  The grid opens
+    with every kind ticked -- the panel's word for *any kind* -- so one of those
+    two kinds is unticked, and what the rail ends up holding is what was drawn
+    on the grid rather than a click on the rail.
     """
     from PySide6.QtWidgets import QMessageBox
 
@@ -558,13 +560,20 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
         [
             parse_item(synthetic_item(name="Longblade", guid=0x7001, level=40)[0]),
             parse_item(synthetic_item(name="Emberblade", guid=0x7002, level=20)[0]),
+            # The second kind, and the reason there is one: with a single kind
+            # on the grid, unticking it is the same search as leaving it ticked
+            # -- an empty set of kinds being the model's word for *any* -- so
+            # the grid would have nothing to say that a click on the rail could
+            # not.  Named without "blade" in it, so the name box still leaves
+            # the two swords alone.
+            parse_item(synthetic_item(name="Test Ember", guid=0x7003, level=20)[0]),
         ],
     )
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
         win.auto_absorb.setChecked(False)
         win._absorb_all()
-        assert win.grid.count() == 2, "the fixture did not stock the tool"
+        assert win.grid.count() == 3, "the fixture did not stock the tool"
         assert win.sidebar.places() == set(), "something was ticked to start with"
 
         win.filters.advanced.click()
@@ -574,8 +583,16 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
         panel.name.setText("blade")
         panel.rarity_chips["Unique"].setChecked(True)
         panel.item_low.setValue(10)
-        for box in panel.types.findChildren(QCheckBox):
-            box.setChecked(True)
+        # Every box on the grid is ticked to begin with, so the walk is to
+        # untick the socketable and leave the swords' kind standing: what the
+        # rail is handed has to be that one kind, which is a narrowing the
+        # panel did and the rail did not.
+        kinds_drawn = panel.types.findChildren(QCheckBox)
+        assert {box.text() for box in kinds_drawn} == {"Sword", "Socketable"}, (
+            "the fixture's three items are not the two kinds this walks"
+        )
+        for box in kinds_drawn:
+            box.setChecked(box.text() == "Sword")
         kinds = panel.types.ticks()
         assert kinds, "the grid drew no kind to tick"
 
@@ -608,7 +625,7 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
         assert win.filters.search_text() == ""
         assert win.filters.item_level_range() == (0, LEVEL_MAX)
         assert win.sidebar.places() == set(), "the rail kept a kind ticked"
-        assert win.grid.count() == 2
+        assert win.grid.count() == 3
     finally:
         win.close()
 

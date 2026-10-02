@@ -70,21 +70,32 @@ from .models import (
     Advanced,
 )
 from .sidebar import UNCLASSIFIED, arranged
-from .theme import CHALK, PALE
+from .theme import BODY_PX, CHALK, PALE
 
 __all__ = ["AdvancedSearchOverlay", "vocabulary"]
 
-#: The group button that shows every kind rather than one group's.  Spelled
+#: The group button that takes every kind rather than one group's.  Spelled
 #: once, because three places here compare against it and a second spelling
-#: would be a tab that matches nothing.
+#: would be a button that toggles nothing.
 ALL_TYPES = "All"
 
 #: How wide the panel is allowed to get, however wide the window is.  A form is
 #: read down a column, and a search box spanning a 1400px screen puts its words
 #: at one edge and its end at the other; the reference caps its own panel for
-#: the same reason, and this is a little wider than its 640 for the two-column
-#: grid of kinds.
-PANEL_MAX = 720
+#: the same reason, and this is a little wider than its 620 -- for the Type
+#: grid, which now draws four kinds to a row where it drew two.
+PANEL_MAX = 820
+
+#: How many kind boxes stand in one row of the Type grid.  The user's own
+#: number.  The reference draws two, which is what its narrower panel fits; at
+#: this width four leaves the longest kind word in the game room to spare and
+#: still reads as a column -- see :class:`TypeGrid`.
+COLUMNS = 4
+
+#: How far a subgroup's heading is set in from its group's, in the Type grid.
+#: The rail's arithmetic, near enough: what tells the two headings apart is
+#: their ink, their case and this indent, and none of the three is a size.
+SUBGROUP_INDENT = 12
 
 #: The air inside the panel, on every side and between two sections.  Wide,
 #: because the sections are the structure here: what tells the four groups of
@@ -344,7 +355,7 @@ class Section(QWidget):
 
 
 class TypeGrid(QWidget):
-    """Every kind the collection holds, under a row of group buttons.
+    """Every kind the collection holds, in one grid, under a strip of buttons.
 
     A second view of the rail and not a second filter: the shape and the order
     are :func:`app.sidebar.arranged`'s, which is what the rail draws from, and
@@ -353,10 +364,31 @@ class TypeGrid(QWidget):
     ticks Boots on this panel and a player who ticks Boots on the rail have
     asked for the same collection.
 
+    The strip is a *bulk toggle* and not a set of tabs, which is the
+    reference's own reading of this control and the one the user asked to have
+    mimicked: every group is on screen at once, under its own heading, and a
+    group button ticks every kind below it -- or unticks them all when they are
+    already ticked.  Nothing is hidden and nothing moves, so there is no state
+    a player can lose by pressing one, and ``All`` is the same toggle over
+    every kind there is.
+
+    **Every box is ticked when the panel opens**, because an empty set of
+    places is the model's word for *any kind* -- see
+    :meth:`app.models.CollectionFilter.set_places` -- so the grid's resting
+    state is everything on, and :meth:`ticks` reads it back as the empty set
+    again.  It is the reference's ``coverAll``, and the reason a Search pressed
+    without touching this grid leaves the rail exactly where it was rather than
+    painting forty ticks on it.
+
     What is *not* here is any count.  The rail's numbers are what the filters
     would leave, and there is nothing to count against a draft: a number beside
     a box nobody has searched for yet would be the numbers of a list the player
     is not looking at, which is the one thing a count must never be.
+
+    The boxes are the *collection's* kinds rather than the current answer's,
+    also like the reference: a box that vanished because of a filter the same
+    panel set is a box the player cannot tick, so a search could never be
+    widened from here.
     """
 
     def __init__(self, parent=None) -> None:
@@ -365,7 +397,6 @@ class TypeGrid(QWidget):
         self._ticked: set[Place] = set()
         self._boxes: dict[Place, QCheckBox] = {}
         self._tabs: dict[str, QPushButton] = {}
-        self._tab = ALL_TYPES
         self._updating = False
 
         column = QVBoxLayout(self)
@@ -380,7 +411,13 @@ class TypeGrid(QWidget):
         self._grid = QGridLayout()
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setHorizontalSpacing(14)
-        self._grid.setVerticalSpacing(5)
+        self._grid.setVerticalSpacing(4)
+        # Four even columns, so the boxes stand in columns down the grid rather
+        # than wherever the longest word in each row puts them.  Without this
+        # the columns take their own widths and a row of four kinds comes out
+        # as ragged as the words in it.
+        for column_index in range(COLUMNS):
+            self._grid.setColumnStretch(column_index, 1)
         column.addLayout(self._grid)
 
     # -- what it is told --------------------------------------------------
@@ -393,30 +430,68 @@ class TypeGrid(QWidget):
         rail makes, and for the same reason: a grid rebuilt under the pointer
         is a grid that loses the click.  The panel is usually hidden, where
         this costs one comparison of two small sets.
+
+        A grid that was wholly ticked stays wholly ticked across the change,
+        which is the resting state being carried over rather than a new kind
+        arriving unticked: the collection gains and loses a kind every time the
+        player moves an item, and a panel left open on a poll must not come
+        back narrowed by the item that happened to arrive.  A grid the player
+        *has* narrowed keeps only the ticks the collection still has.
         """
         wanted = frozenset(tuple(place) for place in places)
         if wanted == self._places:
             return
+        whole = self._ticked == set(self._places)
         self._places = wanted
-        self._ticked &= wanted
-        if self._tab != ALL_TYPES and not self._under(self._tab):
-            # The group the player was looking at is gone from the collection.
-            self._tab = ALL_TYPES
+        self._ticked = set(wanted) if whole else self._ticked & wanted
         self._rebuild()
 
     def ticks(self) -> set[Place]:
-        """The kinds ticked, flattened -- a kind is itself and no subtree."""
+        """The kinds ticked, flattened -- a kind is itself and no subtree.
+
+        Empty when every kind is ticked, because that is what the ticked grid
+        *means*: the panel is an allow-list whose empty state is not "nothing"
+        but "anything", so the resting state of the control and the resting
+        state of the search are the same state written twice -- see
+        :meth:`tick` for the other direction of the same round trip.
+        """
+        if self._ticked == set(self._places):
+            return set()
         return set(self._ticked)
 
     def tick(self, places) -> None:
-        """Tick exactly these kinds and nothing else, without saying so."""
-        self._ticked = {tuple(place) for place in places} & self._places
+        """Tick these kinds and nothing else -- and every kind, given none.
+
+        The other half of :meth:`ticks`, and the reason a panel opened on a
+        search that names no kinds comes up with the whole grid ticked: no
+        kinds ticked is not a grid the player would recognise as *their*
+        search, and an empty grid and a full one mean the same thing to the
+        model.  A search that does name kinds ticks exactly the ones the
+        collection still has -- a kind that is no longer in it is no longer a
+        thing to narrow by.
+        """
+        named = {tuple(place) for place in places}
+        self._ticked = set(self._places) if not named else named & self._places
         self._fill()
 
     # -- the user ---------------------------------------------------------
 
-    def _chosen(self, group: str) -> None:
-        self._tab = group
+    def _toggle(self, group: str) -> None:
+        """A group button: tick everything under it, or untick it if it is whole.
+
+        The reference's own rule, and the one the user asked for -- *"hitting
+        the respective buttons should select all items under that subsection"*
+        -- with the second press being how a player clears one group out of a
+        grid that opened fully ticked.  ``All`` is the same press over every
+        kind there is.
+        """
+        here = self._under(group)
+        whole = bool(here) and all(place in self._ticked for place in here)
+        for place in here:
+            if whole:
+                self._ticked.discard(place)
+            else:
+                self._ticked.add(place)
         self._fill()
 
     def _moved(self, *_) -> None:
@@ -447,6 +522,26 @@ class TypeGrid(QWidget):
             for place in here
         ]
 
+    def _heading(self, text: str, ink: str, indent: int = 0) -> QLabel:
+        """One of the grid's two headings, in the rail's own voice.
+
+        The same rule the rail is drawn by, since these head the same kinds:
+        a group is the reference's tan and its own capitalisation, and a
+        subgroup is the deeper tan, upper case, and set in a little from the
+        left.  The *sizes* are one size, the body's -- what separates the three
+        levels is the ink and the indent, which is what the user's first
+        request settled on the rail and what is worth keeping the same here.
+        """
+        label = QLabel(text.upper() if indent else text)
+        # One rule, so the air above a heading and the step in from the left
+        # are the same kind of number in the same place -- a group opens a
+        # little space over itself and a subgroup is set in under it.
+        label.setStyleSheet(
+            f"color: {ink}; font-size: {BODY_PX}px;"
+            f" padding: {2 if indent else 6}px 0 1px {indent}px;"
+        )
+        return label
+
     def _rebuild(self) -> None:
         """Redraw the group buttons, then refill the grid from the new shape."""
         groups = [ALL_TYPES] + [name for name, _ in arranged(self._places)]
@@ -455,50 +550,80 @@ class TypeGrid(QWidget):
         for name in groups:
             button = QPushButton(name)
             button.setObjectName("atab")
-            button.setCheckable(True)
-            button.setAutoExclusive(True)
-            button.setChecked(name == self._tab)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(lambda _=False, group=name: self._chosen(group))
+            button.setToolTip(
+                "Tick every kind there is.\nPress again to untick them all."
+                if name == ALL_TYPES
+                else f"Tick every kind under {name}.\n"
+                "Press again to untick them all."
+            )
+            button.clicked.connect(lambda _=False, group=name: self._toggle(group))
             self._tabs[name] = button
             self._tab_row.addWidget(button)
         self._tab_row.addStretch(1)
         self._fill()
 
     def _fill(self) -> None:
-        """Put the chosen tab's kinds in the grid, two to a row."""
+        """Put every group in the grid at once, four kinds to a row.
+
+        Each group gets a heading spanning the whole width, each subgroup an
+        indented one under it, and its kinds follow -- so a group never breaks
+        across the gutter with a heading stranded at the bottom of a column,
+        which is what the spanning cell is for.
+        """
         _empty(self._grid)
         self._boxes = {}
         self._updating = True
         try:
-            for i, place in enumerate(self._under(self._tab)):
-                box = QCheckBox(place[2] or UNCLASSIFIED)
-                box.setChecked(place in self._ticked)
-                box.setToolTip(" / ".join(word for word in place if word))
-                box.toggled.connect(self._moved)
-                self._boxes[place] = box
-                self._grid.addWidget(box, i // 2, i % 2)
+            row = 0
+            for group, subgroups in arranged(self._places):
+                self._grid.addWidget(self._heading(group, HEAD), row, 0, 1, COLUMNS)
+                row += 1
+                for subgroup, here in subgroups:
+                    if subgroup is not None:
+                        label = self._heading(subgroup, LABEL, SUBGROUP_INDENT)
+                        self._grid.addWidget(label, row, 0, 1, COLUMNS)
+                        row += 1
+                    for i, place in enumerate(here):
+                        box = QCheckBox(place[2] or UNCLASSIFIED)
+                        box.setChecked(place in self._ticked)
+                        box.setToolTip(" / ".join(word for word in place if word))
+                        box.toggled.connect(self._moved)
+                        self._boxes[place] = box
+                        self._grid.addWidget(box, row + i // COLUMNS, i % COLUMNS)
+                    row += (len(here) + COLUMNS - 1) // COLUMNS
         finally:
             self._updating = False
         self._ink_tabs()
 
     def _ink_tabs(self) -> None:
-        """Say on a group button what the rail says on a heading: all, or not all.
+        """Say on a group button what the rail says on a heading: all, some, none.
 
-        The reference's own tri-state, as far as a button can carry it: gold
-        for a group with every kind under it ticked, the control ink for one
-        with some or none of it.  The mark a *partly* ticked heading wears on
-        the rail is not here -- a button reading ``Weapons ·`` looks like a
-        name with a smudge on it rather than like a state -- and what that
-        group has instead is the grid under it, which is one click away.
+        The reference's own three states, and its own argument for the middle
+        one: with every kind ticked at rest, a player who unticks one armour
+        type would otherwise see ``Armor`` go dark, which reads as *no armour*
+        when it means *nearly all armour*.  Two channels carry the three, so
+        they cannot be confused for one another -- the border goes from the
+        control ink to gold, and the fill and the word stay where they are
+        until the group is wholly ticked.
+
+        All three are drawn on the button itself rather than left to the sheet,
+        because the state is the button's and the sheet has one rule for a
+        button: a group's ink is not a variant of the panel's buttons, it is a
+        reading of the boxes under it.
         """
         for name, button in self._tabs.items():
             here = self._under(name)
-            whole = bool(here) and all(place in self._ticked for place in here)
-            ink = GOLD if whole else CHALK
+            on = sum(1 for place in here if place in self._ticked)
+            if not here or on == 0:
+                ink, border = CHALK, CHALK
+            elif on == len(here):
+                ink, border = GOLD, GOLD
+            else:
+                ink, border = LABEL, GOLD
             button.setStyleSheet(
                 "QPushButton {"
-                f" color: {ink}; border: 1px solid {ink};"
+                f" color: {ink}; border: 1px solid {border};"
                 " border-radius: 3px; padding: 3px 9px;"
                 "}"
             )
