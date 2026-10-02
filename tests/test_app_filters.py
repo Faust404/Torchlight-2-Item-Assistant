@@ -36,6 +36,7 @@ pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QFontMetrics, QPalette, QStandardItem  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QGroupBox,
@@ -46,10 +47,11 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
-from app.card import IconCache  # noqa: E402
+from app.card import BODY, DIM, GOLD, HEAD, LABEL, MUTED, IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
 from app.filters import INSET, WASH, FilterBar  # noqa: E402
-from app.theme import BODY_PX, CHALK, RAIL_PX, apply_theme  # noqa: E402
+from app.sidebar import COUNT_PX  # noqa: E402
+from app.theme import BODY_PX, CHALK, FIELD, RAIL_PX, SHELL, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
@@ -535,7 +537,9 @@ def test_the_rail_draws_only_the_groups_the_collection_has(qapp):
         "  Boots",
         "  Helmet",
         "Weapons",
-        "  One-Handed",
+        # Upper-cased on the way to the screen, which is how the reference
+        # draws its own subgroup captions; the place keeps its spelling.
+        "  ONE-HANDED",
         "    Sword",
         "Misc",
         f"  {UNCLASSIFIED}",
@@ -543,6 +547,12 @@ def test_the_rail_draws_only_the_groups_the_collection_has(qapp):
     # Nothing in the collection is a two-handed weapon, so the rail says
     # nothing about them.
     assert "Cannon" not in " ".join(_rows(panel))
+    # And only the drawn word is upper-cased: what a tick on the leaf reports
+    # is still the place, spelled the way the taxonomy spells it.
+    panel.tree.topLevelItem(1).child(0).child(0).setCheckState(
+        0, Qt.CheckState.Checked
+    )
+    assert panel.places() == {SWORD}
 
 
 def test_the_rail_keeps_its_shape_when_the_collection_has_not_changed(qapp):
@@ -659,6 +669,193 @@ def test_a_kind_whose_name_does_not_fit_says_all_of_it_on_hover(qapp):
 
     assert panel._leaves[SWORD].toolTip(0) == "Weapons / One-Handed / Sword"
     assert panel._leaves[QUEST].toolTip(0) == "Misc / Unclassified"
+
+
+# --------------------------------------------------------------------------
+# The rail's voice, which is the reference's
+# --------------------------------------------------------------------------
+
+
+def test_the_rail_wears_the_reference_s_inks_and_sizes(qapp):
+    """The user's second change: the reference's colours and headings.
+
+    A group is its ``--head`` tan, a subgroup its ``--label`` a size down and
+    upper-cased, a leaf the window's own body ink, and every count its
+    ``--muted`` at 11px.  Read off the drawn rows rather than off a constant,
+    because what the player sees is what the rows are set to.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    panel.set_counts({BOOTS: 3, SWORD: 2})
+
+    armor, weapons = panel.tree.topLevelItem(0), panel.tree.topLevelItem(1)
+    one_handed = weapons.child(0)
+    sword = one_handed.child(0)
+
+    assert armor.foreground(0).color().name() == HEAD
+    assert one_handed.foreground(0).color().name() == LABEL
+    assert sword.foreground(0).color().name() == BODY
+    for row in (armor, one_handed, sword):
+        assert row.foreground(1).color().name() == MUTED
+        assert row.font(1).pixelSize() == COUNT_PX
+
+    # The reference sets a subgroup smaller than its group and both smaller
+    # than the kinds they head, which is the whole of the hierarchy.
+    assert armor.font(0).pixelSize() == 12
+    assert one_handed.font(0).pixelSize() == 10
+    assert armor.font(0).pixelSize() < RAIL_PX
+
+
+def test_the_rail_s_rows_are_drawn_with_air_between_them(themed):
+    """The other half of the request: more of it between one kind and the next.
+
+    Measured on a shown rail, because the heights are the fact -- a row the
+    sheet's padding did not reach would be the old 18px whatever the constants
+    say.  Every row is taller than the window's own body text, and a heading is
+    taller again than the kinds it heads.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    panel.resize(240, 300)
+    panel.show()
+    themed.processEvents()
+
+    tree = panel.tree
+    group = tree.visualItemRect(tree.topLevelItem(0)).height()
+    subgroup = tree.visualItemRect(tree.topLevelItem(1).child(0)).height()
+    leaf = tree.visualItemRect(tree.topLevelItem(1).child(0).child(0)).height()
+
+    body = QFontMetrics(QApplication.font()).height()
+    assert leaf > body, "the kinds did not gain their air"
+    assert leaf == 26, "the sheet's padding is not the 4px it measures"
+    assert group > leaf, "a group is not drawn above its kinds"
+    assert subgroup < group, "a subgroup is not a size under its group"
+
+
+def test_a_heading_says_what_a_click_on_it_would_do(qapp):
+    """The reference's tri-state: all of it, some of it, none of it.
+
+    A heading is a bulk toggle over the kinds under it, so its own row is the
+    only thing that says what ticking it means -- and "everything under me" and
+    "nothing under me" must not be the same row.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, HELMET, SWORD])
+    panel.set_counts({BOOTS: 1, HELMET: 1, SWORD: 1})
+    armor, weapons = panel.tree.topLevelItem(0), panel.tree.topLevelItem(1)
+
+    assert armor.text(0) == "Armor" and armor.foreground(0).color().name() == HEAD
+
+    # Some of it: a mark, and the heading keeps its own ink -- the dot is not
+    # a fourth state, it is "the rest of this is not ticked".
+    armor.child(0).setCheckState(0, Qt.CheckState.Checked)
+    panel.set_counts({BOOTS: 1, HELMET: 1, SWORD: 1})
+    assert armor.text(0) == "Armor ·"
+    assert armor.foreground(0).color().name() == HEAD
+
+    # All of it: gold, and the mark goes -- there is nothing left to say.
+    armor.child(1).setCheckState(0, Qt.CheckState.Checked)
+    panel.set_counts({BOOTS: 1, HELMET: 1, SWORD: 1})
+    assert armor.text(0) == "Armor"
+    assert armor.foreground(0).color().name() == GOLD
+
+    # And the group next to it, with nothing ticked, is not gold.
+    assert weapons.foreground(0).color().name() == HEAD
+
+
+def test_a_row_with_nothing_behind_it_dims(qapp):
+    """A count of zero is a kind the current filters cannot reach.
+
+    The reference dims the whole row for it, and the number is what says so
+    first: a kind nobody can get to should not look like one they can.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, HELMET, SWORD])
+    panel.set_counts({BOOTS: 0, HELMET: 4, SWORD: 2})
+
+    armor, weapons = panel.tree.topLevelItem(0), panel.tree.topLevelItem(1)
+    boots, helmet = armor.child(0), armor.child(1)
+
+    assert boots.foreground(0).color().name() == DIM
+    assert helmet.foreground(0).color().name() == BODY
+
+    # A heading dims when the filters have emptied it, whatever its boxes say:
+    # the row's own number is what the reference reads, and a heading over
+    # nothing but zeroes has the zero either way.
+    panel.set_counts({BOOTS: 0, HELMET: 0, SWORD: 2})
+    assert armor.foreground(0).color().name() == DIM
+    assert weapons.foreground(0).color().name() == HEAD
+
+
+def test_a_ticked_group_is_drawn_in_gold_and_the_row_under_the_pointer_lifts(themed):
+    """Both halves, where the player reads them: on the drawn row.
+
+    The inks are set on the item, but the row is what the eye lands on, so this
+    counts them in the pixels.  Near them, rather than equal to them: a 12px
+    heading is drawn anti-aliased, and the ink reaches its own colour only in
+    the thickest part of a stroke -- the rest of a letter is the ink blended
+    towards the ground.  The slack costs the test nothing, because the two inks
+    it tells apart are 44 pixels of one and none at all of the other.
+
+    The hover band is the other thing the reference's rail does that neither a
+    palette nor an ink can say: the row under the pointer is drawn a step up
+    from the ground the column sits on, and the row beside it is not.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    panel.set_counts({BOOTS: 1, SWORD: 1})
+    panel.resize(200, 220)
+    panel.show()
+    themed.processEvents()
+
+    tree = panel.tree
+    group = tree.topLevelItem(0)
+    below = tree.topLevelItem(1)
+
+    def drawn(ink: str) -> int:
+        """How many pixels of the group's row are this ink, near enough."""
+        rect = tree.visualItemRect(group)
+        image = tree.viewport().grab().toImage()
+        want = QColor(ink)
+        return sum(
+            1
+            for y in range(rect.top(), rect.bottom() + 1)
+            for x in range(rect.left(), rect.right() + 1)
+            if max(
+                abs(image.pixelColor(x, y).red() - want.red()),
+                abs(image.pixelColor(x, y).green() - want.green()),
+                abs(image.pixelColor(x, y).blue() - want.blue()),
+            )
+            <= 24
+        )
+
+    assert drawn(GOLD) == 0, "an unticked heading is already gold"
+    assert drawn(HEAD) > 0, "an unticked heading is not drawn in its own tan"
+    group.setCheckState(0, Qt.CheckState.Checked)
+    panel.set_counts({BOOTS: 1, SWORD: 1})
+    themed.processEvents()
+    assert drawn(GOLD) > 0, "the fully-ticked heading is not drawn in gold"
+    assert drawn(HEAD) == 0, "the gold heading kept its tan as well"
+
+    # Nothing in the rail is the cursor's place, so nothing is drawn as one:
+    # what this test is about is the band under the *pointer*.
+    tree.setCurrentItem(None)
+    themed.processEvents()
+
+    def band(item) -> str:
+        rect = tree.visualItemRect(item)
+        themed.processEvents()
+        image = tree.viewport().grab().toImage()
+        return image.pixelColor(rect.left() + 2, rect.center().y()).name()
+
+    # A row is drawn on the surface the sheet puts the column on -- read at the
+    # row's left inset, where no box and no word stands -- and the row the
+    # pointer is on is drawn a step up from it.
+    assert band(below) == SHELL, "the rail is not drawn on the shell"
+    QTest.mouseMove(tree.viewport(), tree.visualItemRect(below).center())
+    themed.processEvents()
+    assert band(below) == FIELD, "the row under the pointer did not lift"
+    assert band(group) == SHELL, "a row the pointer is not on lifted too"
 
 
 # --------------------------------------------------------------------------

@@ -14,6 +14,14 @@ Keeping the shape still is a deliberate departure from the reference, which
 rebuilds its rows on every filter change and drops the ones that reach zero --
 boxes that vanish from under the cursor as you tick them.
 
+**The voice.**  The rail is drawn the way the reference draws its own column:
+group rows in the card's ``HEAD`` tan, subgroup rows in ``LABEL`` a size down
+and upper-cased, leaves in the window's own body ink, counts in the
+reference's ``--muted`` at 11px, and a hover band under the row the pointer is
+on.  A heading also says what a click on it would do, which is the reference's
+tri-state and the only thing that tells one bulk toggle from another: all of
+it ticked goes gold, some of it wears a ``·``, an empty row dims.
+
 Nothing here decides anything.  It draws what it is told to draw, says what
 has been ticked, and emits :attr:`SidePanel.changed`; :class:`~app.models.
 CollectionFilter` is what makes that mean anything.
@@ -23,7 +31,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -35,6 +44,8 @@ from PySide6.QtWidgets import (
 
 from tl2stash.taxonomy import OTHER, TYPE_GROUPS, Place
 
+from .card import BODY, DIM, GOLD, HEAD, LABEL, MUTED
+
 __all__ = ["SidePanel"]
 
 #: What an item with no kind is called in the rail.  The reference database's
@@ -42,6 +53,35 @@ __all__ = ["SidePanel"]
 #: to say what a quest object *is*, so its file says only that it is a quest
 #: object.
 UNCLASSIFIED = "Unclassified"
+
+#: How a heading row is drawn: ``(ink, size in px, row height in px)``.  The
+#: inks and the two sizes are the reference's own -- a group is its ``--head``
+#: at 11.5px, which Qt's whole-pixel sizes round to 12, and a subgroup its
+#: ``--label`` at 10 -- and the heights are what its own padding and line
+#: height come to at those sizes.  Both rows are set as sizes of the rail's
+#: voice, which is the window's own family: the sheet sets the family once and
+#: these only choose how big.
+_HEADINGS = {
+    "group": (HEAD, 12, 30),
+    "subgroup": (LABEL, 10, 26),
+}
+
+#: What every count on the rail is drawn in: the reference's ``--muted`` at
+#: 11px, which is the same ink a card's kind line wears.  Not the leaves' ink
+#: scaled down -- a count is a side-note on the row it belongs to, and the
+#: reference sets it a size under the word it counts.
+COUNT_PX = 11
+
+#: Where a branch row keeps the words it was built with.  A heading that is
+#: partly ticked wears a ``·`` after its name, and the mark has to come and go
+#: without the name being respelled from the place every time.
+_BASE_ROLE = Qt.ItemDataRole.UserRole
+
+#: And the ink those words wear at rest -- ``HEAD`` for a group, ``LABEL`` for
+#: a subgroup.  Kept on the row because it is what the dim and the gold are
+#: alternatives *to*, and working it out again would be a second copy of the
+#: table above.
+_INK_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 def _rail_order() -> list[tuple[str, str | None]]:
@@ -97,6 +137,10 @@ class SidePanel(QWidget):
         self._places: set[Place] = set()
         self._leaves: dict[Place, QTreeWidgetItem] = {}
         self._ticked: set[Place] = set()
+        #: The rail's own two sizes, made on first use.  A font has to be asked
+        #: of the widget rather than of the application, because the family is
+        #: the sheet's business -- see :data:`app.theme.SANS`.
+        self._fonts: dict[int, QFont] = {}
 
         column = QVBoxLayout(self)
         column.setContentsMargins(6, 6, 6, 6)
@@ -119,7 +163,12 @@ class SidePanel(QWidget):
         tree.setObjectName("rail")
         tree.setColumnCount(2)
         tree.header().setVisible(False)
-        tree.setUniformRowHeights(True)
+        # Not uniform, which is what a tree of one size would normally ask for:
+        # the rail draws a heading a size down from its leaves, so every row
+        # carries its own height and the view has to read it.  With this on,
+        # every row is drawn at the first row's height and the 15px leaves are
+        # clipped by the 12px heading above them.
+        tree.setUniformRowHeights(False)
         tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # The last section stretches unless it is told not to, and the last
@@ -162,24 +211,86 @@ class SidePanel(QWidget):
         self._rebuild()
 
     def set_counts(self, places: Mapping[Place, int] | None = None) -> None:
-        """Put the numbers on the rows.
+        """Put the numbers on the rows, and the state the numbers say.
 
         These are what the filters *would* leave rather than what they do
         leave, so a row reading zero is a row that has nothing behind it under
         the current filters -- see :meth:`app.models.CollectionFilter.counts`.
+
+        A row with nothing behind it also *dims*, which is the reference's own
+        reading of the same number: a kind the filters have emptied is not
+        somewhere the player can go, and it says so before the pointer is on
+        it.  The headings then carry their tri-state, which is
+        :meth:`_ink_heading`'s.
         """
         counts = places or {}
         self._updating = True
         try:
             for place, leaf in self._leaves.items():
-                leaf.setText(1, str(counts.get(place, 0)))
+                count = counts.get(place, 0)
+                leaf.setText(1, str(count))
+                leaf.setForeground(0, QBrush(QColor(BODY if count else DIM)))
             for subgroup_item in self._subgroups():
                 subgroup_item.setText(1, str(self._sum(subgroup_item)))
             for i in range(self.tree.topLevelItemCount()):
                 group_item = self.tree.topLevelItem(i)
                 group_item.setText(1, str(self._sum(group_item)))
+            for heading in self._headings():
+                self._ink_heading(heading)
         finally:
             self._updating = False
+
+    def _headings(self):
+        """Every heading row in the rail: the groups, then the subgroups."""
+        for i in range(self.tree.topLevelItemCount()):
+            yield self.tree.topLevelItem(i)
+        yield from self._subgroups()
+
+    def _ink_heading(self, item: QTreeWidgetItem) -> None:
+        """Say what a click on a heading would do: all of it, some, or none.
+
+        The reference's tri-state, and the thing that keeps a bulk toggle
+        legible: a heading with its whole subtree ticked is gold, one with part
+        of it wears a ``·`` after its name, and one the filters have emptied --
+        a row summing to zero -- dims.  Without it "I own all of this" and "I
+        own none of this" are the same row.
+
+        The mark is drawn in the heading's own ink rather than in the gold the
+        reference gives it, because a Qt item's text is one colour: the mark
+        and the name would have to be painted by hand to differ, and spending
+        that on a dot would be the tail wagging the dog.
+        """
+        ticked, total = self._under(item)
+        base, ink = item.data(0, _BASE_ROLE) or "", item.data(0, _INK_ROLE)
+        # The row's own number, which ``set_counts`` has just written, is what
+        # says whether there is anything under this heading -- the reference
+        # reads the same sum off the row it is dimming, and a heading over
+        # nothing has the same zero either way.
+        if not int(item.text(1) or 0):
+            ink, mark = DIM, ""
+        elif ticked == total:
+            ink, mark = GOLD, ""
+        else:
+            mark = " ·" if ticked else ""
+        item.setText(0, base + mark)
+        item.setForeground(0, QBrush(QColor(ink)))
+
+    def _under(self, item: QTreeWidgetItem) -> tuple[int, int]:
+        """``(how many leaves below this row are ticked, how many there are)``.
+
+        Walked up from the leaves rather than kept as a second count on every
+        heading: a heading is what is under it, and the ticks are the player's
+        -- two tables that have to agree are two tables that can disagree.
+        """
+        ticked = total = 0
+        for place, leaf in self._leaves.items():
+            above = leaf.parent()
+            while above is not None and above is not item:
+                above = above.parent()
+            if above is item:
+                total += 1
+                ticked += place in self._ticked
+        return ticked, total
 
     def _sum(self, item: QTreeWidgetItem) -> int:
         """A row's count, which is its children's -- a group is what is in it."""
@@ -239,10 +350,10 @@ class SidePanel(QWidget):
             self.tree.clear()
             self._leaves = {}
             for group, subgroups in _arranged(self._places):
-                group_item = self._branch(group, self.tree.invisibleRootItem())
+                group_item = self._branch(group, self.tree.invisibleRootItem(), "group")
                 for subgroup, here in subgroups:
                     parent = (
-                        self._branch(subgroup, group_item)
+                        self._branch(subgroup.upper(), group_item, "subgroup")
                         if subgroup is not None
                         else group_item
                     )
@@ -251,13 +362,33 @@ class SidePanel(QWidget):
         finally:
             self._updating = False
 
-    def _branch(self, text: str, parent) -> QTreeWidgetItem:
+    def _font(self, px: int) -> QFont:
+        """One of the rail's own sizes, in the window's family.
+
+        Made from the widget's font rather than from a family named again here,
+        so the sheet stays the one place the family is chosen.  The tabular
+        figures come with it: the application asks for them once -- see
+        :func:`app.theme._base_font` -- and a font copied from it keeps them.
+        """
+        font = self._fonts.get(px)
+        if font is None:
+            font = QFont(self.font())
+            font.setPixelSize(px)
+            self._fonts[px] = font
+        return font
+
+    def _branch(self, text: str, parent, heading: str) -> QTreeWidgetItem:
         """A group or subgroup row: a heading over its children, and tickable.
 
         ``ItemIsAutoTristate`` is what makes ticking it tick everything under
         it and makes its own state say what its children say -- a group row is
         not a fourth filter, it is its children.
+
+        A subgroup is drawn upper-cased, the way the reference draws its own,
+        and the *place* keeps its spelling: the row is a heading over kinds,
+        and nothing reads it back as a word.
         """
+        ink, px, height = _HEADINGS[heading]
         item = QTreeWidgetItem(parent, [text, "0"])
         item.setFlags(
             Qt.ItemFlag.ItemIsEnabled
@@ -266,11 +397,34 @@ class SidePanel(QWidget):
         )
         item.setCheckState(0, Qt.CheckState.Unchecked)
         item.setExpanded(True)
+        item.setData(0, _BASE_ROLE, text)
+        item.setData(0, _INK_ROLE, ink)
+        item.setFont(0, self._font(px))
+        item.setForeground(0, QBrush(QColor(ink)))
+        # A heading's height is its own rather than the sheet's: the two row
+        # sizes are set here and the leaves' 26px comes from the sheet's
+        # padding, which is the reference's own arithmetic either way.
+        item.setSizeHint(0, QSize(0, height))
+        self._count_column(item)
         return item
+
+    def _count_column(self, item: QTreeWidgetItem) -> None:
+        """The number beside a row: the reference's ``--muted`` at 11px.
+
+        Set once, when the row is built.  What moves afterwards is the number
+        itself, and the state inks a *heading* wears -- never a column's ink.
+        """
+        item.setFont(1, self._font(COUNT_PX))
+        item.setForeground(1, QBrush(QColor(MUTED)))
 
     def _leaf(self, place: Place, parent: QTreeWidgetItem) -> None:
         item = QTreeWidgetItem(parent, [place[2] or UNCLASSIFIED, "0"])
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+        # The leaves are the sheet's size -- see app.theme.RAIL_PX -- and the
+        # ink starts as the window's own body colour, which :meth:`set_counts`
+        # dims on the rows the filters have emptied.
+        item.setForeground(0, QBrush(QColor(BODY)))
+        self._count_column(item)
         # The rail is narrow on purpose, so the longest kinds are drawn short
         # of their last letter or two -- and what is cut is the end of the
         # name, which is the part that tells one apart from another.  The whole

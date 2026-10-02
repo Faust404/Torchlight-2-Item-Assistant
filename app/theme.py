@@ -49,8 +49,11 @@ box's title or a header's sections, and none for which control is a control --
 so a small stylesheet covers what is left.  It is deliberately short: every
 rule it does not carry is the palette's job, and nearly every rule it does
 carry is a colour that is a *border*, a *title* or an *idle sentence* rather
-than a fill.  The one exception is the state of a check box, which nothing
-else can say.
+than a fill.  Three exceptions, and all of them are the rail's: the state of a
+check box, which nothing else can say; the rail's row rhythm -- the air the
+reference gets from a line height, which Qt has no property for at all; and the
+rail's ground, which the palette would otherwise paint as the field the wall of
+cards is drawn on.
 
 This is applied once, to the application, before any window is built: a style
 set afterwards does not reach what is already on screen.
@@ -339,9 +342,28 @@ QTreeView {{
 /* The rail's own voice, and the one place a widget sets its own size: it is a
    column of kind names with height to spare, so the words are set a step up
    from the window's body -- see RAIL_PX.  Found by name rather than as
-   ``QTreeView`` because this is a rule about the rail, not about trees. */
+   ``QTreeView`` because this is a rule about the rail, not about trees.
+
+   Its ground is here for the same reason.  A view's viewport is painted in the
+   palette's ``Base``, which is the field -- so left alone the rail would be the
+   same surface as the wall of cards beside it, and the band under the pointer
+   below would be drawn in the colour it is already on.  The reference's own
+   column sits on the shell with a lighter row under the pointer; this is that
+   pairing, and it is what makes the band read as a lift. */
 QTreeView#rail {{
     font-size: {RAIL_PX}px;
+    background: {SHELL};
+}}
+/* The rail's row rhythm, which is the reference's: it draws a facet row at
+   ``padding:2px 4px`` with a line height of 1.7, and Qt has no ``line-height``
+   -- so the air between one kind and the next is put back as padding, and 4px
+   is what measures 26px at RAIL_PX.  The band under the pointer is the
+   reference's too: a step up from the ground the row sits on. */
+QTreeView#rail::item {{
+    padding: 4px 0;
+}}
+QTreeView#rail::item:hover {{
+    background: {FIELD};
 }}
 /* A ticked box is a filled one rather than a ticked one: Qt's stylesheet
    language can draw a box's fill and its border but not a check mark, which

@@ -274,6 +274,33 @@ def test_the_rail_is_set_a_step_up_from_the_body(themed):
     assert f"width: {RAIL_PX}px" in sheet, "the box is not the size of the words"
 
 
+def test_the_rail_carries_its_own_ground_and_its_rows_their_rhythm(themed):
+    """The rail's three rules that are not a colour a widget can be handed.
+
+    A view's viewport is painted in the palette's ``Base``, which is the field
+    the wall of cards is drawn on: left alone the column would be the same
+    surface as the wall beside it, and the band under the pointer -- the
+    reference's own way of saying where the pointer is -- would be drawn in the
+    colour it is already on.  So the column is given the shell as its ground,
+    and the band is a step up from it.
+
+    The rhythm is the third: the reference gets the air between one row and the
+    next from a line height, Qt has no such property, so it is put back as
+    padding.  What the padding *measures* is asserted on a drawn rail in
+    :mod:`tests.test_app_filters`; this is that the rules are there at all.
+    """
+    sheet = themed.styleSheet()
+
+    def rule(selector: str) -> str:
+        """The declarations of one rule, out of the sheet."""
+        assert selector in sheet, f"{selector} is not in the sheet"
+        return sheet.split(selector, 1)[1].split("}", 1)[0]
+
+    assert f"background: {SHELL}" in rule("QTreeView#rail {")
+    assert "padding: 4px 0" in rule("QTreeView#rail::item {")
+    assert f"background: {FIELD}" in rule("QTreeView#rail::item:hover {")
+
+
 def test_a_number_is_set_in_figures_that_line_up(themed):
     """The site asks for tabular figures wherever it lifts a number, and this
     window lifts numbers in columns -- the levels and counts down the
