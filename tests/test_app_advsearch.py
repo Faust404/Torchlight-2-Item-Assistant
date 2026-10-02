@@ -46,12 +46,11 @@ from PySide6.QtWidgets import (  # noqa: E402
 from app.advsearch import (  # noqa: E402
     ALL_TYPES,
     CLASSES_HINT,
-    ELEMENTS_HINT,
     NO_CLASSES,
     PANEL_MAX,
-    STATS_HINT,
     SUBGROUP_INDENT,
     AdvancedSearchOverlay,
+    Section,
     vocabulary,
 )
 from app.card import GOLD, HEAD, LABEL  # noqa: E402
@@ -64,6 +63,7 @@ from app.models import (  # noqa: E402
     NUMBER_MAX,
     REQ_MAX,
     REQ_REST,
+    REQ_WORDS,
     Advanced,
 )
 from app.sidebar import UNCLASSIFIED  # noqa: E402
@@ -162,6 +162,32 @@ def watched(overlay) -> list:
 def boxes(grid) -> dict[str, QCheckBox]:
     """The kind boxes the grid is drawing, by the word on them."""
     return {box.text(): box for box in grid.findChildren(QCheckBox)}
+
+
+def sections(overlay) -> dict[str, Section]:
+    """The panel's sections, by the caption over each of them.
+
+    By caption rather than in the order they are found, because two of the
+    seven are built before the column that holds them in the order it holds
+    them -- and the caption is what a reader would name a section by anyway.
+    """
+    return {
+        section.findChildren(QLabel)[0].text(): section
+        for section in overlay.findChildren(Section)
+    }
+
+
+def notes(section) -> list[str]:
+    """The side-notes drawn in one section, by their own shape.
+
+    A note is a *wrapped* label -- the one thing in a section that has to be
+    able to run onto a second line.  A caption and a row's name are one line
+    each and are never wrapped, so this reads the notes out without needing to
+    know the ink they are drawn in.
+    """
+    return [
+        label.text() for label in section.findChildren(QLabel) if label.wordWrap()
+    ]
 
 
 def tabs(grid) -> dict[str, QPushButton]:
@@ -539,17 +565,70 @@ def test_the_five_elements_come_out_in_the_game_s_own_order(qapp):
     )
 
 
-def test_the_element_rows_say_what_the_two_boxes_mean(qapp):
-    """Both halves of the rule, under the rows they are about -- including the
-    one a reader would not guess: an item that carries none of the element
-    falls out as soon as either box moves."""
-    _, overlay = opened()
+def test_the_four_named_sections_are_rows_and_nothing_else(qapp):
+    """The user's *"remove the extra text"*, as what is in the panel.
 
-    assert ELEMENTS_HINT in [
-        label.text() for label in overlay.findChildren(QLabel)
+    Under Stat Requirements, Damage, Armor and Stats there is nothing but the
+    rows now.  Two notes were asked to stay and they are checked here with the
+    same reading, because the point is what the panel's sections carry: the
+    sockets sentence, which is the one thing a row of chips cannot say on its
+    own, and the Class note, which is load-bearing -- it is what tells a player
+    why those boxes are dark when the reference database is missing.
+
+    Type is in the first list as well and not because it was named: the
+    reference carries a note there ("nothing ticked means any type, as does
+    everything ticked") and this panel deliberately does not, so a later
+    reader adding it back has to mean to.
+    """
+    _, overlay = opened()
+    by_caption = sections(overlay)
+
+    for caption in ("Stat Requirements", "Damage", "Armor", "Stats", "Type"):
+        assert notes(by_caption[caption]) == [], f"{caption} has kept its note"
+
+    assert notes(by_caption["General"]) == [
+        "No chip ticked means any number of sockets."
     ]
-    assert "overlap" in ELEMENTS_HINT
-    assert "has to be one the item carries" in ELEMENTS_HINT
+    assert notes(by_caption["Class"]) == [CLASSES_HINT]
+
+
+def test_what_the_removed_notes_said_is_on_the_controls_they_were_about(qapp):
+    """Nothing the four notes said has left the application.
+
+    Both halves of the element rule -- that a type named has to be one the item
+    carries, and that the two ranges have to overlap -- are on the low box of
+    each element row, which is where the rest of that box's reading already is;
+    the row-at-rest half is on the high box.  The property rows are the same
+    way: the number read and the suggestions are on the controls that read and
+    offer them.
+
+    The one sentence that was *not* already on a control is the stat
+    requirements': that an item is worn either by the player level or by these
+    attributes.  It is on the low box of each of those four rows now, which is
+    why this test reads the tips rather than the face of the panel.
+    """
+    _, overlay = opened()
+    low, high = overlay.damage_spins["fire"]
+    armor_low, armor_high = overlay.armor_spins["fire"]
+
+    assert "has to be one the item carries" in low.toolTip()
+    assert "overlap" in low.toolTip()
+    assert "none of it is left out" in low.toolTip(), "the presence rule is gone"
+    assert "asks nothing" in high.toolTip()
+    assert armor_low.toolTip().splitlines()[1:] == low.toolTip().splitlines()[1:], (
+        "the two sections are one rule drawn twice, differing in the word"
+    )
+    assert "asks nothing" in armor_high.toolTip()
+
+    req_low = overlay.req_spins[REQ_WORDS[0]][0]
+    assert "worn" in req_low.toolTip(), "the either/or rule left the application"
+
+    overlay.findChild(QPushButton, "aadd").click()
+    row = overlay.stat_rows[0]
+    assert "first one" in row.low.toolTip(), "where the number is read from"
+    assert "your collection actually shows" in row.text.toolTip(), (
+        "where the words come from"
+    )
 
 
 def test_a_property_row_can_be_added_typed_in_and_taken_away(qapp):

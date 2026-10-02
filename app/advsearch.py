@@ -116,24 +116,6 @@ LABEL_PX = 92
 #: nobody uses the arrows on; ten is a step a thumb can hold down.
 STEP_BY = 10
 
-#: What the Damage and Armor sections say under their rows: the two halves of
-#: the rule the model applies, in the order a reader needs them.
-ELEMENTS_HINT = (
-    "A type named here has to be one the item carries, and the two ranges have "
-    "to overlap — a sword rolling 14-28 passes a request for 20-30.  A row left "
-    "covering everything asks nothing."
-)
-
-#: What the Stats section says under its rows.  The first half is the rule; the
-#: second says where the words in the box come from, which is not a fixed list
-#: and is worth saying before a player hunts for one.
-STATS_HINT = (
-    "Each row has to be answered by one of the item's own lines: the words you "
-    "type, and the first number on that line inside the range — or no range at "
-    "all, to ask only whether the item says it.  The suggestions are the stats "
-    "your collection actually shows."
-)
-
 #: What the Class section says when there is nothing to restrict by.  The
 #: restrictions are the reference database's and are in no file of the game's,
 #: so on a machine without it this section could only ever match nothing --
@@ -658,13 +640,15 @@ class StatRow(QWidget):
         self.text.setCompleter(_completer(vocabulary, self.text))
         self.text.setToolTip(
             "The words to look for among the item's own lines.\n"
-            "Start typing and the stats your items show are offered."
+            "Start typing and the stats your collection actually shows\n"
+            "are suggested, which is a shorter list than the game has."
         )
 
         self.low = _spin(
             0,
             NUMBER_MAX,
-            "The lowest the number on such a line may be.\n"
+            "The lowest the number on such a line may be.  The number\n"
+            "read is the first one the line states.\n"
             f"Left at 0 and {NUMBER_MAX} the row asks only whether\n"
             "the item says it at all.",
             step=STEP_BY,
@@ -1074,6 +1058,17 @@ class AdvancedSearchOverlay(QWidget):
         return section
 
     def _requirements(self) -> Section:
+        """The four attribute rows, and nothing under them.
+
+        The section used to carry a line saying that an item is worn either by
+        the player level or by these attributes, so these rows narrow the stat
+        half of that.  The user asked for the panel's sections to be rows and
+        nothing else, so the sentence is on the low box of each row instead --
+        which is where the rest of that row's reading already is, and where a
+        reader who wonders what the number means will hover anyway.  Worth
+        writing down because the sentence is not lost and a later reader
+        should not put it back on the face of the panel.
+        """
         section = Section("Stat Requirements")
         self.req_spins: dict[str, tuple[SpinBox, SpinBox]] = {}
         for word in REQ_WORDS:
@@ -1082,15 +1077,13 @@ class AdvancedSearchOverlay(QWidget):
                 REQ_MAX,
                 f"The {word.lower()} an item asks for, from 0.\n"
                 "An item that asks for none of it asks for 0, so a floor\n"
-                "leaves it out and a ceiling does not.",
+                "leaves it out and a ceiling does not.  An item is worn\n"
+                "by the player level or by these attributes, so these\n"
+                "rows narrow the stat half of that.",
             )
             high = _spin(REQ_MAX, REQ_MAX, f"The {word.lower()} an item asks for, to.")
             self.req_spins[word] = (low, high)
             section.row(word, _pair(low, high))
-        section.note(
-            "An item is worn either by the player level or by these attributes, "
-            "so these four rows narrow the stat half of that."
-        )
         return section
 
     def _classes(self) -> Section:
@@ -1117,6 +1110,13 @@ class AdvancedSearchOverlay(QWidget):
         *named* without a bound -- which is what the reference's own form does
         with an empty pair of boxes.  Here a row that has been moved at all is
         the naming, and the range it was moved to is the rest of the question.
+
+        What used to stand under these rows -- that a named type has to be one
+        the item carries, that the two ranges have to overlap, and that a row
+        left covering everything asks nothing -- is on the boxes now, split
+        across the pair the way the rest of each box's reading already is: the
+        low box carries the type and the overlap, the high box the row at rest.
+        The user asked for these sections to be rows and nothing else.
         """
         section = Section(title)
         spins: dict[str, tuple[SpinBox, SpinBox]] = {}
@@ -1126,19 +1126,21 @@ class AdvancedSearchOverlay(QWidget):
                 0,
                 NUMBER_MAX,
                 f"The lowest {element} {title.lower()} to show.\n"
-                "An item that has none of it is left out as soon as either\n"
-                "box of this row moves.",
+                "A type named here has to be one the item carries, and the\n"
+                "two ranges have to overlap: a sword rolling 14-28 passes a\n"
+                "request for 20-30.  An item with none of it is left out as\n"
+                "soon as either box of this row moves.",
                 step=STEP_BY,
             )
             high = _spin(
                 NUMBER_MAX,
                 NUMBER_MAX,
-                f"The highest {element} {title.lower()} to show.",
+                f"The highest {element} {title.lower()} to show.\n"
+                "A row left at 0 and the top asks nothing.",
                 step=STEP_BY,
             )
             spins[element] = (low, high)
             section.row(name, _pair(low, high))
-        section.note(ELEMENTS_HINT)
         return section, spins
 
     def _stats_section(self) -> Section:
@@ -1148,6 +1150,13 @@ class AdvancedSearchOverlay(QWidget):
         once: what a row holds is a *draft*, and a draft is thrown away on
         every Esc, so a row that outlived the panel would be a piece of a
         search nobody can see.
+
+        What stood under it -- that a row is answered by one of the item's own
+        lines, that the number read is the first one on that line, and that the
+        suggestions are the stats the collection shows -- is on the rows
+        themselves now, which is where those three facts are each about
+        something: see :class:`StatRow`, whose two ends carry the reading, and
+        the text box, whose tip says where the suggestions come from.
         """
         section = Section("Stats")
         self.stat_rows: list[StatRow] = []
@@ -1173,7 +1182,6 @@ class AdvancedSearchOverlay(QWidget):
             "row only while this is ticked."
         )
         section.row("", self.bonuses_box)
-        section.note(STATS_HINT)
         return section
 
     def _add_stat(
