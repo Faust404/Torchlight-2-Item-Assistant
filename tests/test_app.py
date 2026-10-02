@@ -660,8 +660,8 @@ def test_the_collection_draws_the_item_rather_than_summarising_it(stocked):
     game does rather than a re-reading of the columns beside it.
     """
     assert stocked.grid.count() == 3  # the collection is in name order
-    assert stocked.grid.tile(0).text() == "Alpha\nRequires Level 5"
-    assert stocked.grid.tile(2).text() == "Gamma\nRequires Level 5"
+    assert stocked.grid.tile(0).text() == "Alpha\nRequirements\nPlayer Level 5"
+    assert stocked.grid.tile(2).text() == "Gamma\nRequirements\nPlayer Level 5"
 
 
 def test_the_selection_survives_a_refresh(stocked):
@@ -701,14 +701,14 @@ def test_the_poll_draws_no_card_again(stocked, monkeypatch):
     assert len(calls) == 0, "the cards were drawn again to build the wall"
 
     stocked.grid.select_row(0)
-    assert stocked.grid.tile(0).text() == "Alpha\nRequires Level 5"
+    assert stocked.grid.tile(0).text() == "Alpha\nRequirements\nPlayer Level 5"
     assert len(calls) == 0, "selecting a card drew it again"
 
     for _ in range(3):
         stocked._sync(write=False)
 
     assert len(calls) == 0, "a refresh drew a card again"
-    assert stocked.grid.tile(0).text() == "Alpha\nRequires Level 5"
+    assert stocked.grid.tile(0).text() == "Alpha\nRequirements\nPlayer Level 5"
 
 
 def test_without_the_game_the_window_says_so_in_one_line(qapp, tmp_path):

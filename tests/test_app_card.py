@@ -35,6 +35,7 @@ from PySide6.QtGui import QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from app.card import (  # noqa: E402
+    CHIP_GAP,
     DIM,
     GOLD,
     HEAD,
@@ -43,6 +44,7 @@ from app.card import (  # noqa: E402
     MARK,
     MUTED,
     TIER_INK,
+    ChipRow,
     Hairline,
     IconCache,
     IconTile,
@@ -84,7 +86,13 @@ def lifted(number: str) -> str:
 
 
 def card(**kwargs) -> Card:
-    """A card with the fields a test is not about filled in."""
+    """A card with the fields a test is not about filled in.
+
+    No level and no requirement, so that the gate's section -- which is at the
+    foot of every card that has one -- is not drawn on a card whose test is
+    about where some *other* section's rule falls.  A test that is about the
+    gate sets one, and a test that needs the level in the corner sets that.
+    """
     fields = {
         "name": "Bashdrill",
         "tier": "unique",
@@ -92,7 +100,7 @@ def card(**kwargs) -> Card:
         "type_name": "Fist",
         "set_name": None,
         "icon": None,
-        "level": 45,
+        "level": 0,
         "sockets": 1,
         "blocks": (),
         "gems": (),
@@ -441,13 +449,17 @@ def test_a_task_with_nothing_left_to_grant_is_still_a_task(qapp):
     assert texts(drawn, "augfx") == []
 
 
-def test_what_the_item_asks_of_the_character_is_drawn_under_its_name(qapp):
-    """The game's two requirement lines, above every stat it has.
+def test_what_the_item_asks_of_the_character_is_drawn_at_the_foot(qapp):
+    """The gate, under a heading, in chips, below every stat the item has.
 
-    They are not a section and take no rule: a requirement is not one of the
-    item's numbers, it is the question of whether the rest can be used at all.
-    Two blocks are on the card here so that a rule *could* be drawn -- the one
-    between them is the only one there may be.
+    That is where the reference draws it and the reason is the card's own
+    shape: everything above is a number belonging to the item, and these are
+    the only lines on the card about the reader.  The heading is what makes
+    them a section rather than a note on the headline, and the rule above them
+    is what any other section gets.
+
+    The chips are the site's own device: the level in one box, the word between
+    the groups outside the boxes, each attribute in one of its own.
     """
     drawn = ItemCard(
         card(
@@ -461,17 +473,75 @@ def test_what_the_item_asks_of_the_character_is_drawn_under_its_name(qapp):
         )
     )
 
-    assert texts(drawn, "gate") == [
-        "Requires Level 51",
-        "or 81 Strength and 40 Dexterity",
+    assert texts(drawn, "rhead") == ["Requirements"]
+    assert texts(drawn, "rchip") == [
+        emphasis("Player Level 51", DIM),
+        emphasis("Strength 81", DIM),
+        emphasis("Dexterity 40", DIM),
     ]
-    assert len(drawn.findChildren(Hairline)) == 1
+    # The word between the groups is not a chip: it is written plainly so that
+    # it cannot be read as a third thing to be.
+    assert texts(drawn, "ror") == ["or"]
+    # One rule between the item's two blocks and one above the gate.
+    assert len(drawn.findChildren(Hairline)) == 2
+
+    # And the chips are in a row that wraps rather than a stack or a line of
+    # loose labels: see ``test_the_chips_wrap_when_the_card_is_narrow``.
+    (row,) = drawn.findChildren(ChipRow)
+    assert [chip.objectName() for chip in row._chips] == [
+        "rchip",
+        "ror",
+        "rchip",
+        "rchip",
+    ]
 
     # And a card with nothing to say about it draws nothing: no game to read
     # the requirement from and no level in the save file either, or an item
     # the game gates on nothing at all.
-    assert texts(ItemCard(card(level=0, requires=None)), "gate") == []
-    assert texts(ItemCard(card(requires=Requirements(0, False, ()))), "gate") == []
+    assert texts(ItemCard(card(level=0, requires=None)), "rhead") == []
+    assert texts(ItemCard(card(requires=Requirements(0, False, ()))), "rhead") == []
+
+
+def test_the_band_is_drawn_plain_under_the_chips(qapp):
+    """The reference's own distinction, and the reason for it: a requirement is
+    something the player has to be or do, and the band is a fact about where
+    the item comes from -- so the one is boxed and the other is not, and a box
+    round the band would file it as a third gate."""
+    drawn = ItemCard(
+        card(requires=Requirements(0, False, (), min_level=45, max_level=55))
+    )
+
+    assert texts(drawn, "band") == [emphasis("Min Level 45 · Max Level 55", DIM)]
+    assert texts(drawn, "rhead") == [], "a band is not a gate and takes no heading"
+
+
+def test_the_chips_wrap_when_the_card_is_narrow(qapp):
+    """Qt has no ``flex-wrap``, and the card is 340px at its narrowest -- a
+    level chip, the word and two attribute chips already come to more -- so
+    the row does its own wrapping.  Without it a four-attribute requirement
+    would be drawn with its last chips cut off, and those 43 items are the
+    ones most worth reading.
+    """
+    chips = [
+        QLabel(name) for name in ("Player Level 51", "or", "Strength 81", "Dexterity 40")
+    ]
+    for chip in chips:
+        chip.setObjectName("rchip")
+    row = ChipRow(chips)
+
+    # Wide enough and it is one line, as the site draws it.
+    assert len(row._lines(4096)) == 1
+    # Narrow enough and it breaks at a chip, never inside one.
+    lines = row._lines(4)
+    assert len(lines) == 4
+    assert [chip.text() for chip in lines[0]] == ["Player Level 51"]
+    # And a width between the two puts as many chips on the first line as fit:
+    # exactly two here, because the width is the first two of them and a gap.
+    two = sum(chip.sizeHint().width() for chip in chips[:2]) + CHIP_GAP
+    assert [chip.text() for chip in row._lines(two)[0]] == [
+        "Player Level 51",
+        "or",
+    ]
 
 
 @needs_game
@@ -480,16 +550,34 @@ def test_a_real_item_s_requirements_are_drawn_from_its_own_file(qapp, real_game)
 
     Both numbers are on the card and they are different numbers: the pill in
     the corner is the level the item *is* -- what the site's card has always
-    shown, and what the list sorts by -- while the line under the name is what
+    shown, and what the list sorts by -- while the chips at the foot are what
     the game asks of the character before it will let them use it.
     """
     drawn = ItemCard(build(_bashdrill(), real_game))
 
-    assert texts(drawn, "gate") == [
-        "Requires Level 51",
-        "or 81 Strength and 40 Dexterity",
+    assert texts(drawn, "rhead") == ["Requirements"]
+    assert texts(drawn, "rchip") == [
+        emphasis("Player Level 51", DIM),
+        emphasis("Strength 81", DIM),
+        emphasis("Dexterity 40", DIM),
     ]
+    assert texts(drawn, "ror") == ["or"]
     assert texts(drawn, "pill") == ["Level 45", "1 Socket"]
+
+    # At the foot: the flavour line is the only thing under it.
+    body = [
+        (label.objectName(), label.text())
+        for label in drawn.findChildren(QLabel)
+    ]
+    gate = [i for i, (name, _) in enumerate(body) if name == "rhead"][0]
+    assert [name for name, _ in body[gate:]] == [
+        "rhead",
+        "rchip",
+        "ror",
+        "rchip",
+        "rchip",
+        "flav",
+    ]
 
 
 def test_an_affix_line_is_green_and_a_damage_line_is_not(qapp):

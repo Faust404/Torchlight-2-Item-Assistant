@@ -318,8 +318,11 @@ def test_an_affix_renders_as_the_sentence_the_player_reads(game):
     it.effects = [effect("OFTHEELEPHANT MAX HP", value=81.6)]
     assert render(it, game) == [
         "Test Item",
-        "Requires Level 30",
         "+82 Health",
+        "Requirements",
+        # The save file's own level standing in, in the reference's words: the
+        # item has no guid, so there is no file of its own to ask.
+        "Player Level 30",
     ]
 
 
@@ -457,13 +460,13 @@ def test_the_level_line_is_left_out_when_there_is_no_level():
 
 @needs_game
 def test_a_socketable_s_gate_is_written_as_an_item_level(game):
-    """The one gate that is about a *different* item, in the game's own word.
+    """The one gate that is about a *different* item, and the words say so.
 
     A socketable is not worn, so the level its file names is the level of the
-    host it may go into, and the game writes ``Requires item level`` for that
-    rather than the ``Requires Level`` it puts on a sword.  The item here is
-    level 0 -- which is what the collection's own socketables are -- so the
-    line cannot be the item's own level read back to it.
+    host it may go into -- and the label spells that out rather than leaving
+    the reader to work it out from the fact that they are looking at a gem.
+    The item here is level 0 -- which is what the collection's own socketables
+    are -- so the line cannot be the item's own level read back to it.
 
     Which number belongs there is ``tests/test_gamedata.py``'s business; what
     is pinned here is the wording, and that a number is there at all.
@@ -472,9 +475,13 @@ def test_a_socketable_s_gate_is_written_as_an_item_level(game):
 
     guid, _ = _a_socketable_with_a_gate(game)
     card = build(item("Blood Ember", guid=guid, level=0), game)
+    said = lines(card)
 
-    head, _, number = lines(card)[1].rpartition(" ")
-    assert head == "Requires item level"
+    # The gate is the last section, under its own heading; only its chip is
+    # under that, no socketable carrying an attribute requirement.
+    start = said.index("Requirements")
+    head, _, number = said[start + 1].rpartition(" ")
+    assert head == "Required Item Level to Socket"
     assert number.isdigit() and int(number) > 0
 
 

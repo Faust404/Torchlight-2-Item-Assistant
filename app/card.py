@@ -32,7 +32,7 @@ import math
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -58,15 +58,19 @@ from tl2stash.card import (
     AUGMENT_LOCKED,
     DAMAGE,
     DAMAGE_PER_SECOND,
+    REQUIREMENTS,
+    THE_ALTERNATIVE,
     Augment,
     Card,
     TIER_INK,
+    level_range_lines,
     requirements_lines,
 )
 from tl2stash.icons import ELEMENT_MARKS, IconLibrary, Placement
 
 __all__ = [
     "STYLE",
+    "ChipRow",
     "IconCache",
     "IconTile",
     "ItemCard",
@@ -509,6 +513,102 @@ class Hairline(QFrame):
         self.setStyleSheet(f"background-color:{LINE}; border:0;")
 
 
+#: The gap between two chips in the gate's row, and between two lines of them.
+#: The site's own ``.rrow{gap:5px}``.
+CHIP_GAP = 5
+
+
+class ChipRow(QWidget):
+    """A row of chips that wraps when the card is too narrow for one line.
+
+    The site writes the gate as a flex row with ``flex-wrap: wrap``, and Qt has
+    no such thing: a box layout lays its children out along one line and
+    something has to give when they do not fit.  What gives here is the line --
+    the row measures its chips and starts another where the next would overrun
+    -- which is the half of ``flex-wrap`` a card needs, and it costs a
+    ``heightForWidth`` where a real layout would have cost a QLayout subclass
+    with the same three methods on it.
+
+    It is not a nicety: the card is 340px at its narrowest and a level chip,
+    the word between the groups and two attribute chips already come to more,
+    so without this a four-attribute requirement would be drawn with its last
+    two chips cut off -- and the four-attribute items are 43 of the game's
+    6,262 and the ones most worth reading.
+
+    The children are not all chips.  The word between the two groups is a
+    separator on the site rather than a box, and is drawn as one here; the row
+    neither knows nor cares which of its children is which, because a chip is
+    a chip by its *style* and this only places them.
+    """
+
+    def __init__(self, chips: list[QWidget], parent=None) -> None:
+        super().__init__(parent)
+        self._chips = chips
+        for chip in chips:
+            chip.setParent(self)
+        policy = QSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def _lines(self, width: int) -> list[list[QWidget]]:
+        """The chips split into the lines they fit on at ``width``."""
+        rows: list[list[QWidget]] = []
+        row: list[QWidget] = []
+        used = 0
+        for chip in self._chips:
+            need = chip.sizeHint().width()
+            if row and used + CHIP_GAP + need > width:
+                rows.append(row)
+                row, used = [], 0
+            row.append(chip)
+            # The first chip on a line pays no gap, which is what makes the
+            # comparison above exact rather than a gap too generous.
+            used += need + (CHIP_GAP if used else 0)
+        if row:
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _tall(row: list[QWidget]) -> int:
+        """How tall a line is: its tallest chip, since they sit on one line."""
+        return max((chip.sizeHint().height() for chip in row), default=0)
+
+    def _room(self, rows: list[list[QWidget]]) -> int:
+        return sum(self._tall(row) for row in rows) + CHIP_GAP * max(
+            len(rows) - 1, 0
+        )
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 -- Qt naming
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 -- Qt naming
+        return self._room(self._lines(width))
+
+    def sizeHint(self):  # noqa: N802 -- Qt naming
+        """One line, which is the shape the row has when nothing has to wrap."""
+        across = sum(chip.sizeHint().width() for chip in self._chips)
+        across += CHIP_GAP * max(len(self._chips) - 1, 0)
+        return QSize(across, self._tall(self._chips))
+
+    def minimumSizeHint(self):  # noqa: N802 -- Qt naming
+        """As narrow as the widest chip, because a chip does not break in two."""
+        widest = max((chip.sizeHint().width() for chip in self._chips), default=0)
+        return QSize(widest, self._tall(self._chips))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        super().resizeEvent(event)
+        y = 0
+        for row in self._lines(self.width()):
+            tall = self._tall(row)
+            x = 0
+            for chip in row:
+                chip.setGeometry(x, y, chip.sizeHint().width(), tall)
+                x += chip.sizeHint().width() + CHIP_GAP
+            y += tall + CHIP_GAP
+
+
 class ItemCard(QFrame):
     """One item, drawn: the headline, then the sections under it."""
 
@@ -628,15 +728,14 @@ class ItemCard(QFrame):
         column.setContentsMargins(13, 12, 13, 13)
         column.setSpacing(2)
 
-        # A weapon's output comes first under its name, and what the item asks
-        # of the character after it -- the same order ``tl2stash.card.lines``
-        # flattens them in, because the drawing and the flat list are one card.
+        # A weapon's output comes first under its name, and the item's own
+        # stats under that -- the same order ``tl2stash.card.lines`` flattens
+        # them in, because the drawing and the flat list are one card.
         first = True
         if card.weapon_lead:
             first = self._part(column, first)
             for text in card.weapon_lead:
                 column.addWidget(self._lead_line(text))
-        self._requires(column, card)
 
         for kind, found in _sections(card.blocks):
             first = self._part(column, first)
@@ -667,6 +766,15 @@ class ItemCard(QFrame):
         if card.set_ladder:
             first = self._part(column, first)
             self._ladder(column, card)
+
+        # What the item asks of the character, last of the sections and last
+        # but the flavour: everything above is a number the item has and these
+        # two lines are the only ones about the reader.  The same order
+        # ``tl2stash.card.lines`` flattens them in, because the drawing and
+        # the flat list are the same card.
+        if requirements_lines(card) or level_range_lines(card):
+            first = self._part(column, first)
+            self._requires(column, card)
 
         # The flavour line is not a section and takes no rule, which is the
         # site's own note about it: it is a remark about the item rather than
@@ -711,27 +819,59 @@ class ItemCard(QFrame):
         return label
 
     def _requires(self, column: QVBoxLayout, card: Card) -> None:
-        """What the item asks of the character, above every stat.
+        """What the item asks of the character, at the foot of the card.
 
-        The game writes these above every stat, and they are the one thing on
-        the card that decides whether any of the rest can be used at all -- so
-        they take no rule and no section: they belong to the headline, and a
-        rule over them would file a requirement as one of the item's stats.
+        It is drawn last and drawn as a section, which is the reference's own
+        arrangement and the one the user asked for: every line above this is a
+        number belonging to the item, and these are the only ones about the
+        reader -- so they are the last thing read and the first thing to be
+        looked for, and a rule over them says they are their own part of the
+        card rather than a footnote to the stats.
 
-        They are written in the colour the corner pills are written in, which
-        is this window's word for a note about the item rather than a number
-        of it.  The card cannot know whether the character meets them -- it is
-        a collection, not a character sheet -- so the game's other colour, the
-        red it turns an unmet requirement, is not available to it.
+        The gates are chips and the band under them is plain text, which is the
+        site's distinction and worth keeping: a requirement is something the
+        character must be, and the band is where the item comes from.  Box the
+        band and it reads as a third way in.
+
+        The card cannot know whether the character meets any of it -- this is a
+        collection, not a character sheet -- so the game's other colour for a
+        requirement, the red it turns an unmet one, is not available here.
         """
         said = requirements_lines(card)
-        for text in said:
-            label = QLabel(text)
-            label.setObjectName("gate")
+        if said:
+            heading = QLabel(REQUIREMENTS)
+            heading.setObjectName("rhead")
+            column.addWidget(heading)
+            column.addWidget(ChipRow([self._chip(text) for text in said]))
+
+        for text in level_range_lines(card):
+            label = QLabel(emphasis(text, DIM))
+            label.setObjectName("band")
+            label.setTextFormat(Qt.TextFormat.RichText)
             label.setWordWrap(True)
             column.addWidget(label)
-        if said:
-            column.addSpacing(6)
+
+    def _chip(self, text: str) -> QWidget:
+        """One of the ways in -- or the word between the two groups.
+
+        A chip is the site's ``.rchip``: a hairline box, the label in the dim
+        and the number lifted, which is the card's own rule for a number and
+        not a second one.  The word between the groups is that rule's one
+        exception, because it is not a chip at all -- no box, and drawn in the
+        dim without a number to lift -- and the site is explicit about why it
+        gets to be different: it is the one thing on the card that must not be
+        misread, so it is padded and spaced rather than made faint.
+        """
+        if text == THE_ALTERNATIVE:
+            label = QLabel(THE_ALTERNATIVE)
+            label.setObjectName("ror")
+            return label
+
+        label = QLabel(emphasis(text, DIM))
+        label.setObjectName("rchip")
+        label.setFont(_serif())
+        label.setTextFormat(Qt.TextFormat.RichText)
+        return label
 
     def _socketed(self, column: QVBoxLayout, card: Card) -> None:
         """What a socket put on the item: the heading, its lines, the gems.
@@ -894,7 +1034,25 @@ STYLE = f"""
     font-size: 11px;
 }}
 #gem {{ color: {HEAD}; font-size: 12.5px; font-weight: 600; }}
-#gate {{ color: {LABEL}; font-size: 12px; }}
+#rhead {{
+    color: {LABEL};
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 1px;
+}}
+#rchip {{
+    border: 1px solid {DIV};
+    border-radius: 3px;
+    padding: 1px 6px;
+    color: {DIM};
+    font-size: 11.5px;
+}}
+#ror {{
+    color: {DIM};
+    font-size: 10px;
+    letter-spacing: 2px;
+}}
+#band {{ color: {DIM}; font-size: 11.5px; }}
 #socketed {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #setname {{ font-size: 13px; font-weight: 600; }}
 #rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}

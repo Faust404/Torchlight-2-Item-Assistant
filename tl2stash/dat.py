@@ -85,7 +85,9 @@ __all__ = [
     "VAR_LEVEL_REQUIRED",
     "VAR_MAGIC_REQUIRED",
     "VAR_MAXDAMAGE",
+    "VAR_MAXLEVEL",
     "VAR_MINDAMAGE",
+    "VAR_MINLEVEL",
     "VAR_NAME",
     "VAR_RANGE",
     "VAR_RARITY_DMG_MOD",
@@ -294,6 +296,14 @@ VAR_UNIT_GUID = field_hash("UNIT_GUID")
 VAR_LEVEL = field_hash("LEVEL")
 VAR_MINDAMAGE = field_hash("MINDAMAGE")
 VAR_MAXDAMAGE = field_hash("MAXDAMAGE")
+
+#: The band the item drops in, as opposed to the level it *is*: MINLEVEL is the
+#: floor and MAXLEVEL the ceiling, and neither is a gate on the character --
+#: the gate is ``LEVEL_REQUIRED`` below.  Both are stated as the data has them
+#: and read through :func:`~tl2stash.gamedata.level_range_for`, which is where
+#: the two ways the files spell "no ceiling" are collapsed.
+VAR_MINLEVEL = field_hash("MINLEVEL")
+VAR_MAXLEVEL = field_hash("MAXLEVEL")
 
 #: A percentage modifier on the item's nominal damage: one for the weapon
 #: class's own speed, one for its rarity.  Both default to 100.

@@ -32,13 +32,21 @@ __all__ = [
     "Card",
     "DAMAGE",
     "DAMAGE_PER_SECOND",
+    "ITEM_LEVEL_TO_SOCKET",
+    "MAX_LEVEL",
+    "MIN_LEVEL",
+    "PLAYER_LEVEL",
+    "REQUIREMENTS",
     "Rung",
     "TIER_INK",
     "TIER_KEYS",
     "TIER_MAGIC",
     "TIER_NONE",
+    "THE_ALTERNATIVE",
+    "THE_SEPARATOR",
     "carried_magic",
     "display_tier",
+    "level_range_lines",
     "lines",
     "requirements_lines",
 ]
@@ -292,23 +300,38 @@ class Card:
     augments: tuple[Augment, ...] = ()
 
 
-#: The two words the game writes in front of the two kinds of gate, taken off
-#: its own string table (``Torchlight2.exe``, as UTF-16): the levels it writes
-#: as ``Requires Level`` and, on a socketable, as ``Requires item level`` -- a
-#: socketable is not worn, so what its gate is the level of is the item that
-#: receives it.  The stat lines are built from the same table, which carries
-#: ``Requires `` as a prefix and ``Strength``/``Dexterity``/``Focus``/
-#: ``Vitality`` as labels beside it.
-REQUIRES_LEVEL = "Requires Level"
-REQUIRES_ITEM_LEVEL = "Requires item level"
+#: The heading over the ways in.  The reference database puts one over them and
+#: the card does too, now that they are a section at the foot rather than a
+#: note on the headline: what is under it is a group -- one gate or the other,
+#: never both -- and a group needs a word over it.
+REQUIREMENTS = "Requirements"
 
-#: The word the game puts *between* the two kinds of gate, and it is the word
-#: the requirement is: ``Or`` stands in the same string table run as the two
-#: prefixes above and the four labels, and the semantics behind it is that a
-#: character may equip the item on reaching the level *or* on reaching the
-#: attributes, whichever comes first.  Drawing the two as a conjunction would
-#: be a lie about the item, so the warning is kept in the line itself.
+#: The two words in front of the two kinds of gate.
+#:
+#: These are the *reference database's* wording rather than the game's, which
+#: is a change: the game's own string table has ``Requires Level`` and, on a
+#: socketable, ``Requires item level``.  Both ask the same two questions about
+#: the same two fields, and the reference's spelling is the one asked for here
+#: -- it says what the second number is *of*, which the game's ``item level``
+#: leaves the reader to work out from the fact that they are looking at a gem.
+PLAYER_LEVEL = "Player Level"
+ITEM_LEVEL_TO_SOCKET = "Required Item Level to Socket"
+#: The word the reference puts *between* the two kinds of gate, and it is the
+#: word the requirement is: a character may equip the item on reaching the
+#: level *or* on reaching the attributes, whichever comes first.  Drawing the
+#: two as a conjunction would be a lie about the item, so the warning is kept
+#: in the line itself -- and the reference is pointed about it, drawing the
+#: word as its own element rather than as part of either chip.
 THE_ALTERNATIVE = "or"
+
+#: The drop band's two labels, and the dot the reference joins them with.  Not
+#: chips and not a heading: the band is a fact about where the item comes from
+#: rather than a gate on the reader, and the reference states it in the same
+#: plain voice as the item's other small print so that it cannot be read as a
+#: third way in.
+MIN_LEVEL = "Min Level"
+MAX_LEVEL = "Max Level"
+THE_SEPARATOR = " · "
 
 #: The tail of a weapon's headline line -- ``110 Damage per Second``.  Named
 #: here because two modules need it: :mod:`tl2stash.tooltip` writes the line
@@ -326,31 +349,66 @@ AUGMENT_LOCKED = "locked until the task above is complete"
 
 
 def requirements_lines(card: Card) -> list[str]:
-    """What the item gates on, in the game's own words.
+    """The ways in, one chip to a line.
 
-    Two lines at most, because there are two kinds of gate and the game draws
-    them as two groups: the level, and then the attributes behind the word
-    :data:`THE_ALTERNATIVE`.  A card with no answer from the game's data has
-    only the save file's level to show, and says so the way the tool always
-    has; a card whose data answered *nothing* -- a potion, a quest item, which
-    the game gates on nothing at all -- shows nothing, which is not the same
-    as showing zero.
+    The reference database draws these as a row of small boxes -- the level in
+    one, the word :data:`THE_ALTERNATIVE` between them, each attribute in one
+    of its own -- and this is that row flattened: a line per chip, with the
+    word as a line of its own between the two groups.  The window draws the
+    boxes; the flat list cannot, and writing the four attributes as one
+    sentence would be the tool inventing a conjunction the reference does not
+    draw, which is why the separator is a line here rather than a word folded
+    into the one above it.
+
+    A card with no answer from the game's data has only the save file's level
+    to show, and says so the way the tool always has; a card whose data
+    answered *nothing* -- a potion, a quest item, which the game gates on
+    nothing at all -- shows nothing, which is not the same as showing zero.
     """
     requires = card.requires
     if requires is None:
-        return [f"{REQUIRES_LEVEL} {card.level}"] if card.level else []
+        return [f"{PLAYER_LEVEL} {card.level}"] if card.level else []
 
     out: list[str] = []
     if requires.level:
-        head = REQUIRES_ITEM_LEVEL if requires.socketing else REQUIRES_LEVEL
+        head = ITEM_LEVEL_TO_SOCKET if requires.socketing else PLAYER_LEVEL
         out.append(f"{head} {requires.level}")
     if requires.stats:
-        # The attributes are a conjunction among themselves and the level is
-        # the alternative to all of them, which is why the one word joins the
-        # two groups and the other joins the members of the second.
-        written = " and ".join(f"{value} {label}" for label, value in requires.stats)
-        out.append(f"{THE_ALTERNATIVE} {written}" if out else written)
+        # The word joins the two *groups* and never the members of the second:
+        # the attributes are a conjunction among themselves, and a character
+        # who reaches all four has met the requirement just as surely as one
+        # who reached the level.
+        if out:
+            out.append(THE_ALTERNATIVE)
+        out.extend(f"{label} {value}" for label, value in requires.stats)
     return out
+
+
+def level_range_lines(card: Card) -> list[str]:
+    """The band the item drops in, as one line, and none for an item with no
+    band to show.
+
+    Last of the card's small print and under the requirements, which is the
+    reference's own argument for the two being two blocks rather than one: the
+    numbers are both levels and a reader who met them side by side would take
+    the band for a second gate.  It is written plainly for the same reason --
+    a box drawn round this would file it as a third way in.
+
+    Only the fields the file carries, so an item with a floor and no ceiling
+    reads ``Min Level 12`` and nothing more.  ``0`` and ``0`` is no line at
+    all, which is most items: a floor of zero is no floor.  A card with no
+    answer from the game's data has no band, because the band is not on the
+    save file -- the level it records is the item's own, not the band's.
+    """
+    requires = card.requires
+    if requires is None:
+        return []
+    said = []
+    if requires.min_level:
+        said.append(f"{MIN_LEVEL} {requires.min_level}")
+    if requires.max_level:
+        said.append(f"{MAX_LEVEL} {requires.max_level}")
+    return [THE_SEPARATOR.join(said)] if said else []
 
 
 def lines(card: Card) -> list[str]:
@@ -366,7 +424,6 @@ def lines(card: Card) -> list[str]:
     # A weapon's output, first under its name: the number a weapon is chosen
     # for is not one of its stats but what the stats are about.
     out.extend(card.weapon_lead)
-    out.extend(requirements_lines(card))
     for block in card.blocks:
         out.extend(block.lines)
     # What a socket added, under its own heading and over the gems themselves
@@ -397,6 +454,17 @@ def lines(card: Card) -> list[str]:
     for rung in card.set_ladder:
         out.append(f"({rung.count}) Set")
         out.extend(rung.lines)
+    # What the item asks of the character, at the foot of the card under
+    # everything the item *is* -- after its own stats, its sockets, what it
+    # would become and what more of its set would give it.  That is where the
+    # reference draws it and the reason is the card's own shape: everything
+    # above this is a number belonging to the item, and these two lines are
+    # the only ones that are about the reader.
+    said = requirements_lines(card)
+    if said:
+        out.append(REQUIREMENTS)
+        out.extend(said)
+    out.extend(level_range_lines(card))
     if card.flavor:
         out.append(card.flavor)
     return out

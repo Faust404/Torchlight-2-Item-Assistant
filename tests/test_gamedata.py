@@ -1339,8 +1339,6 @@ def test_bashdrill_reads_as_the_game_shows_it(real_game):
         "326 Damage per Second",
         "Very Fast attack speed (0.48 seconds)",
         "Weapon Range 0.5",
-        "Requires Level 51",
-        "or 81 Strength and 40 Dexterity",
         "Physical Damage 52-74",
         "Electric Damage 77-110",
         "+2% to Physical Armor",
@@ -1352,6 +1350,14 @@ def test_bashdrill_reads_as_the_game_shows_it(real_game):
         "+1% Dodge chance",
         "5% chance to Shock for 5 sec.",
         "Silence for 1 sec.",
+        # The gate at the foot of the card, where the reference draws it and
+        # in the reference's words: the word between the two groups is its own
+        # line here because on the window it is its own element.
+        "Requirements",
+        "Player Level 51",
+        "or",
+        "Strength 81",
+        "Dexterity 40",
         # The italic line.  It is not in the reference dump this was checked
         # against, and it was missing here until the flavour text stopped
         # being looked up by the item's *name*: a unique is not named what it
@@ -2007,6 +2013,34 @@ def _a_socketable_with_a_gate(game) -> tuple[int, str]:
             return int(guid) & 0xFFFFFFFFFFFFFFFF, unit_type
 
     raise AssertionError("the archive has no socketable with a level any more")
+
+
+def _an_item_with_an_inherited_ceiling(game) -> int:
+    """The guid of a real item whose ``MAXLEVEL`` comes off a base file.
+
+    378 of the 2,668 files that resolve a ceiling do not state one themselves,
+    and the band is the one place a read that stopped at the item's own file
+    would go wrong quietly: the item would simply have no ceiling, which is a
+    card with a line missing rather than a card with a wrong number on it.
+    Walked out of the archive directly, the way the helper above is, so which
+    item this is cannot come from the tool.
+    """
+    from tl2stash.dat import VAR_MAXLEVEL
+    from tl2stash.gamedata import _number, _text
+
+    for key, data in game._item_files.items():
+        if not key.startswith("MEDIA/UNITS/ITEMS/"):
+            continue
+        if data.root.variables.get(VAR_MAXLEVEL) is not None:
+            continue
+        inherited = game._inherited(data)
+        if _number(inherited, VAR_MAXLEVEL) is None:
+            continue
+        guid = _text(inherited, VAR_UNIT_GUID)
+        if guid:
+            return int(guid) & 0xFFFFFFFFFFFFFFFF
+
+    raise AssertionError("the archive has no item with an inherited ceiling")
 
 
 def _a_set_item(game, tier_word: str) -> tuple[int, str, str, str]:

@@ -31,6 +31,7 @@ from tl2stash.card import (  # noqa: E402
     Rung,
     carried_magic,
     display_tier,
+    level_range_lines,
     lines,
     requirements_lines,
 )
@@ -39,7 +40,12 @@ from tl2stash.item import AddedDamage  # noqa: E402
 from tl2stash.tooltip import build, render  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
-from test_gamedata import _a_set_item, _an_item_of_tier, _bashdrill  # noqa: E402
+from test_gamedata import (  # noqa: E402
+    _a_set_item,
+    _an_item_of_tier,
+    _an_item_with_an_inherited_ceiling,
+    _bashdrill,
+)
 from test_tooltip import effect, item, word  # noqa: E402
 
 
@@ -285,20 +291,21 @@ def test_the_flat_lines_are_the_card_flattened():
     assert render(it) == lines(build(it))
     assert render(it) == [
         "Test Blade",
-        "Requires Level 7",
         "Damage 72",
         "Armor 20",
         "OFTHEELEPHANT MAX HP",
         "Socketed",
         "    Flawless Ruby",
+        "Requirements",
+        "Player Level 7",
     ]
 
 
 @needs_game
-def test_a_weapon_s_output_stands_between_its_name_and_its_gate(real_game):
+def test_a_weapon_s_output_stands_under_its_name(real_game):
     """The lead is the headline's other half, and it is drawn as one.
 
-    Under the name and over the requirements, which is where the reference
+    Under the name and over the item's own stats, which is where the reference
     puts it and what the game's own item page does: the number a weapon is
     chosen for is not one of its stats, so it takes no rule and no heading,
     and it is not part of the headline either -- it is a whole line about the
@@ -330,8 +337,9 @@ def test_an_item_that_is_not_a_weapon_leads_with_nothing():
     assert build(item("Test Blade", level=7, max_damage=72), None).weapon_lead == ()
     assert lines(build(item("Test Blade", level=7, max_damage=72), None)) == [
         "Test Blade",
-        "Requires Level 7",
         "Damage 72",
+        "Requirements",
+        "Player Level 7",
     ]
 
 
@@ -340,12 +348,16 @@ def test_an_item_that_is_not_a_weapon_leads_with_nothing():
 # --------------------------------------------------------------------------
 #
 # The two gates are alternatives in the game -- the level, or the whole set of
-# attributes -- and the wording says so.  The lines are built from the game's
-# own strings rather than invented, which is why the tests below are about
-# *which* of them is used where: getting the level of a socketable's host
-# mixed up with a player level, or writing the attributes as a second
-# requirement instead of the alternative to the first, are both mistakes that
-# read perfectly well.
+# attributes -- and the wording says so.  The words are the reference
+# database's rather than the game's own string table's, which is a deliberate
+# switch and the reason the tests below are about *which* of them is used
+# where: getting the level of a socketable's host mixed up with a player
+# level, or drawing the word between the groups as part of a chip, are both
+# mistakes that read perfectly well.
+#
+# Each chip is a line here and a box on the window, which is the one place the
+# flat list and the drawing cannot be the same shape -- see
+# ``app.card.ChipRow`` for what the window does with the wrapping.
 
 
 def _a_card(**fields) -> Card:
@@ -369,13 +381,16 @@ def _a_card(**fields) -> Card:
     return Card(**blank)
 
 
-def test_the_two_gates_are_two_lines_and_the_second_is_the_alternative():
+def test_the_two_gates_are_two_groups_with_the_word_between_them():
     """Bashdrill's numbers: level 45, asks 51, 81 Strength and 40 Dexterity.
 
-    ``or`` joins the two *groups* and ``and`` the members of the second, and
-    the difference is the item: a character may equip this on reaching 51
-    without ever reaching 81 Strength, so writing the four as a conjunction
-    with the level would be a requirement the game does not make.
+    The level is one group and the attributes are the other, and the word
+    between them is the whole of what the requirement means: a character may
+    equip this on reaching 51 without ever reaching 81 Strength.  The word is
+    a line of its own rather than folded into either group, which is what the
+    reference draws -- its own element, its own padding -- and folding it into
+    the attributes would put it where a reader takes it for a conjunction with
+    the level above.
     """
     card = _a_card(
         requires=Requirements(
@@ -384,8 +399,10 @@ def test_the_two_gates_are_two_lines_and_the_second_is_the_alternative():
     )
 
     assert requirements_lines(card) == [
-        "Requires Level 51",
-        "or 81 Strength and 40 Dexterity",
+        "Player Level 51",
+        "or",
+        "Strength 81",
+        "Dexterity 40",
     ]
 
 
@@ -393,32 +410,32 @@ def test_a_socketable_asks_for_an_item_level_and_not_a_player_level():
     """The same field on a gem is a different question about a different item.
 
     A socketable is not worn -- it goes *into* something -- so the level its
-    file gates on is the level of the host, and the game writes a different
-    word for it.  Writing ``Requires Level`` here would tell the player they
-    cannot pick the gem up, which is not a thing the game ever says.
+    file gates on is the level of the host, and the label says so.  Calling it
+    a Player Level would tell the player they cannot pick the gem up, which is
+    not a thing the game ever says.
     """
     card = _a_card(
         type_name="Socketable",
         requires=Requirements(level=6, socketing=True, stats=()),
     )
 
-    assert requirements_lines(card) == ["Requires item level 6"]
+    assert requirements_lines(card) == ["Required Item Level to Socket 6"]
 
 
-def test_attributes_with_no_level_beside_them_take_no_or():
-    """``or`` joins the two groups, so a card with one group has nothing to
-    join: a line reading ``or 100 Strength`` under nothing is half a sentence.
+def test_attributes_with_no_level_beside_them_take_no_between_word():
+    """The word joins the two groups, so a card with one group has nothing to
+    join: a bare ``or`` over a single chip is half a sentence.
     """
     card = _a_card(
         requires=Requirements(level=0, socketing=False, stats=(("Strength", 100),))
     )
 
-    assert requirements_lines(card) == ["100 Strength"]
+    assert requirements_lines(card) == ["Strength 100"]
 
 
 def test_an_item_the_game_gates_on_nothing_shows_no_requirement_line():
     """A potion, a quest object: the answer is *none*, and zero is how it is
-    written -- so a card reading ``Requires Level 0`` would be the tool
+    written -- so a card reading ``Player Level 0`` would be the tool
     inventing a gate the game does not have.
     """
     assert requirements_lines(_a_card(requires=Requirements(0, False, ()))) == []
@@ -437,7 +454,7 @@ def test_with_no_answer_from_the_game_the_save_s_own_level_stands_in():
     what the tool showed before it could ask, and is better than no gate at
     all; an item with neither shows nothing, exactly as it always did.
     """
-    assert requirements_lines(_a_card(level=45)) == ["Requires Level 45"]
+    assert requirements_lines(_a_card(level=45)) == ["Player Level 45"]
     assert requirements_lines(_a_card(level=0)) == []
 
 
@@ -453,11 +470,105 @@ def test_a_real_item_s_gate_reaches_the_card(real_game):
     card = build(_bashdrill(), real_game)
 
     assert card.requires is not None
-    # Under the weapon's output, which is what a fist leads with: the whole
-    # card is name, lead, gate, stats, and this is the gate's place in it.
-    assert lines(card)[4:6] == [
-        "Requires Level 51",
-        "or 81 Strength and 40 Dexterity",
+    # At the foot of the card, under the item's own stats and over the flavour
+    # line, which is where the reference draws them.  Bashdrill's own nine
+    # affixes are what comes between the lead and this.
+    assert lines(card)[15:20] == [
+        "Requirements",
+        "Player Level 51",
+        "or",
+        "Strength 81",
+        "Dexterity 40",
+    ]
+
+
+# --------------------------------------------------------------------------
+# The band the item drops in
+# --------------------------------------------------------------------------
+#
+# Not a gate, and the reference is pointed about it: a band is a fact about
+# where the item comes from, so it is written plainly under the chips rather
+# than given a box that would file it as a third way in.  It is on
+# ``Requirements`` because the same file walk answers both and an item that
+# cannot be traced has neither -- not because the two are one thing.
+
+
+def test_the_band_is_one_line_under_the_gates():
+    """``Min Level 45 · Max Level 55`` -- the reference's two labels and its
+    separator, on one line, because they are one idea.
+    """
+    card = _a_card(requires=Requirements(0, False, (), min_level=45, max_level=55))
+    assert level_range_lines(card) == ["Min Level 45 · Max Level 55"]
+
+
+def test_each_end_of_the_band_stands_on_its_own():
+    """Only the fields the file carries: 641 of the game's 6,262 item files
+    state a ceiling and no floor, and 392 the other way round, and neither
+    half should print a zero for the half it has not got.
+    """
+    assert level_range_lines(
+        _a_card(requires=Requirements(0, False, (), max_level=30))
+    ) == ["Max Level 30"]
+    assert level_range_lines(
+        _a_card(requires=Requirements(0, False, (), min_level=12))
+    ) == ["Min Level 12"]
+
+
+def test_a_band_of_zeros_is_no_band_at_all():
+    """A floor of zero is no floor -- 145 of the files state one -- and most
+    items state neither end, so most cards have no line here.
+    """
+    assert level_range_lines(_a_card(requires=Requirements(0, False, ()))) == []
+
+
+def test_the_band_is_not_on_the_save_file_and_is_not_invented_without_one():
+    """``requires=None`` has no band either, and the level the save file
+    records is no substitute: it is the level the *item* is, which sits inside
+    the band rather than at either end of it.
+    """
+    assert level_range_lines(_a_card(level=45)) == []
+
+
+@needs_game
+def test_a_real_item_s_band_is_not_read_from_the_item_s_own_file_alone(real_game):
+    """378 of the 2,668 files that resolve a ceiling do not state one: they
+    inherit it, and a read that stopped at the item's own file would call them
+    unbounded.  The archive's clockwork amulets are those -- walked out of the
+    archive directly, so which item this is cannot come from the tool.
+
+    What is pinned is the route rather than the number: the line is built at
+    all, and both ends of it are whole numbers.
+    """
+    guid = _an_item_with_an_inherited_ceiling(real_game)
+    card = build(item("Test Amulet", guid=guid), real_game)
+
+    assert len(level_range_lines(card)) == 1
+    line = level_range_lines(card)[0]
+    assert line.startswith("Min Level ") or line.startswith("Max Level ")
+    assert all(part.split()[-1].isdigit() for part in line.split(" · "))
+
+
+def test_the_band_stands_under_the_requirements_on_the_flat_card():
+    """The order the reference draws and the reason for it: the two numbers are
+    both levels, and a reader who met them side by side would take the band
+    for a second gate.
+    """
+    card = _a_card(
+        level=45,
+        requires=Requirements(
+            51, False, (("Strength", 81),), min_level=45, max_level=55
+        ),
+        flavor="A remark.",
+    )
+
+    assert lines(card) == [
+        "Test Blade",
+        "Requirements",
+        "Player Level 51",
+        "or",
+        "Strength 81",
+        "Min Level 45 · Max Level 55",
+        "A remark.",
     ]
 
 
@@ -495,13 +606,14 @@ def test_a_ladder_is_a_heading_and_its_lines_under_the_item_s_stats():
 
     assert lines(card) == [
         "Test Blade",
-        "Requires Level 7",
         "+5 Strength",
         "(2) Set",
         "+6 Set damage",
         "(3) Set",
         "+5 Set burn",
         "2.5% chance to cast Test Proc on kill",
+        "Requirements",
+        "Player Level 7",
         "A remark.",
     ]
 
