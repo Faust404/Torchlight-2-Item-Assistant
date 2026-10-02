@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:  # pragma: no cover
+    from tl2stash.gamedata import Requirements
     from tl2stash.item import Item
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "carried_magic",
     "display_tier",
     "lines",
+    "requirements_lines",
 ]
 
 #: What a block of lines is.
@@ -227,6 +229,14 @@ class Card:
     the ember.  So the lines are split out here and drawn as their own
     section, which is the one thing that tells the player which of the numbers
     the item would keep if the socket were emptied.
+
+    ``requires`` is what the game gates the item on, worked out from the
+    item's own data file.  ``level`` stays beside it because it is a different
+    number from the requirement and is still wanted -- it is the level the
+    *item* is, which is what the collection lists and sorts by -- and because
+    a machine with no game installed can answer for one and not the other:
+    ``requires`` is ``None`` there and the level is what the card falls back
+    to showing.
     """
 
     name: str
@@ -242,6 +252,54 @@ class Card:
     socketed: tuple[str, ...]
     set_ladder: tuple[Rung, ...]
     flavor: str | None
+    requires: Requirements | None = None
+
+
+#: The two words the game writes in front of the two kinds of gate, taken off
+#: its own string table (``Torchlight2.exe``, as UTF-16): the levels it writes
+#: as ``Requires Level`` and, on a socketable, as ``Requires item level`` -- a
+#: socketable is not worn, so what its gate is the level of is the item that
+#: receives it.  The stat lines are built from the same table, which carries
+#: ``Requires `` as a prefix and ``Strength``/``Dexterity``/``Focus``/
+#: ``Vitality`` as labels beside it.
+REQUIRES_LEVEL = "Requires Level"
+REQUIRES_ITEM_LEVEL = "Requires item level"
+
+#: The word the game puts *between* the two kinds of gate, and it is the word
+#: the requirement is: ``Or`` stands in the same string table run as the two
+#: prefixes above and the four labels, and the semantics behind it is that a
+#: character may equip the item on reaching the level *or* on reaching the
+#: attributes, whichever comes first.  Drawing the two as a conjunction would
+#: be a lie about the item, so the warning is kept in the line itself.
+THE_ALTERNATIVE = "or"
+
+
+def requirements_lines(card: Card) -> list[str]:
+    """What the item gates on, in the game's own words.
+
+    Two lines at most, because there are two kinds of gate and the game draws
+    them as two groups: the level, and then the attributes behind the word
+    :data:`THE_ALTERNATIVE`.  A card with no answer from the game's data has
+    only the save file's level to show, and says so the way the tool always
+    has; a card whose data answered *nothing* -- a potion, a quest item, which
+    the game gates on nothing at all -- shows nothing, which is not the same
+    as showing zero.
+    """
+    requires = card.requires
+    if requires is None:
+        return [f"{REQUIRES_LEVEL} {card.level}"] if card.level else []
+
+    out: list[str] = []
+    if requires.level:
+        head = REQUIRES_ITEM_LEVEL if requires.socketing else REQUIRES_LEVEL
+        out.append(f"{head} {requires.level}")
+    if requires.stats:
+        # The attributes are a conjunction among themselves and the level is
+        # the alternative to all of them, which is why the one word joins the
+        # two groups and the other joins the members of the second.
+        written = " and ".join(f"{value} {label}" for label, value in requires.stats)
+        out.append(f"{THE_ALTERNATIVE} {written}" if out else written)
+    return out
 
 
 def lines(card: Card) -> list[str]:
@@ -254,8 +312,7 @@ def lines(card: Card) -> list[str]:
     out: list[str] = []
     if card.name:
         out.append(card.name)
-    if card.level:
-        out.append(f"Requires Level {card.level}")
+    out.extend(requirements_lines(card))
     for block in card.blocks:
         out.extend(block.lines)
     # What a socket added, under its own heading and over the gems themselves

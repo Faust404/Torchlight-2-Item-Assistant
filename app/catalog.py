@@ -73,7 +73,9 @@ class Facts:
     ``guid`` is an ``int`` here whatever it arrived as.  The registry stores it
     as uppercase hex text, because a 64-bit guid does not fit SQLite's signed
     integer; the save file's own field is the integer, and that is what the
-    data files are indexed by.
+    data files are indexed by -- and it is all
+    :meth:`~tl2stash.gamedata.GameData.requirements_for` needs, which is why
+    that one is asked of these four fields rather than of a whole item.
     """
 
     guid: int
@@ -115,6 +117,15 @@ class Entry:
     ``1H Mace``, and is empty for an item whose file says none -- a spell, a
     fish, or anything on a machine with no game installed.  ``group`` and
     ``subgroup`` are where :func:`tl2stash.taxonomy.group_of` puts that kind.
+
+    ``gate`` is the player level the game makes a character reach before it
+    will let them use the item, which is *not* the item's own level: a level 45
+    unique can ask for 51, and a potion asks for nothing at all.  ``None``
+    means the question could not be answered -- no game installed, or an item
+    the game's files have never heard of -- and is not the same as ``0``, which
+    is the answer for an item the game gates on nothing.  A list with an
+    unanswerable level in it falls back to the item's level, which is what the
+    tool showed before it could ask; see :func:`app.models._describe`.
     """
 
     tier: str
@@ -123,6 +134,7 @@ class Entry:
     group: str
     subgroup: str | None
     icon: QIcon | None
+    gate: int | None
 
     @property
     def place(self) -> Place:
@@ -169,7 +181,14 @@ class Catalog:
                 group=OTHER,
                 subgroup=None,
                 icon=None,
+                gate=None,
             )
+
+        # What the item gates on, which the level filter needs and the row
+        # itself does not draw.  Asked before the appearance because the two
+        # are different questions: an item can be one the game has a gate for
+        # and no *look* for, and the other way round.
+        requires = self.game.requirements_for(facts)
 
         appearance = self.game.appearance_for(facts)
         if appearance is None:
@@ -184,6 +203,7 @@ class Catalog:
                 group=OTHER,
                 subgroup=None,
                 icon=self._tile(TIER_NONE, None, ""),
+                gate=None if requires is None else requires.level,
             )
 
         word = display_tier(appearance.tier, facts)
@@ -195,6 +215,7 @@ class Catalog:
             group=group,
             subgroup=subgroup,
             icon=self._tile(word, appearance.icon, appearance.type_name),
+            gate=None if requires is None else requires.level,
         )
 
     def _tile(self, tier_word: str, icon_name: str | None, kind: str) -> QIcon:

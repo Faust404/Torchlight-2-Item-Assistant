@@ -587,6 +587,11 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         socketed=tuple(socketed),
         set_ladder=ladder,
         flavor=flavor or None,
+        # What the game gates the item on -- the player level or the
+        # attributes, whichever the character reaches first -- worked out from
+        # the item's own file.  ``None`` without the game's files, and the
+        # card falls back to the level the save records.
+        requires=data.requirements_for(item) if data is not None else None,
     )
 
 

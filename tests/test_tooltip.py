@@ -454,6 +454,29 @@ def test_the_level_line_is_left_out_when_there_is_no_level():
     assert render(item(), None) == ["Test Item"]
 
 
+@needs_game
+def test_a_socketable_s_gate_is_written_as_an_item_level(game):
+    """The one gate that is about a *different* item, in the game's own word.
+
+    A socketable is not worn, so the level its file names is the level of the
+    host it may go into, and the game writes ``Requires item level`` for that
+    rather than the ``Requires Level`` it puts on a sword.  The item here is
+    level 0 -- which is what the collection's own socketables are -- so the
+    line cannot be the item's own level read back to it.
+
+    Which number belongs there is ``tests/test_gamedata.py``'s business; what
+    is pinned here is the wording, and that a number is there at all.
+    """
+    from test_gamedata import _a_socketable_with_a_gate
+
+    guid, _ = _a_socketable_with_a_gate(game)
+    card = build(item("Blood Ember", guid=guid, level=0), game)
+
+    head, _, number = lines(card)[1].rpartition(" ")
+    assert head == "Requires item level"
+    assert number.isdigit() and int(number) > 0
+
+
 def test_flat_damage_from_a_socket_or_enchant_is_its_own_line():
     """Recorded per element as three numbers -- how much came from an effect,
     from a socket and from an enchantment -- and the player sees the total.

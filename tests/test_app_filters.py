@@ -44,6 +44,7 @@ from app.filters import FilterBar  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
+    GATE_ROLE,
     LEVEL_MAX,
     LEVEL_ROLE,
     PLACE_ROLE,
@@ -79,9 +80,15 @@ CANNON = ("Weapons", "Two-Handed", "Cannon")
 QUEST = ("Misc", None, "")
 BROKEN = (OTHER, None, "")
 
-#: Six items, and between them every case the facets have to tell apart: two
+#: Seven items, and between them every case the facets have to tell apart: two
 #: kinds in one group, two groups, two rarities, an item with no rarity, and
 #: the two different kinds of nothing.
+#:
+#: The number is the *gate* rather than the item's own level, because that is
+#: what the level range is over and it is the only number these tests need --
+#: a row built by hand has no item behind it.  The two roles are told apart in
+#: :func:`test_the_range_follows_the_gate_rather_than_the_item_level`, which is
+#: the one place the difference is the subject.
 ITEMS = [
     ("Alpha", "Unique", BOOTS, 40),
     ("Beta", "Unique", BOOTS, 12),
@@ -96,14 +103,15 @@ ITEMS = [
 def _built(items=ITEMS):
     """A collection model carrying the roles, with no game and no catalog."""
     model = new_model(COLLECTION_COLUMNS)
-    for name, tier, place, level in items:
+    for name, tier, place, gate in items:
         cell = QStandardItem(name)
         cell.setData(name, FINGERPRINT_ROLE)
         cell.setData(tier, TIER_ROLE)
         cell.setData(place, PLACE_ROLE)
-        cell.setData(level, LEVEL_ROLE)
+        cell.setData(gate, LEVEL_ROLE)
+        cell.setData(gate, GATE_ROLE)
         model.appendRow(
-            [cell, QStandardItem(str(level)), QStandardItem("0"), QStandardItem("")]
+            [cell, QStandardItem(str(gate)), QStandardItem("0"), QStandardItem("")]
         )
     return model
 
@@ -211,16 +219,14 @@ def test_the_level_bounds_are_inclusive(qapp):
 
 
 def test_the_default_range_is_the_whole_of_it(qapp):
-    """``0`` is a level -- a socketable's -- and every row has one.
-
-    The range used to come out of the boxes as ``(None, None)``, where zero
+    """The range used to come out of the boxes as ``(None, None)``, where zero
     stood for the word "Any": one number meaning both "level 0" and "do not
     ask", which cannot be told apart once it reaches here.  Now the default is
     the range that lets everything through, and it is the range it says --
     including the two ends of it, which are levels like any other.
     """
     items = [
-        ("Alpha", "Unique", BOOTS, 0),
+        ("Alpha", "Unique", BOOTS, 1),
         ("Beta", "Unique", BOOTS, 40),
         ("Gamma", "Rare", BOOTS, LEVEL_MAX),
     ]
@@ -228,11 +234,60 @@ def test_the_default_range_is_the_whole_of_it(qapp):
 
     assert _shown(proxy) == ["Alpha", "Beta", "Gamma"]
 
-    proxy.set_level_range(0, 0)
-    assert _shown(proxy) == ["Alpha"], "zero means level zero and nothing else"
+    proxy.set_level_range(1, 1)
+    assert _shown(proxy) == ["Alpha"], "zero is not in the range, one is"
 
     proxy.set_level_range(1, LEVEL_MAX - 1)
-    assert _shown(proxy) == ["Beta"]
+    assert _shown(proxy) == ["Alpha", "Beta"]
+
+
+def test_an_item_gated_on_nothing_is_shown_whatever_the_range(qapp):
+    """Zero is an answer, not a missing value.
+
+    An item the game gates on nothing -- a potion, a quest object, a map --
+    is one a character of any level can use, so no range excludes it.  That is
+    why the predicate is a check on a truthy gate rather than ``or 0``: reading
+    zero as a low level would hide exactly the items that have no high one.
+    """
+    items = [
+        ("Potion", "", QUEST, 0),
+        ("Beta", "Unique", BOOTS, 40),
+    ]
+    proxy = _proxy(items)
+
+    for low, high in ((0, 0), (40, 40), (LEVEL_MAX, LEVEL_MAX), (1, 2)):
+        proxy.set_level_range(low, high)
+        shown = _shown(proxy)
+        assert "Potion" in shown, f"{low}..{high} hid an item with no gate"
+        assert ("Beta" in shown) == (low <= 40 <= high)
+
+
+def test_the_range_follows_the_gate_rather_than_the_item_level(qapp):
+    """A row carries both numbers and they are not the same one.
+
+    The list shows the item's level and has always shown it; the range is over
+    what the item *asks for*.  A level 45 unique that requires 51 is one a
+    level 45 character cannot use, and a range that let it through would be
+    answering a question nobody asked.
+    """
+    model = new_model(COLLECTION_COLUMNS)
+    cell = QStandardItem("Bashdrill")
+    cell.setData("Bashdrill", FINGERPRINT_ROLE)
+    cell.setData("Unique", TIER_ROLE)
+    cell.setData(BOOTS, PLACE_ROLE)
+    cell.setData(45, LEVEL_ROLE)
+    cell.setData(51, GATE_ROLE)
+    model.appendRow([cell])
+
+    proxy = CollectionFilter()
+    proxy.setSourceModel(model)
+    proxy.setFilterKeyColumn(0)
+
+    proxy.set_level_range(45, 45)
+    assert _shown(proxy) == [], "the item's own level is not what is asked"
+
+    proxy.set_level_range(51, 51)
+    assert _shown(proxy) == ["Bashdrill"]
 
 
 def test_every_facet_at_once(qapp):

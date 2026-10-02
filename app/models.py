@@ -26,6 +26,7 @@ __all__ = [
     "COLLECTION_COLUMNS",
     "FINGERPRINT_ROLE",
     "FOUND_ROLE",
+    "GATE_ROLE",
     "LEVEL_ROLE",
     "MEMBERS_ROLE",
     "PLACE_ROLE",
@@ -94,12 +95,24 @@ LEVEL_MAX = 110
 #: rolls of it there are, and this is what turns a selection of that row back
 #: into the items it is made of.  ``FOUND_ROLE`` is the last-seen place, as the
 #: text the tile's footer shows.
+#:
+#: ``LEVEL_ROLE`` is the item's own level -- the number the list shows and has
+#: always shown.  ``GATE_ROLE`` is a different number and the one the level
+#: range filters on: the *player* level the item asks for, which is the level
+#: the game withholds the item until.  The two differ -- a level 45 unique can
+#: ask for 51 -- and where the gate is unknown, which is every item on a
+#: machine with no game installed, the role carries the item's level so that
+#: the range still means something rather than letting everything through.
+#: Zero is a real gate value and the reason the two roles are not merged: an
+#: item the game gates on nothing at all, a potion, is usable at any level and
+#: is shown whatever range is asked for.
 FINGERPRINT_ROLE = Qt.ItemDataRole.UserRole
 TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
 PLACE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
 LEVEL_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 3)
 MEMBERS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 4)
 FOUND_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 5)
+GATE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 6)
 
 
 def container_label(container: int, data: "GameData | None" = None) -> str:
@@ -144,10 +157,15 @@ def _describe(cell: QStandardItem, entry: Entry, level: int) -> None:
     ``ForegroundRole``, and the filters read their own roles -- so
     ``DisplayRole`` stays exactly what it was, and the search box that matches
     on it keeps working unchanged.
+
+    ``level`` is the item's own, and the gate falls back to it when the game's
+    data could not answer -- so a range over a collection the tool cannot trace
+    behaves as it did before there was a gate at all.
     """
     cell.setData(entry.tier_word, TIER_ROLE)
     cell.setData(entry.place, PLACE_ROLE)
     cell.setData(level, LEVEL_ROLE)
+    cell.setData(level if entry.gate is None else entry.gate, GATE_ROLE)
     cell.setForeground(QBrush(QColor(TIER_INK[entry.tier])))
     if entry.icon is not None:
         cell.setIcon(entry.icon)
@@ -278,9 +296,10 @@ class CollectionFilter(QSortFilterProxyModel):
     """The collection, narrowed by what the controls above it have ticked.
 
     Four things narrow it and they AND: the search box, the kinds ticked in
-    the rail, the rarity chips, and a level range.  A facet with nothing ticked
-    is not a filter at all, so a window whose controls have just been cleared
-    shows the whole collection -- which is what makes them safe to ignore.
+    the rail, the rarity chips, and a range of player levels.  A facet with
+    nothing ticked is not a filter at all, so a window whose controls have just
+    been cleared shows the whole collection -- which is what makes them safe to
+    ignore.
 
     Ticking a *group* is the same as ticking everything in it, so the rail
     flattens its tree to a set of places and hands that over; there is no
@@ -319,11 +338,13 @@ class CollectionFilter(QSortFilterProxyModel):
             self._refilter()
 
     def set_level_range(self, low: int, high: int) -> None:
-        """Both bounds included, and both of them levels.
+        """Both bounds included, and both of them *player* levels.
 
-        There is no open end: ``0`` is the level a socketable is, so a caller
-        asking for everything says ``0`` to the highest level there is rather
-        than saying nothing twice.
+        What the range is over is what the item asks of the character, not what
+        the item is: the two are different numbers, and the one a player
+        narrowing a collection has in mind is their own level.  Anything the
+        game gates on nothing passes whatever the range, so the default range
+        is the whole of it and not a special case.
         """
         if (low, high) != (self._low, self._high):
             self._low, self._high = low, high
@@ -388,9 +409,11 @@ class CollectionFilter(QSortFilterProxyModel):
             if self._value(parent, row, TIER_ROLE) not in self._tiers:
                 return False
 
-        if ignoring != LEVEL_ROLE:
-            level = self._value(parent, row, LEVEL_ROLE) or 0
-            if level < self._low or level > self._high:
+        if ignoring != GATE_ROLE:
+            # Not ``or 0``: zero is an item the game gates on nothing, and an
+            # item nobody has to grow into is one every range includes.
+            gate = self._value(parent, row, GATE_ROLE)
+            if gate and (gate < self._low or gate > self._high):
                 return False
 
         return True

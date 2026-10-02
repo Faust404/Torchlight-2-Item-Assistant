@@ -44,15 +44,18 @@ from app.catalog import ICON_SIZE, Catalog, Facts  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
+    GATE_ROLE,
     LEVEL_ROLE,
     PLACE_ROLE,
     TIER_ROLE,
     fill_collection,
     new_model,
 )
+from tl2stash.gamedata import Requirements  # noqa: E402
 from tl2stash.taxonomy import OTHER  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
+from test_gamedata import _bashdrill  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -133,7 +136,9 @@ def test_with_no_game_every_item_is_an_item_with_no_rarity(qapp):
     """The honest answer on a machine without the game, and not an error.
 
     No icon either: a column of identical placeholder tiles is not information,
-    and a list of plain names is what that machine should show.
+    and a list of plain names is what that machine should show.  The gate goes
+    the same way -- ``None``, which is *unanswered* rather than an item the
+    game gates on nothing -- and the list falls back to the item's own level.
     """
     catalog = Catalog(None)
     entry = catalog.entry("anything", _AnItem(1))
@@ -143,6 +148,7 @@ def test_with_no_game_every_item_is_an_item_with_no_rarity(qapp):
     assert entry.kind == ""
     assert (entry.group, entry.subgroup) == (OTHER, None)
     assert entry.icon is None
+    assert entry.gate is None
 
 
 def test_the_answer_for_an_item_is_remembered_and_not_computed_twice(qapp):
@@ -212,6 +218,68 @@ def test_an_item_the_game_does_not_have_is_other_with_a_placeholder(real_game, q
     assert (entry.tier, entry.tier_word, entry.kind) == ("none", "", "")
     assert (entry.group, entry.subgroup) == (OTHER, None)
     assert entry.icon is not None
+    # And nothing to gate on: the files have never heard of it, which is not
+    # the same answer as a file that says it is gated on nothing.
+    assert entry.gate is None
+
+
+# --------------------------------------------------------------------------
+# The gate, which is not the item's level
+# --------------------------------------------------------------------------
+
+
+class _OneAnswer:
+    """A game that answers the gate question and nothing else.
+
+    :meth:`Catalog._read` asks two questions of the game -- what the item asks
+    of a character and what it looks like -- and a catalogue built on this gets
+    the second answered with nothing.  That is a real combination (an item the
+    game has a gate for and no *look* for), and it is what keeps the two
+    questions from being read as one.
+    """
+
+    def __init__(self, requires: Requirements):
+        self._requires = requires
+
+    def requirements_for(self, item):
+        return self._requires
+
+    def appearance_for(self, item):
+        return None
+
+
+def test_a_gate_of_nothing_is_zero_and_not_the_same_as_no_answer(qapp):
+    """A potion is gated on nothing; a mod's item is gated on *unknown*.
+
+    The game's files answer for the first and what they answer is that any
+    character may use it, so the catalogue has a zero.  ``None`` means nobody
+    was asked -- and merging the two would either hide every potion from every
+    level range or show an unknown item through all of them.
+
+    The number that must *not* appear is the item's own level: it is here, at
+    45, and a catalogue that confused the two would answer with it.
+    """
+    catalog = Catalog(_OneAnswer(Requirements(level=0, socketing=False, stats=())))
+
+    assert catalog.entry("a", _AnItem(1)).gate == 0
+    assert Catalog(None).entry("b", _AnItem(1)).gate is None
+
+
+@needs_game
+def test_the_gate_is_the_player_level_the_files_ask_for(qapp, real_game):
+    """Bashdrill: level 45 on the item, gated until 51.
+
+    The two numbers the tool holds for one item, and the whole reason the list
+    keeps them in separate roles -- the column is the level the item *is*, and
+    the filter is over what it asks of the character.  Both are in the tool's
+    hands here, so this is one assertion away from reading the wrong one.
+    """
+    bashdrill = _bashdrill()
+    assert bashdrill.level == 45, "the item stopped being the one this is about"
+
+    entry = Catalog(real_game, IconCache(real_game.install)).entry("a", bashdrill)
+
+    assert entry.gate == 51
 
 
 # --------------------------------------------------------------------------
@@ -285,3 +353,43 @@ def test_a_filled_row_shows_its_tier_without_changing_its_text(qapp):
     assert cell.data(PLACE_ROLE) == (OTHER, None, "")
     assert cell.data(LEVEL_ROLE) == 12
     assert cell.foreground().color().name() == "#8a8a8a"
+
+
+def test_a_row_keeps_the_gate_beside_the_item_s_own_level(qapp):
+    """Two roles, because they are two numbers and only one of them is a level.
+
+    The column shows the item's level and the level range filters on the gate,
+    so a row that let one role stand in for the other would filter on the
+    wrong number -- and the three cases below are the three answers a gate can
+    have: one the game gives, none at all, and a zero for an item the game
+    gates on nothing, which every range must show.
+    """
+    row = _a_row(
+        fingerprint="0" * 40,
+        name="Bashdrill",
+        level=45,
+        num_sockets=1,
+        prefix="",
+        suffix="",
+        num_enchants=0,
+        guid=0,
+    )
+    model = new_model(COLLECTION_COLUMNS)
+
+    # No game: nobody was asked, so the range falls back to the item's level
+    # and the two roles agree.
+    fill_collection(model, [row], {}, Catalog(None))
+    cell = model.item(0, 0)
+    assert (cell.data(LEVEL_ROLE), cell.data(GATE_ROLE)) == (45, 45)
+
+    # The game answered, and with a number that is not the item's level.
+    catalog = Catalog(_OneAnswer(Requirements(51, False, ())))
+    fill_collection(model, [row], {}, catalog)
+    cell = model.item(0, 0)
+    assert (cell.data(LEVEL_ROLE), cell.data(GATE_ROLE)) == (45, 51)
+
+    # And a gate of nothing stays a zero rather than falling back: this is the
+    # one value the filter has to be able to tell from "no answer".
+    catalog = Catalog(_OneAnswer(Requirements(0, False, ())))
+    fill_collection(model, [row], {}, catalog)
+    assert model.item(0, 0).data(GATE_ROLE) == 0

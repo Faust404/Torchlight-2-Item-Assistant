@@ -126,7 +126,7 @@ class FilterBar(QWidget):
             self.chips[word] = chip
 
         row.addSpacing(10)
-        row.addWidget(_heading("Level"))
+        row.addWidget(_heading("Player level"))
         self.low = self._spin(0)
         self.high = self._spin(LEVEL_MAX)
         row.addWidget(self.low)
@@ -140,19 +140,26 @@ class FilterBar(QWidget):
         row.addWidget(self.clear_button)
 
     def _spin(self, value: int) -> QSpinBox:
-        """A min or a max: two levels, both ends included.
+        """A min or a max: two player levels, both ends included.
 
         The boxes used to read ``Any`` at zero, which was one word for "do not
         ask" -- two things a level box can mean, and only one of them is a
         level.  Zero is one: a socketable is level 0 and the collection holds
         them, so a box the player sets to 0 has to mean the thing it says.
+
+        What they range over is the level an item *asks for*, which is the
+        number on its tooltip and not the level it is -- so the range answers
+        "what can this character use", which is what a player narrowing a
+        collection is asking.
         """
         spin = QSpinBox()
         spin.setRange(0, LEVEL_MAX)
         spin.setValue(value)
         spin.setToolTip(
-            "The item levels to show, both ends included.\n"
-            f"0 to {LEVEL_MAX} is the whole range, and is where these start."
+            "The player levels to show, both ends included: an item is shown\n"
+            "when the level it requires falls in this range.\n"
+            f"0 to {LEVEL_MAX} is the whole range, and is where these start.\n"
+            "Anything the game gates on nothing at all is always shown."
         )
         spin.valueChanged.connect(self._moved)
         return spin
@@ -185,7 +192,7 @@ class FilterBar(QWidget):
         return {word for word, chip in self.chips.items() if chip.isChecked()}
 
     def level_range(self) -> tuple[int, int]:
-        """The bounds, both of them levels and both ends included.
+        """The bounds, both of them player levels and both ends included.
 
         What comes out is the whole range until the player narrows it, so the
         two boxes say what they are letting through rather than standing in for

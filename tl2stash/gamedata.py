@@ -58,6 +58,8 @@ from .dat import (
     VAR_DAMAGE_PHYSICAL,
     VAR_DAMAGE_POISON,
     VAR_DAMAGE_TYPE,
+    VAR_DEFENSE_REQUIRED,
+    VAR_DEXTERITY_REQUIRED,
     VAR_DISPLAY_NAME,
     VAR_DURATION,
     VAR_EFFECT_GRAPH,
@@ -65,12 +67,15 @@ from .dat import (
     VAR_FLAVOR,
     VAR_ICON,
     VAR_LEVEL,
+    VAR_LEVEL_REQUIRED,
+    VAR_MAGIC_REQUIRED,
     VAR_MAXDAMAGE,
     VAR_MINDAMAGE,
     VAR_RARITY_DMG_MOD,
     VAR_SET,
     VAR_SLOT_BASE,
     VAR_SPEED_DMG_MOD,
+    VAR_STRENGTH_REQUIRED,
     VAR_UNITTYPE,
     VAR_UNITTYPES,
     VAR_UNIT_GUID,
@@ -85,6 +90,7 @@ __all__ = [
     "Appearance",
     "Derived",
     "GameData",
+    "Requirements",
     "SetBonus",
     "SetRung",
     "archive_path",
@@ -178,6 +184,51 @@ GRAPH_VALUE_VAR = 121
 #: a nominal 375 is shown as 20.
 GRAPH_PERCENT = 100.0
 
+#: The requirement graphs, by the field each answers for.
+#:
+#: Four of the five requirement fields are stated as a percentage of one of
+#: these curves at the item's own level: an item stating ``MAGIC_REQUIRED``
+#: 100 at level 70 asks for the level-70 value of ``ITEM_MAGIC_REQUIREMENTS``,
+#: which is 170 -- the item's file says 100 and the player reads Focus 170.
+#:
+#: ``LEVEL_REQUIRED`` is the exception and the reason ``LEVEL`` is in here
+#: separately: a level requirement is a level, not a magnitude, so a file that
+#: states one is taken at its word.  The curve answers for the items that
+#: state nothing -- which is most of them -- and then which curve depends on
+#: the item: an item with no rarity of its own reads the ``NORMAL`` curve, a
+#: socketable the ``SOCKETABLE`` one, and everything else the general curve.
+#: Each of the two special curves stops early (NORMAL at level 50) and a level
+#: past its end falls back to the general one.
+REQUIREMENT_GRAPHS = {
+    "LEVEL": "ITEM_LEVEL_REQUIREMENTS.DAT",
+    "NORMAL": "ITEM_LEVEL_REQUIREMENTS_NORMAL.DAT",
+    "SOCKETABLE": "ITEM_LEVEL_REQUIREMENTS_SOCKETABLE.DAT",
+    "STRENGTH": "ITEM_STRENGTH_REQUIREMENTS.DAT",
+    "DEXTERITY": "ITEM_DEXTERITY_REQUIREMENTS.DAT",
+    "MAGIC": "ITEM_MAGIC_REQUIREMENTS.DAT",
+    "DEFENSE": "ITEM_DEFENSE_REQUIREMENTS.DAT",
+}
+
+#: The four requirement fields that scale, and the attribute each one is shown
+#: as.  The words are the game's, not the fields': Torchlight 2 renamed
+#: Torchlight 1's Magic to Focus and its Defense to Vitality, and this is
+#: where a tooltip stops saying the old ones.
+REQUIREMENT_FIELDS = (
+    ("STRENGTH", VAR_STRENGTH_REQUIRED, "Strength"),
+    ("DEXTERITY", VAR_DEXTERITY_REQUIRED, "Dexterity"),
+    ("MAGIC", VAR_MAGIC_REQUIRED, "Focus"),
+    ("DEFENSE", VAR_DEFENSE_REQUIRED, "Vitality"),
+)
+
+#: The tiers that read the NORMAL level curve -- the ones with no rarity of
+#: their own for the game to name.  ``Normal`` is the game's word for a plain
+#: item; the other three are what :func:`read_unit_type` calls a file that
+#: names no rarity at all, which is a potion, a quest item or a book.  The
+#: curve is the game's, read off its own tooltips: nine Normal items of level
+#: 6 to 13, watched in game, land on NORMAL exactly where the general curve
+#: runs a flat five too high.
+NORMAL_TIERS = frozenset({"Normal", "Quest", "Level", ""})
+
 #: The damage types, in the order the game lists them, with the field each
 #: one's share is stated in.
 DAMAGE_TYPES = (
@@ -247,6 +298,30 @@ class Derived:
 
     kind: str
     parts: dict[str, tuple[int, int]]
+
+
+@dataclass(frozen=True)
+class Requirements:
+    """What the game asks of the character who would use an item.
+
+    Two kinds of gate, and the game grants equip on either: the player level,
+    or the whole set of attributes, whichever the character reaches first.
+    That is why the tooltip writes them as alternatives rather than as one
+    list -- "and" would be a statement the game does not make.
+
+    ``level`` is the player level the item asks for, and 0 for an item that
+    asks for none.  ``socketing`` says the number is not a player level at
+    all: on a socketable the same field is the *item* level the thing may be
+    put into, which is a different question asked of a different number, and
+    the label has to say which one it is.
+
+    ``stats`` is the other half, in the order the game lists them -- Strength,
+    Dexterity, Focus, Vitality -- and empty for an item that asks for none.
+    """
+
+    level: int
+    socketing: bool
+    stats: tuple[tuple[str, int], ...]
 
 
 #: The words the game puts in front of an item's kind to say how good it is,
@@ -535,6 +610,7 @@ class GameData:
         "_effect_order",
         "_item_files",
         "_item_guids",
+        "_require_curves",
         "_sets",
         "_socket_targets",
         "_stash_tabs",
@@ -559,6 +635,7 @@ class GameData:
         armor_curve: dict[int, float],
         effect_curves: dict[str, dict[int, float]],
         socket_targets: dict[str, str],
+        require_curves: dict[str, dict[int, float]] | None = None,
     ) -> None:
         self.install = install
         self._by_name = by_name
@@ -576,6 +653,7 @@ class GameData:
         self._weapon_curve = weapon_curve
         self._armor_curve = armor_curve
         self._socket_targets = socket_targets
+        self._require_curves = require_curves or {}
         self._stash_tabs: list[int] | None = None
 
     def __repr__(self) -> str:
@@ -755,6 +833,16 @@ class GameData:
             if points:
                 effect_curves[name] = points
 
+        # The seven requirement graphs, pulled out of the directory by name.
+        # One is missing from some installs -- a mod's archive need not carry
+        # the NORMAL curve -- and an absent curve is an absent answer rather
+        # than an error, so each is taken only if it is there.
+        require_curves = {
+            field: curves[_data_path(GRAPHS_DIR + stem)]
+            for field, stem in REQUIREMENT_GRAPHS.items()
+            if _data_path(GRAPHS_DIR + stem) in curves
+        }
+
         return cls(
             install,
             by_name,
@@ -772,6 +860,7 @@ class GameData:
             curves.get(GRAPH_ARMOR, {}),
             effect_curves,
             socket_targets,
+            require_curves,
         )
 
     # -- looking things up ------------------------------------------------
@@ -975,6 +1064,104 @@ class GameData:
                     value * weight * mult / ARMOR_SCALE * curve,
                 )
         return Derived("armor", parts) if parts else None
+
+    def requirements_for(self, item) -> Requirements | None:
+        """What the item's own file says it asks of a character.
+
+        Two rules, because the five fields are two kinds of number.
+
+        The level is taken as the file states it.  Most items state nothing --
+        the field is authored only where the level is meant to depart from the
+        curve -- and those read the curve instead: the game's *NORMAL* curve
+        for an item that has no rarity of its own, its *SOCKETABLE* curve for
+        an item that goes in a socket, and the general curve for everything
+        else.  Both of the special curves stop early -- NORMAL at level 50 --
+        and a level past the end falls through to the general one.
+
+        The four attributes are percentages of their own curve at the item's
+        level, and this is the half that is easy to get wrong: the file states
+        100 where the player reads Focus 170, because 100 is the whole of the
+        curve at level 70.  An item that states none asks for no attribute at
+        all, which is not zero of one -- a zero is the same as no line.
+
+        ``None`` when the item cannot be traced back to a file at all: a
+        modded item, or a machine whose install has moved on.  A caller
+        without an answer falls back to the level the save file records rather
+        than showing nothing.
+        """
+        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
+        if data is None:
+            return None
+
+        stated = self._inherited(data)
+        level = _number(stated, VAR_LEVEL)
+        if level is None:
+            return None
+        level = int(level)
+
+        appearance = _appearance(stated)
+        return Requirements(
+            level=self._gate_level(stated, level, appearance),
+            socketing=appearance.type_name == "Socketable",
+            stats=self._gate_stats(stated, level),
+        )
+
+    def _gate_level(
+        self, stated: dict[int, DatNode], level: int, appearance: Appearance
+    ) -> int:
+        """The player level an item asks for, or 0 when it asks for none.
+
+        A stated requirement is the answer and the curves are the fallback,
+        which is the one place this departs from the arithmetic the four
+        attributes use.  The file's own number is a *level*: the items that
+        state one are the ones authored to sit off the curve, and scaling it
+        would move a level-67 gate on a level-70 item down to 52 -- the item
+        would read as usable eleven levels before it can drop.
+        """
+        written = _number(stated, VAR_LEVEL_REQUIRED)
+        if written:
+            return int(written)
+
+        if appearance.type_name == "Socketable":
+            socket = self._curve("SOCKETABLE", level)
+            if socket is not None:
+                return socket
+        elif appearance.tier in NORMAL_TIERS:
+            normal = self._curve("NORMAL", level)
+            if normal is not None:
+                return normal
+        return self._curve("LEVEL", level) or 0
+
+    def _gate_stats(
+        self, stated: dict[int, DatNode], level: int
+    ) -> tuple[tuple[str, int], ...]:
+        """The attributes an item asks for, each of its own curve at ``level``.
+
+        An item that states no requirement for one asks for none of it, and so
+        does one whose file states zero -- the archive writes a plain item's
+        four as zero rather than leaving them out.
+
+        A level past the end of a curve leaves the file's own number standing,
+        which is the one case where an unscaled value is shown: it is a value
+        the game's data does not have a curve for, and it is better than the
+        nothing the alternative would show.  No shipped item reaches it; the
+        curves run to level 105 and the archive's items stop there.
+        """
+        out = []
+        for field, var_id, label in REQUIREMENT_FIELDS:
+            written = _number(stated, var_id)
+            if not written:
+                continue
+            factor = self._curve(field, level)
+            value = int(written) if factor is None else _scaled(written, factor)
+            out.append((label, value))
+        return tuple(out)
+
+    def _curve(self, field: str, level: int) -> int | None:
+        """One requirement curve's value at a level, as a whole number."""
+        points = self._require_curves.get(field)
+        found = points.get(level) if points else None
+        return None if found is None else int(found)
 
     def flavor_for(self, item) -> str | None:
         """The italic line under the name, for an item that has one.
@@ -1277,6 +1464,17 @@ def _container_entry(data: DatFile) -> tuple[int, str] | None:
 def _percent(value: float | None) -> float:
     """A modifier stated as a percentage, or the neutral one."""
     return (NO_MODIFIER if value is None else value) / 100.0
+
+
+def _scaled(written: float, factor: int) -> int:
+    """A stated requirement as the game shows it: the curve's share of it.
+
+    ``floor``, not the half-away-from-zero the damage and armour ends use:
+    measured over the whole archive against the numbers a player is shown,
+    every one of the 7,600-odd attribute requirements is the floor of the
+    product, and a stated 100 at level 70 is 170 exactly rather than 171.
+    """
+    return math.floor(written * factor / GRAPH_PERCENT)
 
 
 def _ends(low: float, high: float) -> tuple[int, int]:

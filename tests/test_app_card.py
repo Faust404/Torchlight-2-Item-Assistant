@@ -57,8 +57,11 @@ from tl2stash.card import (  # noqa: E402
     Rung,
 )
 from tl2stash.icons import ELEMENT_MARKS  # noqa: E402
+from tl2stash.gamedata import Requirements  # noqa: E402
+from tl2stash.tooltip import build  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
+from test_gamedata import _bashdrill  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -215,7 +218,9 @@ def test_a_green_item_is_inked_green(qapp):
     assert TIER_INK["magic"] in kind
 
 
-def test_the_corner_says_what_the_item_asks_and_what_it_holds(qapp):
+def test_the_corner_says_the_item_s_level_and_what_it_holds(qapp):
+    """The item's own level, which is not the level it asks for -- the site's
+    card has always shown this one, and the gate is a line of its own below."""
     drawn = ItemCard(card(level=45, sockets=1))
     assert texts(drawn, "pill") == ["Level 45", "1 Socket"]
 
@@ -278,6 +283,57 @@ def test_a_weapon_s_own_damage_and_what_was_added_to_it_are_one_section(qapp):
         )
     )
     assert drawn.findChildren(Hairline) == []
+
+
+def test_what_the_item_asks_of_the_character_is_drawn_under_its_name(qapp):
+    """The game's two requirement lines, above every stat it has.
+
+    They are not a section and take no rule: a requirement is not one of the
+    item's numbers, it is the question of whether the rest can be used at all.
+    Two blocks are on the card here so that a rule *could* be drawn -- the one
+    between them is the only one there may be.
+    """
+    drawn = ItemCard(
+        card(
+            requires=Requirements(
+                level=51, socketing=False, stats=(("Strength", 81), ("Dexterity", 40))
+            ),
+            blocks=(
+                Block(DAMAGE, ("Physical Damage 52-74",)),
+                Block(AFFIX, ("Silence for 1 sec.",)),
+            ),
+        )
+    )
+
+    assert texts(drawn, "gate") == [
+        "Requires Level 51",
+        "or 81 Strength and 40 Dexterity",
+    ]
+    assert len(drawn.findChildren(Hairline)) == 1
+
+    # And a card with nothing to say about it draws nothing: no game to read
+    # the requirement from and no level in the save file either, or an item
+    # the game gates on nothing at all.
+    assert texts(ItemCard(card(level=0, requires=None)), "gate") == []
+    assert texts(ItemCard(card(requires=Requirements(0, False, ()))), "gate") == []
+
+
+@needs_game
+def test_a_real_item_s_requirements_are_drawn_from_its_own_file(qapp, real_game):
+    """Bashdrill, on the card the collection draws: 51, not the save's 45.
+
+    Both numbers are on the card and they are different numbers: the pill in
+    the corner is the level the item *is* -- what the site's card has always
+    shown, and what the list sorts by -- while the line under the name is what
+    the game asks of the character before it will let them use it.
+    """
+    drawn = ItemCard(build(_bashdrill(), real_game))
+
+    assert texts(drawn, "gate") == [
+        "Requires Level 51",
+        "or 81 Strength and 40 Dexterity",
+    ]
+    assert texts(drawn, "pill") == ["Level 45", "1 Socket"]
 
 
 def test_an_affix_line_is_green_and_a_damage_line_is_not(qapp):

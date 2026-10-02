@@ -31,6 +31,7 @@ from tl2stash.dat import (  # noqa: E402
     VAR_EFFECT_TYPE,
     VAR_GOODDES,
     VAR_GOODDESOT,
+    VAR_LEVEL,
     VAR_MAXDAMAGE,
     VAR_MINDAMAGE,
     VAR_NAME,
@@ -163,6 +164,100 @@ def install(tmp_path: Path) -> Path:
             }
         ],
     )
+
+    # The seven by-level curves an item's requirements come off, under the
+    # names the game files them by.  The numbers are small and unlike each
+    # other on purpose: a curve read for the wrong field, or a requirement
+    # scaled by the wrong one, lands on a value the tests can name.
+    def curve(stem: str, points: dict[int, float]) -> None:
+        files[f"MEDIA/GRAPHS/STATS/{stem}.DAT"] = write_dat(
+            {},
+            [
+                {
+                    "kids": [
+                        {
+                            "vars": {
+                                GRAPH_LEVEL_VAR: (INT, level),
+                                GRAPH_VALUE_VAR: (FLOAT, value),
+                            }
+                        }
+                        for level, value in points.items()
+                    ]
+                }
+            ],
+        )
+
+    curve("ITEM_LEVEL_REQUIREMENTS", {1: 3.0, 10: 13.0, 20: 24.0, 50: 57.0})
+    # The Normal curve stops at 20 here, as the game's stops at 50, so that a
+    # level past its end falling through to the general one can be tested.
+    curve("ITEM_LEVEL_REQUIREMENTS_NORMAL", {1: 1.0, 10: 8.0, 20: 15.0})
+    curve("ITEM_LEVEL_REQUIREMENTS_SOCKETABLE", {1: 1.0, 10: 2.0, 20: 12.0})
+    curve("ITEM_STRENGTH_REQUIREMENTS", {10: 50.0, 20: 100.0})
+    curve("ITEM_DEXTERITY_REQUIREMENTS", {10: 25.0, 20: 75.0})
+    curve("ITEM_MAGIC_REQUIREMENTS", {10: 150.0, 20: 200.0, 50: 400.0})
+    curve("ITEM_DEFENSE_REQUIREMENTS", {10: 90.0, 20: 60.0})
+
+    # Items to ask those curves about.  Each is one of the shapes a
+    # requirement is read for, and each states its own level because the
+    # curves are indexed by it.
+    def item_file(
+        path: str,
+        name: str,
+        unit_type: str,
+        level: int,
+        guid: int,
+        stated: dict | None = None,
+    ) -> None:
+        variables = {
+            VAR_NAME: (TEXT, string(name)),
+            VAR_UNITTYPE: (TEXT, string(unit_type)),
+            VAR_LEVEL: (INT, level),
+            # Written as the decimal *string* the game writes it as, which is
+            # the one place the file's shape can be got wrong quietly.
+            VAR_UNIT_GUID: (TEXT, string(str(guid))),
+        }
+        variables.update(stated or {})
+        files[f"MEDIA/UNITS/ITEMS/{path}"] = write_dat(strings, [{"vars": variables}])
+
+    from tl2stash.dat import (  # noqa: PLC0415 -- the fixture's own names
+        VAR_DEFENSE_REQUIRED,
+        VAR_DEXTERITY_REQUIRED,
+        VAR_LEVEL_REQUIRED,
+        VAR_MAGIC_REQUIRED,
+        VAR_STRENGTH_REQUIRED,
+    )
+
+    # A plain sword: no rarity of its own, so its gate is the Normal curve.
+    item_file("SWORDS/TEST_PLAIN.DAT", "Test Plain", "SWORD", 10, 0x7001)
+    # A unique: the general curve.
+    item_file("SWORDS/TEST_UNIQUE.DAT", "Test Unique", "UNIQUESWORD", 20, 0x7002)
+    # A socketable: the socketing curve, which is about the item it goes into.
+    item_file("GEMS/TEST_GEM.DAT", "Test Gem", "SOCKETABLE", 20, 0x7003)
+    # One that states its own level, which is the answer and is not scaled.
+    item_file(
+        "SWORDS/TEST_STATED.DAT",
+        "Test Stated",
+        "UNIQUESWORD",
+        20,
+        0x7004,
+        {VAR_LEVEL_REQUIRED: (INT, 99)},
+    )
+    # One that states attributes, which are percentages of their curves.
+    item_file(
+        "SWORDS/TEST_STATS.DAT",
+        "Test Stats",
+        "UNIQUESWORD",
+        10,
+        0x7005,
+        {
+            VAR_STRENGTH_REQUIRED: (INT, 100),
+            VAR_MAGIC_REQUIRED: (INT, 100),
+            VAR_DEFENSE_REQUIRED: (INT, 0),
+        },
+    )
+    # A Normal item past the end of the Normal curve, which falls through to
+    # the general one rather than being extrapolated.
+    item_file("SWORDS/TEST_OFF_CURVE.DAT", "Test Off Curve", "SWORD", 50, 0x7006)
 
     # Containers: each names itself and declares the id the save file records.
     for name, cid in (("ARMS", 24), ("SPELLS", 26)):
@@ -440,9 +535,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Eighteen parse; the nineteenth is a DAT that will not, and the twentieth
-    is not a DAT at all."""
-    assert game.files_read == 18
+    """Thirty-one parse; the thirty-second is a DAT that will not, and the
+    thirty-third is not a DAT at all."""
+    assert game.files_read == 31
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -994,10 +1089,19 @@ def test_bashdrill_reads_as_the_game_shows_it(real_game):
     Three of the records carry no name at all, and the damage is not in the
     save file: both come out of the game's data, so this is the whole chain
     from a blob to a tooltip in one assertion.
+
+    The requirement is the sharpest of these and the newest.  The tool used to
+    print the level the *save file* records -- 45, which is the level Bashdrill
+    is -- and the game withholds it until the character is 51, which is the
+    number in ``fist_u04.dat`` and the one tl2db ships for it
+    (``out/items.csv``: ``lv 45, lr 51, str_req 81, dex_req 40``).  The two
+    attributes come out of the file's own hundredths of a curve: 47% of 170 is
+    81 and 23% of 170 is 40 at level 45.
     """
     assert _tooltip(_bashdrill(), real_game) == [
         "Bashdrill",
-        "Requires Level 45",
+        "Requires Level 51",
+        "or 81 Strength and 40 Dexterity",
         "Physical Damage 52-74",
         "Electric Damage 77-110",
         "+2% to Physical Armor",
@@ -1038,6 +1142,171 @@ def test_a_unique_s_flavour_is_found_through_its_guid_and_not_its_name(real_game
 def test_an_item_the_archive_does_not_know_has_no_flavour(real_game):
     assert real_game.flavor_for(item(guid=0xDEADBEEF)) is None
     assert real_game.flavor_for(item(guid=0)) is None
+
+
+# --------------------------------------------------------------------------
+# What an item asks of the character who would use it
+# --------------------------------------------------------------------------
+#
+# Two kinds of number in five fields, and getting it backwards is invisible
+# from inside the tool.  The level is a level and is taken as the file states
+# it; the four attributes are percentages of a curve and are scaled.  The
+# synthetic curves in the fixture are small and unlike each other so that a
+# field scaled by the wrong curve, or a curve indexed by the wrong level,
+# lands somewhere a test can name.
+
+
+def test_a_level_requirement_is_taken_as_the_file_states_it(game):
+    """Not scaled, and the one field that is not.
+
+    The items that state one are the ones authored to sit off the curve, so
+    scaling it would move the gate: Bashdrill's stated 51 would come out as 24
+    on a level 20 item, and the item would read as usable eleven levels before
+    it can drop.
+    """
+    requires = game.requirements_for(item(guid=0x7004))
+
+    assert requires.level == 99
+    assert requires.stats == ()
+
+
+def test_a_plain_item_reads_the_normal_curve(game):
+    """An item with no rarity of its own is gated by a different curve.
+
+    The game gates it on the level it may start dropping at, and that curve is
+    shorter than the general one -- the fixture's stops where the game's does,
+    at a lower level than the item's.
+    """
+    requires = game.requirements_for(item(guid=0x7001))
+
+    assert requires.level == 8, "the NORMAL curve's value at level 10"
+    assert requires.socketing is False
+
+
+def test_a_socketable_reads_the_socketing_curve(game):
+    """A socketable is not worn, so its gate is about the item that takes it.
+
+    The level it asks for is the *host's*, which is what makes the socketing
+    curve a different shape from every other one: it is not about the item's
+    own level but about the level of the thing it goes into.
+    """
+    requires = game.requirements_for(item(guid=0x7003))
+
+    assert requires.level == 12, "the SOCKETABLE curve's value at level 20"
+    assert requires.socketing is True
+
+
+def test_anything_else_reads_the_general_curve(game):
+    requires = game.requirements_for(item(guid=0x7002))
+
+    assert requires.level == 24, "the general curve's value at level 20"
+    assert requires.socketing is False
+
+
+def test_a_curve_that_does_not_reach_the_level_falls_through(game):
+    """A short curve is not extrapolated, and the fall-through is not a gap.
+
+    The game's Normal curve holds 50 points and the base game's items stop
+    there, so a longer Normal curve would be an invention.  Past its end the
+    answer comes from the general curve instead, which is the one every other
+    item is on.
+    """
+    requires = game.requirements_for(item(guid=0x7006))
+
+    assert requires.level == 57, "the general curve's value at level 50"
+
+
+def test_an_attribute_is_a_percentage_of_its_own_curve(game):
+    """The half that is easy to get wrong, and the two ways to get it wrong.
+
+    A file stating ``100`` where the player reads ``100`` has not understood
+    the field; so has one reading it off a curve belonging to another
+    attribute.  At level 10 the strength curve is 50% and the magic curve is
+    150%, so one stated pair of hundreds tells the two apart in one assertion.
+    """
+    requires = game.requirements_for(item(guid=0x7005))
+
+    assert dict(requires.stats) == {"Strength": 50, "Focus": 150}
+
+
+def test_an_attribute_stated_as_zero_is_no_requirement(game):
+    """A zero and an absence are one thing here, and both are not a line.
+
+    The archive writes a plain item's four requirements as zero rather than
+    leaving them out, so reading a zero as a requirement would put ``0
+    Vitality`` on most of the items in the game.
+    """
+    requires = game.requirements_for(item(guid=0x7005))
+
+    assert "Vitality" not in dict(requires.stats)
+    assert "Dexterity" not in dict(requires.stats)
+
+
+def test_an_item_the_data_does_not_know_has_no_requirements(game):
+    assert game.requirements_for(item(guid=0xDEADBEEF)) is None
+    assert game.requirements_for(item(guid=0)) is None
+
+
+@needs_game
+def test_the_requirement_rule_reproduces_the_reference_database(real_game):
+    """The whole of tl2db's own output, row by row.
+
+    ``torchlight2_db`` is the reference this rule was settled against: its
+    ``src/build.py`` states it, and its ``out/items.csv`` is that build's
+    answer for 6,173 items.  Level requirements agree on *every* row it states
+    one for, which is the claim this pins -- the residue is in the attributes
+    and is the reference's own, so what this checks is that neither the rule
+    nor the tables it reads have drifted.
+
+    The two attribute divergences, both measured over that output:
+
+    * 153 rows where tl2db prints the file's raw magnitude because its own
+      source has no row for the unit.  Those units are monsters' and props'
+      -- ``mon_axe_goblinchamp``, ``Prop_Shovel``, ``z_test_firesword`` -- and
+      the reference's own note says a player never sees them.
+    * 10 rows where that source is one below the exact product: 70% of the
+      curve at 170 is 119 and it says 118, 50% at 50 is 58 and it says 57.
+      Arithmetic, not a rule; the tool does the arithmetic.
+    """
+    import csv  # noqa: PLC0415 -- only this test reads a csv
+
+    from tl2stash.dat import VAR_UNIT_GUID  # noqa: PLC0415
+    from tl2stash.gamedata import _data_path  # noqa: PLC0415
+
+    # Beside this project rather than beside the game: the reference is a
+    # checkout a developer has, not something playing the game requires.
+    repo = Path(__file__).resolve().parents[2] / "torchlight2_db"
+    table = repo / "out" / "items.csv"
+    if not table.is_file():
+        pytest.skip("the reference database is not checked out beside this one")
+
+    guids = {
+        path: int(guid) & 0xFFFFFFFFFFFFFFFF
+        for path, data in real_game._item_files.items()
+        if (guid := data.root.text(VAR_UNIT_GUID))
+    }
+
+    seen = misses = unanswered = 0
+    for row in csv.DictReader(table.open(encoding="utf-8-sig")):
+        guid = guids.get(_data_path(row["dat_path"]))
+        if guid is None or not row["lr"].strip():
+            continue
+        requires = real_game.requirements_for(item(guid=guid))
+        if requires is None:
+            # One item in the whole table, and the reason is a missing input
+            # rather than a rule: ``staff_n00`` is a base staff whose file
+            # inherits no LEVEL at all, so there is no level to index a curve
+            # by and the tool declines to guess one.  The reference fills it
+            # from its own source instead.
+            unanswered += 1
+            continue
+        seen += 1
+        if requires.level != int(row["lr"]):
+            misses += 1
+
+    assert seen > 5_000, "the reference table stopped being read"
+    assert misses == 0, f"{misses} of {seen} level requirements disagree"
+    assert unanswered <= 1, f"{unanswered} items became unanswerable"
 
 
 # --------------------------------------------------------------------------
@@ -1394,6 +1663,42 @@ def _an_ember(game) -> tuple[int, str]:
             return int(guid) & 0xFFFFFFFFFFFFFFFF, unit_type
 
     raise AssertionError("the archive has no ember any more")
+
+
+def _a_socketable_with_a_gate(game) -> tuple[int, str]:
+    """``(guid, UNITTYPE)`` for a real socketable that states a level.
+
+    A socketable's gate is the one requirement that is about a *different*
+    item -- the level of the host it may be put into -- so it is the one the
+    wording has to get right, and an item with no level anywhere up its chain
+    has no gate to read at all.  Both of those are real cases: the archive's
+    plain ``SOCKETABLE`` files state no level (a gem goes in whatever you are
+    wearing), while the embers' rank files do, one rank every fourteen levels.
+
+    Walked out of the archive directly, like :func:`_an_ember`, so which item
+    this is cannot come from the tool.  The kind is put through
+    :func:`~tl2stash.taxonomy.canonical_kind` because that is what makes an
+    ember a socketable -- the archive spells the four of them its own way.
+    """
+    from tl2stash.gamedata import _number, _text
+    from tl2stash.pak import PakIndex
+    from tl2stash.taxonomy import canonical_kind
+
+    for entry in PakIndex.read(archive_path(game.install)).entries:
+        if not entry.startswith("MEDIA/UNITS/ITEMS/") or not entry.endswith(".DAT"):
+            continue
+        stated = game._item_files.get(entry.upper())
+        if stated is None:
+            continue
+        inherited = game._inherited(stated)
+        guid = _text(inherited, VAR_UNIT_GUID)
+        unit_type = _text(inherited, VAR_UNITTYPE)
+        if not (guid and unit_type and _number(inherited, VAR_LEVEL)):
+            continue
+        if canonical_kind(read_unit_type(unit_type)[1]) == "Socketable":
+            return int(guid) & 0xFFFFFFFFFFFFFFFF, unit_type
+
+    raise AssertionError("the archive has no socketable with a level any more")
 
 
 def _a_set_item(game, tier_word: str) -> tuple[int, str, str, str]:

@@ -33,7 +33,9 @@ from tl2stash.card import (  # noqa: E402
     carried_magic,
     display_tier,
     lines,
+    requirements_lines,
 )
+from tl2stash.gamedata import Requirements  # noqa: E402
 from tl2stash.item import AddedDamage  # noqa: E402
 from tl2stash.tooltip import build, render  # noqa: E402
 
@@ -287,6 +289,130 @@ def test_the_flat_lines_are_the_card_flattened():
         "OFTHEELEPHANT MAX HP",
         "Socketed",
         "    Flawless Ruby",
+    ]
+
+
+# --------------------------------------------------------------------------
+# What the item asks of the character who would use it
+# --------------------------------------------------------------------------
+#
+# The two gates are alternatives in the game -- the level, or the whole set of
+# attributes -- and the wording says so.  The lines are built from the game's
+# own strings rather than invented, which is why the tests below are about
+# *which* of them is used where: getting the level of a socketable's host
+# mixed up with a player level, or writing the attributes as a second
+# requirement instead of the alternative to the first, are both mistakes that
+# read perfectly well.
+
+
+def _a_card(**fields) -> Card:
+    """A card with everything but what a test is about left empty."""
+    blank = dict(
+        name="Test Blade",
+        tier="unique",
+        tier_word="Unique",
+        type_name="Sword",
+        set_name=None,
+        icon=None,
+        level=0,
+        sockets=0,
+        blocks=(),
+        gems=(),
+        socketed=(),
+        set_ladder=(),
+        flavor=None,
+    )
+    blank.update(fields)
+    return Card(**blank)
+
+
+def test_the_two_gates_are_two_lines_and_the_second_is_the_alternative():
+    """Bashdrill's numbers: level 45, asks 51, 81 Strength and 40 Dexterity.
+
+    ``or`` joins the two *groups* and ``and`` the members of the second, and
+    the difference is the item: a character may equip this on reaching 51
+    without ever reaching 81 Strength, so writing the four as a conjunction
+    with the level would be a requirement the game does not make.
+    """
+    card = _a_card(
+        requires=Requirements(
+            level=51, socketing=False, stats=(("Strength", 81), ("Dexterity", 40))
+        )
+    )
+
+    assert requirements_lines(card) == [
+        "Requires Level 51",
+        "or 81 Strength and 40 Dexterity",
+    ]
+
+
+def test_a_socketable_asks_for_an_item_level_and_not_a_player_level():
+    """The same field on a gem is a different question about a different item.
+
+    A socketable is not worn -- it goes *into* something -- so the level its
+    file gates on is the level of the host, and the game writes a different
+    word for it.  Writing ``Requires Level`` here would tell the player they
+    cannot pick the gem up, which is not a thing the game ever says.
+    """
+    card = _a_card(
+        type_name="Socketable",
+        requires=Requirements(level=6, socketing=True, stats=()),
+    )
+
+    assert requirements_lines(card) == ["Requires item level 6"]
+
+
+def test_attributes_with_no_level_beside_them_take_no_or():
+    """``or`` joins the two groups, so a card with one group has nothing to
+    join: a line reading ``or 100 Strength`` under nothing is half a sentence.
+    """
+    card = _a_card(
+        requires=Requirements(level=0, socketing=False, stats=(("Strength", 100),))
+    )
+
+    assert requirements_lines(card) == ["100 Strength"]
+
+
+def test_an_item_the_game_gates_on_nothing_shows_no_requirement_line():
+    """A potion, a quest object: the answer is *none*, and zero is how it is
+    written -- so a card reading ``Requires Level 0`` would be the tool
+    inventing a gate the game does not have.
+    """
+    assert requirements_lines(_a_card(requires=Requirements(0, False, ()))) == []
+
+    # And the item's own level is not the fallback here: the data answered,
+    # and what it answered is that nothing is asked.  This is the whole reason
+    # the field is ``None`` rather than 0 for an item nobody can trace.
+    assert requirements_lines(
+        _a_card(level=7, requires=Requirements(0, False, ()))
+    ) == []
+
+
+def test_with_no_answer_from_the_game_the_save_s_own_level_stands_in():
+    """``requires=None`` is a machine with no game, or an item the game's files
+    have never heard of -- a mod's, mostly.  The level the save file records is
+    what the tool showed before it could ask, and is better than no gate at
+    all; an item with neither shows nothing, exactly as it always did.
+    """
+    assert requirements_lines(_a_card(level=45)) == ["Requires Level 45"]
+    assert requirements_lines(_a_card(level=0)) == []
+
+
+@needs_game
+def test_a_real_item_s_gate_reaches_the_card(real_game):
+    """``build`` asks the game's data and the card keeps the answer.
+
+    The whole chain on one item: Bashdrill's file states 51 where the save
+    file records 45, and both numbers are in the tool's hands -- so a card
+    that fell back to the save's would read as an item the character can pick
+    up six levels before they can.
+    """
+    card = build(_bashdrill(), real_game)
+
+    assert card.requires is not None
+    assert lines(card)[1:3] == [
+        "Requires Level 51",
+        "or 81 Strength and 40 Dexterity",
     ]
 
 

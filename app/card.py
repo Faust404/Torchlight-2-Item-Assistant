@@ -52,7 +52,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tl2stash.card import ADDED, AFFIX, ARMOR, DAMAGE, Card, TIER_INK
+from tl2stash.card import (
+    ADDED,
+    AFFIX,
+    ARMOR,
+    DAMAGE,
+    Card,
+    TIER_INK,
+    requirements_lines,
+)
 from tl2stash.icons import ELEMENT_MARKS, IconLibrary, Placement
 
 __all__ = [
@@ -590,6 +598,8 @@ class ItemCard(QFrame):
         column.setContentsMargins(13, 12, 13, 13)
         column.setSpacing(2)
 
+        self._requires(column, card)
+
         first = True
         for kind, found in _sections(card.blocks):
             first = self._part(column, first)
@@ -623,6 +633,29 @@ class ItemCard(QFrame):
             flavour.setWordWrap(True)
             column.addWidget(flavour)
         return body
+
+    def _requires(self, column: QVBoxLayout, card: Card) -> None:
+        """What the item asks of the character, first under its name.
+
+        The game writes these above every stat, and they are the one thing on
+        the card that decides whether any of the rest can be used at all -- so
+        they take no rule and no section: they belong to the headline, and a
+        rule over them would file a requirement as one of the item's stats.
+
+        They are written in the colour the corner pills are written in, which
+        is this window's word for a note about the item rather than a number
+        of it.  The card cannot know whether the character meets them -- it is
+        a collection, not a character sheet -- so the game's other colour, the
+        red it turns an unmet requirement, is not available to it.
+        """
+        said = requirements_lines(card)
+        for text in said:
+            label = QLabel(text)
+            label.setObjectName("gate")
+            label.setWordWrap(True)
+            column.addWidget(label)
+        if said:
+            column.addSpacing(6)
 
     def _socketed(self, column: QVBoxLayout, card: Card) -> None:
         """What a socket put on the item: the heading, its lines, the gems.
@@ -745,6 +778,7 @@ STYLE = f"""
     font-size: 11px;
 }}
 #gem {{ color: {HEAD}; font-size: 12.5px; font-weight: 600; }}
+#gate {{ color: {LABEL}; font-size: 12px; }}
 #socketed {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #setname {{ font-size: 13px; font-weight: 600; }}
 #rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}

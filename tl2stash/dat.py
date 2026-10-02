@@ -61,6 +61,8 @@ __all__ = [
     "VAR_DAMAGE_PHYSICAL",
     "VAR_DAMAGE_POISON",
     "VAR_DAMAGE_TYPE",
+    "VAR_DEFENSE_REQUIRED",
+    "VAR_DEXTERITY_REQUIRED",
     "VAR_DISPLAYPRECISION",
     "VAR_DISPLAY_NAME",
     "VAR_DURATION",
@@ -71,6 +73,8 @@ __all__ = [
     "VAR_GOODDESOT",
     "VAR_ICON",
     "VAR_LEVEL",
+    "VAR_LEVEL_REQUIRED",
+    "VAR_MAGIC_REQUIRED",
     "VAR_MAXDAMAGE",
     "VAR_MINDAMAGE",
     "VAR_NAME",
@@ -78,6 +82,7 @@ __all__ = [
     "VAR_SET",
     "VAR_SLOT_BASE",
     "VAR_SPEED_DMG_MOD",
+    "VAR_STRENGTH_REQUIRED",
     "VAR_UNIDENTIFIED_NAME",
     "VAR_UNITTYPE",
     "VAR_UNITTYPES",
@@ -298,6 +303,24 @@ VAR_ARMOR_FIRE = field_hash("ARMOR_FIRE")
 VAR_ARMOR_ICE = field_hash("ARMOR_ICE")
 VAR_ARMOR_ELECTRIC = field_hash("ARMOR_ELECTRIC")
 VAR_ARMOR_POISON = field_hash("ARMOR_POISON")
+
+# -- what an item asks of the character who would use it ---------------------
+#
+# Five fields, and they are not one kind of number.  A level requirement is a
+# *level*, taken as it stands.  The four that follow it are magnitudes stated
+# as percentages of a by-level curve, so what the player reads is that curve's
+# value at the item's level.  The wording of both is in
+# :mod:`tl2stash.tooltip` and the arithmetic is in :mod:`tl2stash.gamedata`.
+
+VAR_LEVEL_REQUIRED = field_hash("LEVEL_REQUIRED")
+VAR_STRENGTH_REQUIRED = field_hash("STRENGTH_REQUIRED")
+VAR_DEXTERITY_REQUIRED = field_hash("DEXTERITY_REQUIRED")
+#: The game's Focus.  Torchlight 2 renamed the Torchlight 1 attributes and left
+#: the field names behind, which is why the data says Magic where the player
+#: reads Focus -- and why a tooltip must not.
+VAR_MAGIC_REQUIRED = field_hash("MAGIC_REQUIRED")
+#: The game's Vitality, renamed the same way.
+VAR_DEFENSE_REQUIRED = field_hash("DEFENSE_REQUIRED")
 
 #: Two fields on the base armour file that the item inherits rather than
 #: states: how heavy the piece is, and how much armour that weight is worth.
