@@ -47,6 +47,7 @@ from app.compare import (  # noqa: E402
     ReplicaCard,
     inset_for,
 )
+from app.theme import PALE, WHITE  # noqa: E402
 from tl2stash.card import AFFIX, Block  # noqa: E402
 
 from test_app_card import card  # noqa: E402
@@ -159,6 +160,28 @@ def test_every_copy_offers_transfer_to_stash(qapp):
         button = copy.findChild(QPushButton, "transfer")
         assert button is not None, "a copy with no way back to the game"
         assert button.text() == "Transfer to Stash"
+
+
+def test_a_copy_s_button_is_the_collection_s_own_control(qapp):
+    """One thing to do, one word for it -- and one colour it is written in.
+
+    A copy goes back to the stash it came from, which is what the button on a
+    tile's footer does and what it says, so the two are the same control; and
+    the ink is what makes that visible, because the two are never on screen
+    together.  It is the window's own light for a button standing on a card
+    (:data:`app.theme.PALE`), not a colour of this module's, and the hover is
+    the step up from it rather than the card's title colour it used to be --
+    a hover that went *dimmer* than the resting state is what a shared colour
+    turns into when only one of the two sheets is moved.
+    """
+    _, overlay = opened()
+    panel = overlay.findChild(QWidget, "cpanel")
+
+    sheet = panel.styleSheet()
+
+    assert f"color: {PALE}" in sheet
+    assert f"border: 1px solid {PALE}" in sheet
+    assert f"color: {WHITE}" in sheet, "the hover is the step up from the light"
 
 
 def test_a_copy_does_not_say_where_it_was_last_seen(qapp):

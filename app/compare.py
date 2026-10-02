@@ -40,16 +40,14 @@ from PySide6.QtWidgets import (
 from .card import (
     BODY,
     DIM,
-    DIV,
     HEAD,
-    LABEL,
     LINE,
     PANEL,
     STYLE,
     Hairline,
     IconCache,
 )
-from .theme import WALL
+from .theme import PALE, WALL, WHITE
 from .tiles import MARGIN, TILE_WIDTH, CardFrame, CardWall, TileRow
 
 __all__ = ["CompareOverlay", "ReplicaCard", "inset_for"]
@@ -73,16 +71,18 @@ _STYLE = STYLE + f"""
 #replica #card {{ background: transparent; border: 0; border-radius: 0; }}
 /* The same button the collection draws, and deliberately: what it does is the
    same thing, and the two are the same word for it -- a copy of an item goes
-   back to the stash it came from. */
+   back to the stash it came from.  So it is the same ink too, down to the
+   hover: the two are one control seen in two places, and a copy's card is
+   drawn on the tool's own wall rather than the collection's. */
 #transfer {{
-    color: {LABEL};
+    color: {PALE};
     background: transparent;
-    border: 1px solid {DIV};
+    border: 1px solid {PALE};
     border-radius: 3px;
     padding: 2px 8px;
     font-size: 11px;
 }}
-#transfer:hover {{ color: {HEAD}; border-color: {HEAD}; }}
+#transfer:hover {{ color: {WHITE}; border-color: {WHITE}; }}
 #ctitle {{
     color: {BODY};
     font-size: 15px;

@@ -26,12 +26,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QRect, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
-from app.card import PANEL, ItemCard  # noqa: E402
-from app.theme import WALL  # noqa: E402
+from app.card import BODY, LABEL, PANEL, ItemCard  # noqa: E402
+from app.theme import PALE, WALL, WHITE  # noqa: E402
 from app.tiles import (  # noqa: E402
     GAP,
     MARGIN,
@@ -309,6 +309,45 @@ def test_the_wall_draws_the_cards_on_a_ground_darker_than_they_are(qapp):
     # The wall's own margin, which is a strip of its ground with no card on it.
     assert grid.grab().toImage().pixelColor(4, 4).name() == WALL
     assert QColor(WALL).lightness() < QColor(PANEL).lightness(), "not below a card"
+
+
+def test_the_footer_buttons_are_a_light_shade_of_white(qapp):
+    """What the tile's one control is drawn in, and what it is drawn *against*.
+
+    The card under the footer is the site's and does not move; the button on it
+    is the tool's, and it was drawn in the card's own label tan -- a colour the
+    card spends on a *note*, which is what an 11px button beside a cardful of
+    lifted numbers read as.  So it takes the window's treatment for a control
+    one step down: :data:`app.theme.PALE`, the same light the rail's boxes and
+    the filter boxes are outlined in, let down far enough not to be glare on
+    every card of a wall.
+
+    Read both ways, because the ink and the outline are one colour here: the
+    sheet is what was asked for and the drawn edge is what arrived -- a sheet
+    that never reached the button would leave it looking exactly as it did,
+    which is how the wall's own ground went wrong once already.
+    """
+    grid = TileGrid()
+    wall(grid, [row(card())], width=600)
+    sheet = grid.styleSheet()
+
+    assert f"color: {PALE}" in sheet
+    assert f"border: 1px solid {PALE}" in sheet, "the outline is the same light"
+    # The claim is the whole of it -- lighter than the tan it replaces, lighter
+    # than the body text beside it, and not white.
+    assert QColor(PALE).lightness() > QColor(LABEL).lightness()
+    assert QColor(PALE).lightness() > QColor(BODY).lightness()
+    assert QColor(PALE).lightness() < QColor(WHITE).lightness()
+
+    button = grid.tile(0).findChild(QPushButton, "transfer")
+    rect = QRect(button.mapTo(grid, button.rect().topLeft()), button.size())
+    image = grid.grab().toImage()
+
+    # The outline's own pixel, on the button's left edge at its middle -- clear
+    # of the rounded corners, which are the only place it is drawn over.
+    assert image.pixelColor(rect.left(), rect.center().y()).name() == PALE, (
+        "the button was not drawn in the ink the sheet asks for"
+    )
 
 
 def test_a_card_fills_its_column_rather_than_floating_in_one(qapp):

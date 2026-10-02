@@ -49,9 +49,7 @@ from tl2stash.card import Card, lines
 
 from .card import (
     DIM,
-    DIV,
     HEAD,
-    LABEL,
     LINE,
     PANEL,
     STYLE,
@@ -59,7 +57,7 @@ from .card import (
     IconCache,
     ItemCard,
 )
-from .theme import WALL
+from .theme import PALE, WALL, WHITE
 
 __all__ = ["CardFrame", "CardWall", "ItemTile", "TileGrid", "TileRow"]
 
@@ -88,17 +86,23 @@ _STYLE = STYLE + f"""
 }}
 #tile[selected="true"] {{ border-color: {HEAD}; }}
 #tile #card {{ background: transparent; border: 0; border-radius: 0; }}
+/* The footer is a control standing on a card, and it is drawn as one: the
+   lightest thing on the card, in the window's own ink for a button on a card
+   rather than the card palette's -- a card is the site's and does not move, but
+   a button on one is the tool's.  Word and outline are the same light, and the
+   hover is the one step above it, because the resting state is already light
+   and a hover that dimmed would read as the button switching itself off. */
 #compare, #transfer, #transferall {{
-    color: {LABEL};
+    color: {PALE};
     background: transparent;
-    border: 1px solid {DIV};
+    border: 1px solid {PALE};
     border-radius: 3px;
     padding: 2px 8px;
     font-size: 11px;
 }}
 #compare:hover, #transfer:hover, #transferall:hover {{
-    color: {HEAD};
-    border-color: {HEAD};
+    color: {WHITE};
+    border-color: {WHITE};
 }}
 #empty {{ color: {DIM}; font-size: 13px; padding: 6px; }}
 """

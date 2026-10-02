@@ -14,11 +14,12 @@ stays that.  The window's own surfaces are a shade up from it, which is the
 change the user asked for and the reason it was asked for: what the player
 *operates* is outlined in :data:`WHITE` (:data:`WHITE` alone -- a web page has
 no controls to outline, so there is nothing in the card palette to derive it
-from), and a white hairline on near-black is glare rather than contrast.  One
-surface goes the other way, and it goes further: :data:`WALL` is what the
-tool's cards are drawn on, and it is darker than the cards, so that an item
-lying in the tool reads as a card in a drawer rather than as a panel in a
-panel.
+from), and a white hairline on near-black is glare rather than contrast.  The
+buttons that stand *on* a card are the same argument one step down -- see
+:data:`PALE` -- because a card's footer is a word at 11px.  One surface goes
+the other way, and it goes further: :data:`WALL` is what the tool's cards are
+drawn on, and it is darker than the cards, so that an item lying in the tool
+reads as a card in a drawer rather than as a panel in a panel.
 
 Each colour says below what it is a shade *of* -- a wall, a shell, a field --
 and the shades that are derived say what they are derived from, so the ramp can
@@ -69,7 +70,7 @@ from .card import (
     TABULAR_ON,
 )
 
-__all__ = ["EDGE", "FIELD", "SHELL", "WALL", "WHITE", "apply_theme"]
+__all__ = ["EDGE", "FIELD", "PALE", "SHELL", "WALL", "WHITE", "apply_theme"]
 
 #: Where the faces that travel with the tool live.  Beside this file when the
 #: tool runs out of a checkout, and under the bundle's own root when it is a
@@ -134,6 +135,17 @@ SHADOW = "#0c0b0a"
 #: and a hairline in ``EDGE`` or ``DIV`` -- which is what these were drawn in --
 #: is a control the eye has to find before it can use it.
 WHITE = "#ffffff"
+
+#: The word on a button that stands *on* a card -- "Compare & Transfer",
+#: "Transfer to Stash", "Transfer all" -- and the hairline that draws it.  The
+#: one control the window draws on something the site owns, and the same
+#: argument as :data:`WHITE` one step down: the card under it is near-black and
+#: the button has to read as an action rather than as another line of the item,
+#: which is what the tan it was drawn in -- the card's own ``LABEL`` -- failed
+#: to do; but a white word at 11px, on every card of a wall, is glare.  So the
+#: word and its outline are :data:`WHITE` let down one step, and the hover is
+#: what takes them the whole way.
+PALE = "#eae4da"
 
 #: The site's own body font -- ``body{font:13px/1.45 "Segoe UI",Roboto,...}``
 #: in its stylesheet -- with the same stack behind it.  It is what every line
