@@ -1,4 +1,4 @@
-"""Every copy of one item, side by side, and the one you put back.
+"""Every copy of one item, side by side, and the one you send back.
 
 A tile is one *item* however many rolls of it the tool holds -- that is what
 makes the collection readable, and it is also the one thing it cannot say.
@@ -6,18 +6,22 @@ Two copies of a unique are the same card with two different sets of numbers,
 and *which numbers* is the whole reason a player keeps both: this one has the
 resistance, that one has the damage.  So the tile's footer carries the way in
 (:class:`~app.tiles.ItemTile`) and this is what opens: the reference tool's
-own screen, a card per copy over the window, each with the one button that
-sends that copy back to the game.
+own screen, a card per copy, each with the one button that sends that copy
+back to the game.
 
 The difference from the collection is exactly that: a tile answers for every
 copy at once and this answers for one.  A copy is its own fingerprint, because
 a fingerprint is a hash of an item's bytes and two rolls are two items -- so
-the cards here are built one per copy, and "Put back" means the one under the
-pointer rather than the group.
+the cards here are built one per copy, and the button means the copy it is
+under rather than the group.
 
-It is an overlay rather than a window because it is about the collection it
-covers: a second window can be lost behind the game, and what is being
-compared is the thing that was just clicked.
+It is a panel over the window rather than a window of its own, and it is not
+the whole window either.  A second window can be lost behind the game; a
+screen that replaced the collection would be a screen you have to leave to see
+what you were comparing against.  So the window stays where it is, dimmed by a
+backdrop, and the panel sits inside that backdrop with the window showing
+round the edges -- the reference's own shape, and the one that keeps saying
+that the collection is under here.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -40,12 +45,14 @@ from .card import (
     HEAD,
     LABEL,
     LINE,
+    PANEL,
     STYLE,
+    Hairline,
     IconCache,
 )
 from .tiles import MARGIN, TILE_WIDTH, CardFrame, CardWall, TileRow
 
-__all__ = ["CompareOverlay", "ReplicaCard"]
+__all__ = ["CompareOverlay", "ReplicaCard", "inset_for"]
 
 #: The overlay's own rules, over the card's.  A copy is drawn as a tile is --
 #: a card in a panel with a footer under it -- but the panel is the same
@@ -53,6 +60,11 @@ __all__ = ["CompareOverlay", "ReplicaCard"]
 #: the collection's cards are things you pick up, and these are one thing
 #: already picked, spread out.
 _STYLE = STYLE + f"""
+#cpanel {{
+    background-color: {PANEL};
+    border: 1px solid {LINE};
+    border-radius: 4px;
+}}
 #replica {{
     background-color: {GROUND};
     border: 1px solid {LINE};
@@ -60,7 +72,10 @@ _STYLE = STYLE + f"""
 }}
 #replica #card {{ background: transparent; border: 0; border-radius: 0; }}
 #found {{ color: {DIM}; font-size: 11px; }}
-#putback {{
+/* The same button the collection draws, and deliberately: what it does is the
+   same thing, and the two are the same word for it -- a copy of an item goes
+   back to the stash it came from. */
+#transfer {{
     color: {LABEL};
     background: transparent;
     border: 1px solid {DIV};
@@ -68,7 +83,7 @@ _STYLE = STYLE + f"""
     padding: 2px 8px;
     font-size: 11px;
 }}
-#putback:hover {{ color: {HEAD}; border-color: {HEAD}; }}
+#transfer:hover {{ color: {HEAD}; border-color: {HEAD}; }}
 #ctitle {{
     color: {BODY};
     font-size: 15px;
@@ -85,10 +100,27 @@ _STYLE = STYLE + f"""
 #cclose:hover {{ color: {HEAD}; }}
 """
 
-#: How far the overlay's own ground is lifted off the window behind it.  It
-#: covers the whole window, so it *is* the ground while it is up; the lift is
-#: what keeps it from reading as the same surface with different cards on it.
-SCRIM = "#0c0b0a"
+#: What the backdrop is painted in: the darkest colour in the window, at seven
+#: tenths.  Dark rather than black, because the cards on the panel are drawn
+#: on a near-black ground of their own and a backdrop that matched it would
+#: leave the panel with no edge; seven tenths rather than solid, because the
+#: collection is still there -- its own ground is nearly this dark, so what
+#: shows through is its cards and their words rather than a shape, which is
+#: what a dimmed window looks like.
+SCRIM = (12, 11, 10, 178)
+
+#: How far the panel's edge sits inside the window's: a share of the window's
+#: shorter side, and a floor under it.  The share is what keeps the panel from
+#: being the window again on a large screen, and the floor is what keeps it a
+#: panel rather than a sliver on a small one -- a share of a small window is a
+#: small fraction, and the numbers in a card do not shrink with the window.
+INSET = 0.06
+MIN_INSET = 24
+
+
+def inset_for(width: int, height: int) -> int:
+    """How far the panel's edge sits inside a window of this size."""
+    return max(MIN_INSET, round(min(width, height) * INSET))
 
 
 class ReplicaCard(CardFrame):
@@ -122,8 +154,8 @@ class ReplicaCard(CardFrame):
         row.addWidget(found)
         row.addStretch(1)
 
-        button = QPushButton("Put back")
-        button.setObjectName("putback")
+        button = QPushButton("Transfer to Stash")
+        button.setObjectName("transfer")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setToolTip(
             "Return this copy to the shared stash, where the game will pick it\n"
@@ -146,15 +178,36 @@ class ReplicaCard(CardFrame):
         event.accept()
 
 
-class CompareOverlay(QWidget):
-    """The copies of one item over the window, each with its own Put back.
+class Panel(QFrame):
+    """The panel itself: the title, the way out, and the copies on the wall.
 
-    The overlay is a child of the window rather than a window of its own, and
-    it covers what it is about: it follows its parent's size while it is up,
-    and clicking the ground or pressing Esc puts it away.  What it emits is
-    one fingerprint -- the copy someone decided to send back -- and what the
-    window does with it is the window's business, as with every other action
-    here.
+    A ``QFrame`` rather than a plain ``QWidget`` because it is a *styled*
+    widget -- the sheet gives it a ground and an edge, and a plain widget has
+    nothing to draw either with.
+    """
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        """A press on the panel is not a press on the ground behind it.
+
+        The backdrop closes the screen, which is what every pop-up does, and
+        the way it knows a click was the backdrop's is that the click reached
+        it: a widget that ignores a press passes it up to its parent.  So the
+        panel takes its own presses here -- a click on the title, on the strip
+        beside it, on the empty half of a card -- and the backdrop keeps only
+        the presses that were actually aimed at it.
+        """
+        event.accept()
+
+
+class CompareOverlay(QWidget):
+    """The copies of one item over the window, each with its own Transfer.
+
+    The overlay is a child of the window rather than a window of its own: it
+    covers what it is about, follows its parent's size while it is up, and
+    puts the panel inside itself at :func:`inset_for`.  Clicking the backdrop
+    or pressing Esc puts it away.  What it emits is one fingerprint -- the
+    copy someone decided to send back -- and what the window does with it is
+    the window's business, as with every other action here.
     """
 
     #: A copy to put back, by fingerprint.
@@ -166,21 +219,17 @@ class CompareOverlay(QWidget):
         self._cards: list[ReplicaCard] = []
         self._icons = icons
 
-        column = QVBoxLayout(self)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(0)
-        column.addWidget(self._header())
-
-        self._wall = CardWall()
-        self._wall.setStyleSheet(_STYLE)
-        column.addWidget(self._wall, stretch=1)
-
-        # The ground, painted rather than styled: a plain QWidget is not a
+        # The backdrop, painted rather than styled: a plain QWidget is not a
         # styled widget, so a `background` rule here would draw nothing.
         self.setAutoFillBackground(True)
         palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(SCRIM))
+        palette.setColor(QPalette.ColorRole.Window, QColor(*SCRIM))
         self.setPalette(palette)
+
+        self._panel = self._build_panel()
+        self._inset = QVBoxLayout(self)
+        self._inset.setSpacing(0)
+        self._inset.addWidget(self._panel)
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setVisible(False)
@@ -198,10 +247,18 @@ class CompareOverlay(QWidget):
         parent = self.parentWidget()
         if parent is not None:
             parent.installEventFilter(self)
-            self.setGeometry(parent.rect())
+            self._fit()
         self.raise_()
         self.show()
         self.setFocus()
+
+    def panel(self) -> QWidget:
+        """The panel, which is everything the backdrop is not."""
+        return self._panel
+
+    def wall(self) -> CardWall:
+        """The cards' wall, which scrolls when there are more than fit."""
+        return self._wall
 
     def dismiss(self) -> None:
         """Put the window back the way it was."""
@@ -231,6 +288,25 @@ class CompareOverlay(QWidget):
 
     # -- the pieces ------------------------------------------------------
 
+    def _build_panel(self) -> Panel:
+        """The panel, its header and the wall the copies go on."""
+        panel = Panel()
+        panel.setObjectName("cpanel")
+        # On the panel rather than on the wall, so that the sheet reaches the
+        # title and the close button too -- they are the panel's, not the
+        # wall's, and a sheet set on a widget stops at its children.
+        panel.setStyleSheet(_STYLE)
+
+        column = QVBoxLayout(panel)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self._header())
+        column.addWidget(Hairline())
+
+        self._wall = CardWall()
+        column.addWidget(self._wall, stretch=1)
+        return panel
+
     def _header(self) -> QWidget:
         head = QWidget()
         row = QHBoxLayout(head)
@@ -258,15 +334,31 @@ class CompareOverlay(QWidget):
             self._wall.forget(card)
         self._cards = []
 
+    def _fit(self) -> None:
+        """Cover the window, and put the panel inside that at its inset.
+
+        Both halves are the same act: the backdrop has to be the window's own
+        size or the panel would be measured against a rectangle that is not
+        what is on screen, and the inset is a margin *inside* the backdrop
+        rather than a geometry worked out from it -- which is what makes the
+        panel follow a resize without anything recomputing where it goes.
+        """
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self.setGeometry(parent.rect())
+        margin = inset_for(parent.width(), parent.height())
+        self._inset.setContentsMargins(margin, margin, margin, margin)
+
     # -- the mouse and the keyboard --------------------------------------
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 -- Qt naming
-        """A click on the ground, which is everything the cards do not cover.
+        """A click on the backdrop, which is everything outside the panel.
 
-        The header and the wall are children, and a widget that does not
-        handle a press passes it to its parent -- so a click on the title, or
-        beside it, arrives here and puts the overlay away, which is what every
-        tool with an overlay does.
+        Reaching here at all is the test: the panel and the cards on it take
+        their own presses, so what arrives is a click on the part of the
+        window the panel is not covering -- which is the part that says the
+        player is done looking.
         """
         self.dismiss()
         super().mousePressEvent(event)
@@ -278,7 +370,8 @@ class CompareOverlay(QWidget):
         super().keyPressEvent(event)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 -- Qt naming
-        """Keep covering the window when the window changes size."""
+        """Keep covering the window, and keep the panel pinned inside it, when
+        the window changes size."""
         if event.type() == QEvent.Type.Resize and watched is self.parentWidget():
-            self.setGeometry(watched.rect())
+            self._fit()
         return super().eventFilter(watched, event)

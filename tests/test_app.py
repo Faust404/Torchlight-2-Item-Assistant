@@ -549,7 +549,7 @@ def test_the_compare_button_shows_each_copy_and_puts_one_back(
         )
 
         sent_back, kept = shown
-        sent_back.findChild(QPushButton, "putback").click()
+        sent_back.findChild(QPushButton, "transfer").click()
 
         assert win.stash_model.rowCount() == 1, "no copy went back to the game"
         assert win.service.registry.absorbed_fingerprints() == {
