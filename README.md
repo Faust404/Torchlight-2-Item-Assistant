@@ -89,14 +89,14 @@ slot.
 
 In the window, the left panel is the save file and the right one is the tool.
 Put things in the shared stash; on the game's next save they leave the file and
-appear on the right, and selecting one shows the stats the game would show.
-**Put back selected** returns it to the stash, where it stays until you ask for
-it back. Each save file gets its own database under `var/`, so a modded stash
-and a vanilla one never mix.
+appear on the right, and each card shows the stats the game would show.
+**Transfer to Stash** on a card returns it to the game, where it stays until
+you ask for it back. Each save file gets its own database under `var/`, so a
+modded stash and a vanilla one never mix.
 
 The game is found by itself when it is installed. Without it the tool still
-stores and returns items exactly the same; only the wording is missing, and the
-details pane says so.
+stores and returns items exactly the same; only the wording is missing, and a
+line over the collection says so.
 
 ## Notes on the format
 

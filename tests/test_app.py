@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 import app.window as window_module  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
@@ -261,8 +261,7 @@ def test_an_item_put_back_drops_off_the_collection(window, monkeypatch):
     assert window.collection_model.rowCount() == 3
     assert window.grid.count() == 3
 
-    window.grid.select_row(0)
-    window._restore_selected()
+    window.grid.tile(0).findChild(QPushButton, "transfer").click()
 
     assert window.collection_model.rowCount() == 2, "the restored item stayed in the tool"
     assert window.grid.count() == 2, "its card stayed on the wall"
@@ -409,8 +408,7 @@ def test_one_card_stands_for_every_copy_of_its_item(qapp, tmp_path, monkeypatch)
         assert win.grid.count() == 1
         assert win.grid.rows()[0].copies == 2
 
-        win.grid.select_row(0)
-        win._restore_selected()
+        win.grid.tile(0).findChild(QPushButton, "transferall").click()
 
         assert win.stash_model.rowCount() == 2, "the card put back only one copy"
         assert "2 of Fortress of Fools" in win.status.currentMessage()
@@ -579,8 +577,8 @@ def test_the_collection_draws_the_item_rather_than_summarising_it(stocked):
 
 def test_the_selection_survives_a_refresh(stocked):
     """The wall is rebuilt whenever the game saves -- every few seconds in
-    play.  Losing the selection there would quietly disarm "Put back
-    selected" while the player was looking at the card they meant."""
+    play.  A highlight that went out on every save would blink on and off
+    under a player reading the cards they had picked out."""
     stocked.grid.select_row(1)
     assert [row.name for row in stocked.grid.selected()] == ["Beta"]
 
@@ -770,7 +768,7 @@ def test_absorb_everything_can_be_cancelled(window, monkeypatch):
     assert window.service.registry.absorbed_fingerprints() == set()
 
 
-def test_restore_puts_the_selection_back(window, monkeypatch):
+def test_restore_puts_the_item_back(window, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(
@@ -780,9 +778,8 @@ def test_restore_puts_the_selection_back(window, monkeypatch):
     window._absorb_all()
     assert window.stash_model.rowCount() == 0
 
-    # Select the first card of the collection and put it back.
-    window.grid.select_row(0)
-    window._restore_selected()
+    # The first card's own button, which is where putting one back lives now.
+    window.grid.tile(0).findChild(QPushButton, "transfer").click()
 
     assert window.stash_model.rowCount() == 1
     assert window.collection_model.rowCount() == 2
@@ -797,8 +794,7 @@ def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
     window._absorb_all()
-    window.grid.select_row(0)
-    window._restore_selected()
+    window.grid.tile(0).findChild(QPushButton, "transfer").click()
 
     window.auto_absorb.setChecked(True)
     window._sync()

@@ -543,8 +543,8 @@ class TileGrid(CardWall):
 
         # A selection whose items have gone is not a selection.  An item that
         # left the tool -- put back, or filtered out -- takes its tile with it,
-        # and "Put back selected" must not be armed by a card that is no
-        # longer on screen.
+        # and the highlight must not outlive the card it was drawn on: the same
+        # item coming back would otherwise come back already chosen.
         self._selected = [f for f in self._selected if f in wanted]
 
         self.set_cards(tiles, empty)

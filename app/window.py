@@ -194,11 +194,6 @@ class MainWindow(QMainWindow):
         self.absorb_button.clicked.connect(self._absorb_all)
         bar.addWidget(self.absorb_button)
 
-        self.restore_button = QPushButton("Put back selected")
-        self.restore_button.setToolTip("Return the selected items to the stash.")
-        self.restore_button.clicked.connect(self._restore_selected)
-        bar.addWidget(self.restore_button)
-
         self.auto_absorb = QCheckBox("Automatic")
         self.auto_absorb.setChecked(True)
         self.auto_absorb.setToolTip(
@@ -366,7 +361,6 @@ class MainWindow(QMainWindow):
         if not self._sources:
             self._set_status("No Torchlight 2 shared stash found on this machine.")
             self.absorb_button.setEnabled(False)
-            self.restore_button.setEnabled(False)
             return
 
         self.source_box.blockSignals(True)
@@ -525,41 +519,6 @@ class MainWindow(QMainWindow):
         if backup is not None:
             note += f" · backup {backup.name}"
         self._set_status(note)
-
-    def _restore_selected(self) -> None:
-        if self.service is None:
-            return
-        rows = self.grid.selected()
-        prints = self._selected_fingerprints()
-        if not prints:
-            QMessageBox.information(
-                self, "Nothing selected", "Select items in the collection first."
-            )
-            return
-
-        report = self.service.restore(prints)
-        self.watcher.accept()
-        self._refresh_views()
-
-        if report.restored:
-            note = f"put back {len(report.restored)}{_copies_note(rows)}"
-            self._set_status(
-                f"{note} · they return to the game on its next load"
-            )
-        elif report.skipped:
-            self._set_status(f"{len(report.skipped)} were already in the stash")
-
-    def _selected_fingerprints(self) -> set[str]:
-        """Every fingerprint the selected cards stand for.
-
-        A card is an *item* however many copies of it the tool holds, so
-        selecting one selects all of them -- that is what the count on its
-        footer says, and putting the card back is putting back what it says.
-        """
-        prints: set[str] = set()
-        for row in self.grid.selected():
-            prints.update(row.members)
-        return prints
 
     # -- the copies ------------------------------------------------------
 
