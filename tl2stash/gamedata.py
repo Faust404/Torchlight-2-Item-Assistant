@@ -1370,6 +1370,44 @@ class GameData:
         lines.append(f"Weapon Range {_written(reach)}")
         return tuple(lines)
 
+    def socket_host(self, item) -> str | None:
+        """Which of a socketable's two hosts this item is, or ``None``.
+
+        The words are :meth:`socket_target`'s, and the question is the other
+        side of the same coin: that one asks which host an *effect* is granted
+        to, and this asks which host an *item* is, so that a gem's card can
+        show the one bonus it gives the thing it is sitting in.
+
+        One field settles it, and it is the field :meth:`weapon_lead` already
+        rests on: an item that states a ``RANGE`` is a weapon and nothing else
+        in the archive states one.  Measured over all 6,262 item files, read
+        through inheritance so that a file which states nothing of its own
+        still answers: every item of every weapon kind states a reach, and no
+        item of any other kind states one -- no ring, no breastplate, no
+        shield, no spell, no quest item, no potion.  A shield is therefore
+        armour here, which is also how the rest of the tool already reads one:
+        ``derived_for`` gives a shield an armour value, not a damage range.
+        It is the only reading the data supports -- the game's affix files say
+        ``WEAPON`` or ``TRINKET`` and never ``SHIELD``, so a shield has to be
+        one of the two, and the reach says which.
+
+        Stated or not, rather than true or not, which is the one place this
+        departs from ``weapon_lead``'s reading of the same field.  No file in
+        the archive states a reach of zero, so the two agree on every item the
+        game ships -- and a mod's weapon with a reach of zero is still a
+        weapon, which is the answer that matters.
+
+        ``None`` for an item that cannot be traced to a file at all, and it is
+        not the same as ``'TRINKET'``: a caller that cannot tell the two hosts
+        apart shows both of a gem's lines rather than one of them wrong.
+        """
+        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
+        if data is None:
+            return None
+        if _number(self._inherited(data), VAR_RANGE) is None:
+            return "TRINKET"
+        return "WEAPON"
+
     def _swing_seconds(self, stated: dict[int, DatNode]) -> float | None:
         """Seconds between swings, or ``None`` for a weapon that does not say.
 

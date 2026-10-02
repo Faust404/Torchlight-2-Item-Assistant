@@ -959,7 +959,13 @@ class ItemCard(QFrame):
         return False
 
     def _gem(self, column: QVBoxLayout, gem: Card) -> None:
-        """A socket's contents, under the item that holds them."""
+        """A socket's contents, under the item that holds them.
+
+        The gem's name and its lines, and nothing under them: the card it comes
+        from carries no requirements -- the gem is already in something -- and
+        no flavour text, which is the sentence about inserting it, so there is
+        nothing here to draw but the two things the player is looking at.
+        """
         heading = QLabel(gem.name)
         heading.setObjectName("gem")
         heading.setWordWrap(True)
@@ -970,13 +976,6 @@ class ItemCard(QFrame):
                 # Indented, because what is under a gem's name is the gem's
                 # rather than the item's.
                 column.addWidget(self._stat(text, kind, indent=12))
-
-        if gem.flavor:
-            flavour = QLabel(gem.flavor)
-            flavour.setObjectName("flav")
-            flavour.setWordWrap(True)
-            flavour.setIndent(12)
-            column.addWidget(flavour)
 
     def _stat(self, text: str, kind: str, indent: int = 0) -> QWidget:
         """One line of stats: an affix in the game's green, the rest plain.

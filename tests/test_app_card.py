@@ -689,6 +689,41 @@ def test_an_item_with_nothing_in_its_sockets_draws_no_socketed_heading(qapp):
     assert drawn.findChildren(Hairline) == []
 
 
+def test_a_gem_in_a_socket_draws_its_one_bonus_and_nothing_else(qapp):
+    """The gem and the bonus it gives *this* item, which is all the user asked
+    for: no chips for the item level it may be socketed into, and no sentence
+    about inserting it.  Both are about a socketable lying in a bag, and this
+    one is not lying in a bag.
+
+    The card the gem is drawn from carries neither -- ``build`` leaves both off
+    a socketed socketable's card -- so what is asserted here is that nothing
+    under the gem's name draws them back.
+    """
+    gem = card(
+        name="Ice Ember",
+        tier="magic",
+        tier_word="Magic",
+        type_name="Socketable",
+        level=50,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+58 Ice Armor",)),),
+        flavor="Insert Ember into weapons and armor with empty slots to garner"
+        " their effects.",
+        requires=Requirements(level=50, socketing=True, stats=()),
+    )
+    drawn = ItemCard(
+        card(sockets=1, gems=(gem,), blocks=(Block(AFFIX, ("15 Health stolen on hit",)),))
+    )
+
+    assert texts(drawn, "gem") == ["Ice Ember"]
+    assert texts(drawn, "flav") == []
+    assert texts(drawn, "rhead") == []
+    assert texts(drawn, "rchip") == []
+
+    body = [label.text() for label in drawn.findChildren(QLabel) if label.objectName() == ""]
+    assert any("Ice Armor" in text for text in body), body
+
+
 def test_a_set_s_ladder_is_drawn_under_the_item_s_own_stats(qapp):
     """The set's name, then each rung as ``(2) Set`` over its lines.
 

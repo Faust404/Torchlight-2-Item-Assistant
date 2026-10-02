@@ -685,6 +685,47 @@ def test_an_effect_both_hosts_get_is_left_without_a_host():
     assert _effect_lines(gem, _SocketGame(), _Kind("Socketable")) == ["+82 Health"]
 
 
+def test_a_socketable_in_a_weapon_shows_the_weapon_half_alone():
+    """A gem in a sword says what the sword got, and does not say it is the
+    sword's.
+
+    The two halves are two different numbers granted to two different hosts,
+    and only one of them is true of the item the gem is in -- so the line the
+    item never gets is not a line on its card at all, rather than a line
+    marked with a host the reader has to skip past.  The half that *is* shown
+    keeps no tag either: ``Weapon: +26 Fire Damage`` beside a weapon is the
+    weapon saying what it already is.  The line both hosts get is not a host's
+    line and stays where it is, in front of the one that is.
+    """
+    gem = item("Ice Ember", level=0)
+    gem.effects = [
+        effect("", value=26.0, index=40),  # the weapon half, recorded first
+        effect("", value=120.0, index=_SocketGame.SOCKET),
+        effect("", value=50.0, index=_SocketGame.OWN),  # granted to both
+    ]
+
+    assert _effect_lines(
+        gem, _TwoHostGame(), _Kind("Socketable"), socketed_into="WEAPON"
+    ) == ["+50 Health", "+26 Fire Damage"]
+
+
+def test_a_socketable_in_armour_shows_the_armour_half_alone():
+    """The same rule, and the same gem: ``Armor/Trinket`` is the host a shield
+    and a breastplate are, and what the gem gives one of them is not what it
+    gives a weapon.  Which of the two hosts an item is comes from the archive
+    -- see :meth:`~tl2stash.gamedata.GameData.socket_host`."""
+    gem = item("Ice Ember", level=0)
+    gem.effects = [
+        effect("", value=26.0, index=40),
+        effect("", value=120.0, index=_SocketGame.SOCKET),
+        effect("", value=50.0, index=_SocketGame.OWN),
+    ]
+
+    assert _effect_lines(
+        gem, _TwoHostGame(), _Kind("Socketable"), socketed_into="TRINKET"
+    ) == ["+50 Health", "+120 Ice Armor"]
+
+
 def test_a_socket_does_not_split_the_item_s_own_lines():
     """The rule that was wrong, and the item it was measured on.
 
@@ -819,6 +860,35 @@ def test_a_real_socket_s_line_is_shown_apart_from_the_item_s_own(game):
     # And the gem under it is a card of its own, with the gem's own number.
     assert [gem.name for gem in card.gems] == ["Ice Ember"]
     assert any("+58 Ice Armor" in line for line in lines(card.gems[0]))
+
+
+@needs_game
+def test_a_real_gem_in_a_socket_is_the_gem_and_its_one_bonus(game):
+    """The whole of what a socket's gem reads, once it is in something.
+
+    One line, and it is the number *this* item was granted: the ember's
+    ``+29 Ice Damage`` is the weapon's and the gorget is not a weapon, so the
+    line is not on the card.  Under it there is nothing, where a gem in a bag
+    has two more things -- the item level it may be socketed into, and the
+    sentence saying what to socket it into.  Both are facts about a socketable
+    lying in a bag; this one is in a gorget.
+    """
+    gorget = _a_socketed_item()
+    if gorget is None:
+        pytest.skip("no socketed item is stored on this machine")
+
+    card = build(gorget, game)
+    (gem,) = card.gems
+
+    assert lines(gem) == ["Ice Ember", "+58 Ice Armor"]
+    # An empty ``Requirements`` rather than ``None``: the gem has answered its
+    # one gate, and ``None`` would send the card back to the save file's level
+    # and print a ``Player Level 50`` under a gem that is already in a gorget.
+    assert gem.requires is not None
+
+    # The item holding it is untouched: the gorget's own gate is still asked.
+    assert "Player Level 54" in lines(card)
+    assert "+120 Ice Armor" in lines(card)
 
 
 def _effect_index(game, name: str) -> int:

@@ -186,6 +186,24 @@ rate`), and `[VALUE_OT]` rounds the rate *before* multiplying it by the
 duration — a 5-second affix stored at 11.259 reads `+12 Physical Damage` and
 `60 Physical Damage over 5 sec.`, where multiplying the stored float gives 57.
 
+**A socket's bonus is granted to a host, and it is not in the item's effect
+list.** An item's recorded effects are the item's own, and nothing a gem put
+there is among them: a socketed smallsword holds exactly one record, its own
+damage bonus, and none of the two things its ember grants. So a socket's
+contribution is computed from the gem and drawn on the gem's own card, and the
+item's lines are the item's. What the gem grants *to* is in the affixes — a
+gem's under `MEDIA/AFFIXES/GEMS/`, filed by host in the file name, a unique
+socketable's under `MEDIA/AFFIXES/ITEMS/`, where the name lies and the
+applicability list does not (`UNIQUE_DEGRADE_ARMOR2` wears `_ARMOR` and is a
+weapon affix). That list writes `WEAPON` and `ARMOR`, which are two hosts and
+not three: a gem in a ring and a gem in a breastplate are granted the same
+bonus, and the game spells the host the one way for both. Which of the two an
+*item* is has one answer in the archive: an item that states a `RANGE` is a
+weapon and nothing else states one — over all 6,262 item files, every weapon
+kind states a reach and no ring, breastplate, shield, spell or potion does. A
+shield is armour for the same reason it is armour everywhere else in the tool:
+it is given an armour value and not a damage range.
+
 ### How far this is verified
 
 The rendered lines are checked against an independent item database,

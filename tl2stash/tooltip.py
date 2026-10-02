@@ -55,6 +55,7 @@ from .card import (
     lines,
 )
 from .dat import VAR_FLAVOR
+from .gamedata import Requirements
 from .item import as_float, strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -296,7 +297,9 @@ def _substitute(
     return _TAG.sub(fill, template)
 
 
-def _effect_lines(item: "Item", data: "GameData", appearance=None) -> list[str]:
+def _effect_lines(
+    item: "Item", data: "GameData", appearance=None, socketed_into: str | None = None
+) -> list[str]:
     """The item's own effects, one line each, in file order.
 
     Both effect lists are read.  ``effects`` is what the item was rolled with;
@@ -332,7 +335,19 @@ def _effect_lines(item: "Item", data: "GameData", appearance=None) -> list[str]:
     the reference database's: everything granted to both hosts, then the
     Armor/Trinket bonus, then the weapon's.  A gem's save records are in no
     order of their own -- the Flame Ember's weapon half is recorded first --
-    so without this the card would lead with the wrong one of the two.
+    so without this the card would lead with the wrong one of the two.  It is
+    the order of a socketable's card and not of the sentence, so it holds
+    whether or not the host is written on the line.
+
+    ``socketed_into`` is the host this socketable is *in*, which is the one
+    case where the question above has already been answered.  The lines are
+    then the ones that host is granted and no others, and none of them names a
+    host: a player looking at a gem in a sword wants the bonus the sword got,
+    and ``Weapon: +29 Ice Damage`` beside a sword says a thing the sword
+    already says.  A host of ``None`` is not "no host" but "not known" -- an
+    item with no data file behind it -- and the two lines are then shown as
+    they are everywhere else, which is the honest answer rather than a guess
+    between them.
     """
     lines: list[str] = []
     # One per line of ``lines``, in the same order: 0 for a line that names no
@@ -396,15 +411,27 @@ def _effect_lines(item: "Item", data: "GameData", appearance=None) -> list[str]:
         # Where the bonus goes, when the thing granting it is socketed rather
         # than worn.  An effect no affix claims for one host -- one both hosts
         # get, or one two affixes claim for two different hosts -- has none to
-        # name, and is left as it stands, which is also what puts its line
-        # above the two that do name one.
+        # name, and ranks nowhere, which is also what puts its line above the
+        # two that do name one.
         rank = 0
         if socketable:
             target = data.socket_target(node.name)
-            host = _SOCKET_HOSTS.get(target or "")
-            if host:
-                line = f"{host}: {line}"
+            if socketed_into is not None and target is not None and target != socketed_into:
+                # Granted to the other host: the item this sits in never gets
+                # it, so it is not a line here at all.
+                continue
+            # The order is the reference database's whether or not the host is
+            # named on the line, because it is the order of a *socketable's*
+            # card and not of the sentence: a gem in a gorget reads the line
+            # both hosts get and then the gorget's, exactly as the same gem in
+            # a bag reads it and then ``Armor/Trinket:``.
             rank = _SOCKET_ORDER.get(target or "", 0)
+            # Only an unworn socketable names its hosts.  One that is already
+            # in something says the one thing that is true of it there.
+            if socketed_into is None:
+                host = _SOCKET_HOSTS.get(target or "")
+                if host:
+                    line = f"{host}: {line}"
 
         lines.append(line)
         hosts.append(rank)
@@ -415,6 +442,7 @@ def _effect_lines(item: "Item", data: "GameData", appearance=None) -> list[str]:
         # and nothing else orders them.  Everything else keeps file order.
         lines = [line for _, line in sorted(zip(hosts, lines), key=lambda pair: pair[0])]
     return lines
+
 
 def _set_ladder(title: str, data: "GameData") -> tuple[Rung, ...]:
     """What wearing more of the set ``title`` grants, rung by rung.
@@ -527,7 +555,7 @@ def _damage_lines(derived) -> list[str]:
     return lines
 
 
-def build(item: "Item", data: "GameData | None" = None) -> Card:
+def build(item: "Item", data: "GameData | None" = None, host: str | None = None) -> Card:
     """An item as a card: its headline, its blocks of lines, its gems.
 
     The lines are the same ones :func:`render` has always produced, in the same
@@ -543,6 +571,25 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     The gems are cards of their own and are the only place a socket's
     contribution is written, because the item's own effect list does not hold
     it -- see :func:`_effect_lines`.
+
+    ``host`` says this item is a socketable *already in something*, and names
+    the something: the building of a gem's card passes the host item's own
+    answer from :meth:`~tl2stash.gamedata.GameData.socket_host` down, so the
+    gem's lines are the ones that host is granted and no others.  A gem in a
+    sword shows what the sword got and not the two things it could have got,
+    which is what the game shows and what the player is asking about.
+
+    A card built this way is the socketable and its bonus to that item and
+    nothing else -- no requirements, which ask what the thing may be put into
+    and it is in one, and no flavour text, which is the sentence about
+    inserting it.  Both are facts about a socketable lying in a bag; a
+    socketed one is done with them.
+
+    ``None`` is not a host but the absence of one, and it is what a host item
+    that cannot be traced to a file gives back.  The gem is then drawn as the
+    socketable in a bag that it also is: both of its lines, each tagged, and
+    the sentence saying what it goes into.  Showing a line the item never got
+    is the one wrong answer here, and that is the one this avoids.
     """
     blocks: list[tuple[str, list[str]]] = []
 
@@ -583,7 +630,7 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     added = _added_damage_lines(item)
 
     if data is not None:
-        own = _effect_lines(item, data, appearance)
+        own = _effect_lines(item, data, appearance, socketed_into=host)
         properties = added + own
         blocks.append((AFFIX, properties))
     else:
@@ -599,11 +646,14 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     augments = _augment_blocks(item, data, properties) if data is not None else ()
 
     flavor = None
-    if data is not None:
+    if data is not None and host is None:
         # The item's own data file first, because a unique is not *named*
         # what it is called -- the node behind Wanderlust Pants is
         # ``wanderer_02_pants_alt_set``.  A base item usually is, so its name
         # is tried second and is what a guid-less item has to go on.
+        #
+        # Not read at all for a socketable already in something: what the
+        # flavour says is how to socket the thing, and it is socketed.
         flavor = data.flavor_for(item)
         if not flavor:
             source = data.by_name(item.base_name)
@@ -623,6 +673,29 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     if data is not None and appearance is not None and appearance.set_name:
         ladder = _set_ladder(appearance.set_name, data)
 
+    # What the item *is to a socketable in it*: the host's answer goes down to
+    # the gems below, so each of them writes the one line this item was
+    # granted rather than every line it could have granted.
+    socketed_into = data.socket_host(item) if data is not None else None
+
+    # What the game gates the item on -- the player level or the attributes,
+    # whichever the character reaches first -- worked out from the item's own
+    # file.  ``None`` without the game's files, and the card falls back to the
+    # level the save records.
+    #
+    # A socketable already in something has no gates left to answer, and the
+    # vocabulary for saying so is the one the game already uses: a potion and a
+    # quest item answer *nothing*, which is an empty ``Requirements`` and not
+    # ``None``.  ``None`` would send the card back to the save file's level and
+    # print a `Player Level 50` under a gem that is in a sword.
+    requires = None
+    if data is not None:
+        requires = (
+            Requirements(level=0, socketing=False, stats=())
+            if host is not None
+            else data.requirements_for(item)
+        )
+
     return Card(
         name=item.display_name,
         tier=TIER_KEYS.get(tier_word, TIER_NONE),
@@ -635,14 +708,10 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         # An empty section is dropped rather than kept as a heading with
         # nothing under it, which is what lets `lines` concatenate them.
         blocks=tuple(Block(kind, tuple(found)) for kind, found in blocks if found),
-        gems=tuple(build(gem, data) for gem in item.gems),
+        gems=tuple(build(gem, data, socketed_into) for gem in item.gems),
         set_ladder=ladder,
         flavor=flavor or None,
-        # What the game gates the item on -- the player level or the
-        # attributes, whichever the character reaches first -- worked out from
-        # the item's own file.  ``None`` without the game's files, and the
-        # card falls back to the level the save records.
-        requires=data.requirements_for(item) if data is not None else None,
+        requires=requires,
         weapon_lead=lead,
         augments=augments,
     )
