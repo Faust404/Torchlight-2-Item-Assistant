@@ -490,9 +490,14 @@ class ItemCard(QFrame):
             for text in found:
                 column.addWidget(self._stat(text, kind))
 
-        for gem in card.gems:
+        # What a socket added, as its own section: the lines the item's own
+        # records carry *because* of the socket, then the gems themselves.
+        # The two numbers differ on purpose -- the record holds what the gem
+        # grants this item, the gem's own card what it is on its own -- and
+        # the section is what says which is which.
+        if card.gems or card.socketed:
             first = self._part(column, first)
-            self._gem(column, gem)
+            self._socketed(column, card)
 
         # The set's ladder, in the place the game writes it: after the item's
         # own stats and its sockets, before the remark under both.  The same
@@ -512,6 +517,29 @@ class ItemCard(QFrame):
             flavour.setWordWrap(True)
             column.addWidget(flavour)
         return body
+
+    def _socketed(self, column: QVBoxLayout, card: Card) -> None:
+        """What a socket put on the item: the heading, its lines, the gems.
+
+        The heading is this window's own word rather than the game's -- the
+        game draws a socket's contents under the item with nothing over them,
+        and it can afford to, because a player looking at the game's tooltip
+        put the gem there a moment ago.  A collection may hold an item nobody
+        alive has ever unsocketed, so the section says what it is.
+
+        The lines come first and the gems under them: what the socket does to
+        *this* item is the item's own number, and the gem's card under it is
+        the gem's, which is a different number for the same effect -- an Ice
+        Ember reads ``+120 Ice Armor`` on the Gorget it is sitting in and
+        ``+58 Ice Armor`` on its own.
+        """
+        heading = QLabel("Socketed")
+        heading.setObjectName("socketed")
+        column.addWidget(heading)
+        for text in card.socketed:
+            column.addWidget(self._stat(text, AFFIX))
+        for gem in card.gems:
+            self._gem(column, gem)
 
     def _ladder(self, column: QVBoxLayout, card: Card) -> None:
         """What wearing more of the set grants: the set, then each rung.
@@ -598,6 +626,7 @@ STYLE = f"""
     font-size: 11px;
 }}
 #gem {{ color: {HEAD}; font-size: 12.5px; font-weight: 600; }}
+#socketed {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #setname {{ font-size: 13px; font-weight: 600; }}
 #rung {{ color: {LABEL}; font-size: 12px; font-weight: 600; }}
 #flav {{ color: {FLAVOUR}; font-size: 12px; font-style: italic; }}

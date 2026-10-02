@@ -252,9 +252,11 @@ def test_a_gem_is_a_card_of_its_own():
     assert nested.name == "Flawless Ruby"
     assert [block.kind for block in nested.blocks] == [AFFIX]
 
-    # And it flattens the way it always has: indented, under the item.
+    # And it flattens the way it always has: indented, under the heading that
+    # says where it came from.
     assert lines(card) == [
         "Test Item",
+        "Socketed",
         "    Flawless Ruby",
         "    OFFLAME DAMAGE BONUS",
     ]
@@ -283,6 +285,7 @@ def test_the_flat_lines_are_the_card_flattened():
         "Damage 72",
         "Armor 20",
         "OFTHEELEPHANT MAX HP",
+        "Socketed",
         "    Flawless Ruby",
     ]
 
@@ -311,6 +314,7 @@ def test_a_ladder_is_a_heading_and_its_lines_under_the_item_s_stats():
         sockets=0,
         blocks=(Block(AFFIX, ("+5 Strength",)),),
         gems=(),
+        socketed=(),
         set_ladder=(
             Rung(2, ("+6 Set damage",)),
             Rung(3, ("+5 Set burn", "2.5% chance to cast Test Proc on kill")),
@@ -350,6 +354,7 @@ def test_a_rung_is_a_heading_over_the_lines_it_carries():
         sockets=0,
         blocks=(),
         gems=(),
+        socketed=(),
         set_ladder=(Rung(2, ("+6 Set damage",)), Rung(3, ("+5 Set burn",))),
         flavor=None,
     )

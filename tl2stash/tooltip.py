@@ -256,15 +256,48 @@ def _substitute(
     return _TAG.sub(fill, template)
 
 
-def _effect_lines(item: "Item", data: "GameData") -> list[str]:
-    """Every effect on the item, in the order the game lists them.
+def _socketed_indices(item: "Item") -> set[int]:
+    """The effect indices a socket put on the item.
+
+    A save file does not mark which of an item's effect records came from a
+    socket: the gem's contribution is *added to the item's own list*, and all
+    that is left to tell them apart is the index -- the position in
+    ``EFFECTSLIST`` -- which the socket's record shares with the gem's own
+    record for the same effect.  Measured on the Gorget: its first record is
+    index 38, and index 38 is the Ice Ember's own ice-defence record.
+
+    This is the same rule FNIStash reaches for (``makeGemDescriptors``), and
+    it has the same limit: an item rolled with the very effect a gem grants
+    has two records at one index and only one of them is the socket's.  There
+    is nothing in the file that would tell them apart, so both read as
+    socketed rather than neither.
+    """
+    return {
+        effect.index
+        for gem in item.gems
+        for effect in list(gem.effects) + list(gem.effects2)
+        # A record whose index lands nowhere carries its name instead, so it
+        # can never be matched by index and is left to the item.
+        if effect.index >= 0
+    }
+
+
+def _effect_lines(item: "Item", data: "GameData") -> tuple[list[str], list[str]]:
+    """The item's effects, split into its own and what a socket added.
 
     Both effect lists are read.  ``effects`` is what the item was rolled with;
     ``effects2`` is what its gems, its enchantments and its set bonuses added.
     Reading only the first is why a socketed item used to show fewer lines
     than the game does.
+
+    The second list returned is the socket's half of them, in the same order,
+    which is drawn as its own section -- a gem's contribution is not a stat
+    the item has, and a player deciding whether to empty a socket needs the
+    two apart.
     """
     lines: list[str] = []
+    socketed: list[str] = []
+    from_socket = _socketed_indices(item)
     for effect in list(item.effects) + list(item.effects2):
         # The record's index is a position in EFFECTSLIST.DAT, and that is
         # what says which effect is meant.  The name beside it is an affix
@@ -315,8 +348,12 @@ def _effect_lines(item: "Item", data: "GameData") -> list[str]:
         # Templates are written with a trailing space where a hole ends the
         # sentence ('... is reduced by [VALUE]% '); it is layout in the game's
         # tooltip, and a line of it here.
-        lines.append(line.rstrip())
-    return lines
+        line = line.rstrip()
+        if effect.index in from_socket:
+            socketed.append(line)
+        else:
+            lines.append(line)
+    return lines, socketed
 
 
 def _set_ladder(title: str, data: "GameData") -> tuple[Rung, ...]:
@@ -466,11 +503,15 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
     blocks.append((ADDED, _added_damage_lines(item)))
 
     if data is not None:
-        blocks.append((AFFIX, _effect_lines(item, data)))
+        own, socketed = _effect_lines(item, data)
+        blocks.append((AFFIX, own))
     else:
+        # With no data there is no index to resolve, so no record can be told
+        # apart as a socket's: every named effect is the item's own.
         blocks.append(
             (AFFIX, [e.name for e in item.effects + item.effects2 if e.name])
         )
+        socketed = []
 
     flavor = None
     if data is not None:
@@ -511,6 +552,7 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         # nothing under it, which is what lets `lines` concatenate them.
         blocks=tuple(Block(kind, tuple(found)) for kind, found in blocks if found),
         gems=tuple(build(gem, data) for gem in item.gems),
+        socketed=tuple(socketed),
         set_ladder=ladder,
         flavor=flavor or None,
     )

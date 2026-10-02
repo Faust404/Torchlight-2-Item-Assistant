@@ -81,6 +81,7 @@ def card(**kwargs) -> Card:
         "sockets": 1,
         "blocks": (),
         "gems": (),
+        "socketed": (),
         "set_ladder": (),
         "flavor": None,
     }
@@ -327,6 +328,56 @@ def test_a_gem_is_drawn_under_the_item_that_holds_it(qapp):
     assert texts(drawn, "gem") == ["Flawless Ruby"]
     # Ruled off from the item's own stats above it, like any other section.
     assert len(drawn.findChildren(Hairline)) == 1
+
+
+def test_what_a_socket_added_is_drawn_under_its_own_heading(qapp):
+    """The heading is this window's word, and it is what tells the two numbers
+    apart: an Ice Ember reads ``+120 Ice Armor`` on the gorget it sits in and
+    ``+58`` on its own, and a player deciding whether to empty the socket
+    needs to know which line the item would keep.
+
+    The socket's lines come under the heading, the gem's own card under them,
+    and the item's own stats above both -- so the section is ruled off from
+    the item once and the gem takes no second rule of its own.
+    """
+    gem = card(
+        name="Ice Ember",
+        tier="magic",
+        tier_word="Magic",
+        type_name="Socketable",
+        level=50,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+58 Ice Armor",)),),
+    )
+    drawn = ItemCard(
+        card(
+            sockets=1,
+            gems=(gem,),
+            blocks=(Block(AFFIX, ("15 Health stolen on hit",)),),
+            socketed=("+120 Ice Armor",),
+        )
+    )
+
+    assert texts(drawn, "socketed") == ["Socketed"]
+    assert texts(drawn, "gem") == ["Ice Ember"]
+
+    body = [label.text() for label in drawn.findChildren(QLabel) if label.objectName() == ""]
+    # The number is lifted into its own colour by ``mark``, so the line is
+    # checked for its words and for the green the whole line is inked with.
+    assert any("Ice Armor" in text and "120" in text for text in body), body
+    assert any("#7cc24a" in text and "Ice Armor" in text for text in body), body
+    assert any("Health stolen on hit" in text for text in body), body
+    assert len(drawn.findChildren(Hairline)) == 1
+
+
+def test_an_item_with_nothing_in_its_sockets_draws_no_socketed_heading(qapp):
+    """A socketed item with an empty socket is the common case -- 47 of the 48
+    socketed rows this machine holds -- and it has nothing to show for it: no
+    heading, no section, no line."""
+    drawn = ItemCard(card(sockets=3, blocks=(Block(AFFIX, ("+5 Strength",)),)))
+
+    assert texts(drawn, "socketed") == []
+    assert drawn.findChildren(Hairline) == []
 
 
 def test_a_set_s_ladder_is_drawn_under_the_item_s_own_stats(qapp):

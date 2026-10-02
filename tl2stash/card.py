@@ -218,6 +218,15 @@ class Card:
     game's data does not describe -- a mod's, or a machine with no game on it.
     The two are one empty tuple on purpose: what the card draws is the ladder,
     and there is nothing to draw either way.
+
+    ``socketed`` is the part of the item's own effect list that a socket put
+    there.  A save file does not keep a socket's contribution apart: what a
+    gem grants is *added to the item's own records*, at the value it has for
+    that item rather than the value it has on its own -- the Gorget's Ice
+    Ember reads ``+120 Ice Armor`` in the item's list and ``+58 Ice Armor`` on
+    the ember.  So the lines are split out here and drawn as their own
+    section, which is the one thing that tells the player which of the numbers
+    the item would keep if the socket were emptied.
     """
 
     name: str
@@ -230,6 +239,7 @@ class Card:
     sockets: int
     blocks: tuple[Block, ...]
     gems: tuple[Card, ...]
+    socketed: tuple[str, ...]
     set_ladder: tuple[Rung, ...]
     flavor: str | None
 
@@ -248,6 +258,12 @@ def lines(card: Card) -> list[str]:
         out.append(f"Requires Level {card.level}")
     for block in card.blocks:
         out.extend(block.lines)
+    # What a socket added, under its own heading and over the gems themselves
+    # -- the ember is what the player put in, and these are what it does to
+    # *this* item, which is not the same number it reads on its own card.
+    if card.gems or card.socketed:
+        out.append("Socketed")
+    out.extend(card.socketed)
     # A gem reads as its own card, indented: in the game a socket's contents
     # are drawn as lines under the item that holds them.
     for gem in card.gems:
