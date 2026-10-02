@@ -419,6 +419,18 @@ QSpinBox {{
     border-radius: 3px;
     padding: 1px 3px;
 }}
+/* The sort box, outlined like the number boxes it stands between -- and
+   outlined *only*: the moment the sheet claims the drop-down subcontrol, Qt
+   draws it as an empty rectangle, because an arrow in the stylesheet language
+   is an image file and this application ships none.  Left to the style, the
+   arrow is Fusion's own, and the list it opens is built from the palette --
+   a field for the rows, the window's selection on the one under the
+   pointer -- so the popup comes out dark without a rule of its own. */
+QComboBox#sort {{
+    border: 1px solid {CHALK};
+    border-radius: 3px;
+    padding: 1px 3px;
+}}
 #banner {{
     color: {LABEL};
     font-size: 12px;

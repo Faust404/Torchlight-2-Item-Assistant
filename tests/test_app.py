@@ -536,6 +536,75 @@ def test_the_wall_says_what_to_do_when_the_tool_is_empty(window):
     assert "shared stash" in window.grid.findChild(QLabel, "empty").text()
 
 
+def test_the_wall_opens_on_the_ladder_and_the_arrow_turns_it(
+    qapp, tmp_path, game_install, monkeypatch
+):
+    """The user's third change at the window: the cards come out ordered.
+
+    The fixture's install has a unique item and rarities of no other kind --
+    see ``tests/test_gamedata.py`` -- so what this can show is one rung against
+    the untiered tail.  That is enough for the wiring: a rarity before an item
+    with none, the levels running up inside both, and neither the names nor the
+    order the items went in accounting for what comes out.  The ladder itself,
+    every rung from Legendary to Normal, is pinned against a model built by
+    hand in ``tests/test_app_filters.py``.
+
+    The reverse is the part worth reading twice: it is *not* the wall upside
+    down.  The arrow turns the ladder over and leaves each tier running 1 to
+    100, which is what the user asked for and what the reference does not do.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            # Two uniques (0x7002 is the fixture's unique sword), handed over
+            # in the order that is neither the names' nor the levels'.
+            parse_item(synthetic_item(name="Ash", guid=0x9999, level=99)[0]),
+            parse_item(synthetic_item(name="Wisp", guid=0x8888, level=10)[0]),
+            parse_item(synthetic_item(name="Stormband", guid=0x7002, level=60)[0]),
+            parse_item(synthetic_item(name="Emberband", guid=0x7002, level=20)[0]),
+        ],
+    )
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.grid.count() == 4, "the fixture did not stock the tool"
+
+        wall = [row.name for row in win.grid.rows()]
+        assert wall == ["Emberband", "Stormband", "Wisp", "Ash"], (
+            "the wall did not open on the rarity ladder"
+        )
+
+        # The player's gesture on the arrow.
+        win.filters.reverse.click()
+
+        assert [row.name for row in win.grid.rows()] == [
+            "Wisp",
+            "Ash",
+            "Emberband",
+            "Stormband",
+        ], "the arrow did not turn the ladder over, or turned the tiers with it"
+
+        # And the box's other keys reach the wall the same way.  The arrow
+        # stays over, as it does in the reference: one switch for every key.
+        win.filters.sort.setCurrentText("Level")
+
+        assert [row.name for row in win.grid.rows()] == [
+            "Ash",
+            "Stormband",
+            "Emberband",
+            "Wisp",
+        ], "the sort box did not reach the wall"
+    finally:
+        win.close()
+
+
 def test_one_card_stands_for_every_copy_of_its_item(qapp, tmp_path, monkeypatch):
     """Two rolls of one unique: two items, one card, and the card says so.
 

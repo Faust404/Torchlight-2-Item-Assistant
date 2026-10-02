@@ -237,6 +237,28 @@ def test_the_search_box_is_outlined_by_name(themed):
     assert "QLineEdit {" not in sheet, "the search box is the only line edit here"
 
 
+def test_the_sort_box_leaves_its_arrow_to_the_style(themed):
+    """Outlined like the number boxes it stands between, and nothing more.
+
+    The moment a rule claims ``QComboBox::drop-down``, Qt draws that button as
+    an empty rectangle -- an arrow in the stylesheet language is an image file
+    and this application ships none -- so the rule touches the frame only and
+    the style keeps drawing its own arrow.  Which is the one thing on the
+    control that says *there is a list under here*.
+
+    The rule is by name for the same reason the search box's is: a bare
+    ``QComboBox`` would reach into every other box a later change adds.
+    """
+    sheet = themed.styleSheet()
+    opener = sheet.index("QComboBox#sort {")
+    rule = sheet[opener : sheet.index("}", opener)]
+
+    assert "::drop-down" not in sheet, "the arrow is the style's to draw"
+    assert f"border: 1px solid {CHALK};" in rule, "the frame is not the sheet's"
+    assert "padding" in rule
+    assert "QComboBox {" not in sheet, "the rule is for the sort box and no other"
+
+
 def test_the_window_is_set_in_the_site_s_own_voice(themed):
     """The body font is the site's, in the size it sets its page at.
 

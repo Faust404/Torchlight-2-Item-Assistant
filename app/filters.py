@@ -1,30 +1,39 @@
-"""The row over the collection: the search box, the rarities, the level range.
+"""The row over the collection: the search box, the sort, the facets.
 
-Three of the things that narrow a collection, in one row above the cards
-rather than in a column beside them -- which is where the reference tool puts
-them, and where they cost the wall none of its width.  The row sits over the
-collection and not across the whole window, so that the controls are next to
-the only pane they narrow.  The kinds stay in the rail: a kind has a path (a
-sword is a one-handed weapon) and a tree is the only control that says so,
-while a tree drawn across the top of a window is a tree nobody reads.  The
-sets are not here either, and have no control at all: a set is arrived at by
-clicking its name on a card, and what this row does with one is stand in for
-it until the player clicks the cross -- see :meth:`FilterBar.show_set`.
+Three of the things that narrow a collection -- a word, the rarities, a range
+of levels -- in one row above the cards rather than in a column beside them,
+which is where the reference tool puts them, and where they cost the wall none
+of its width.  The row sits over the collection and not across the whole
+window, so that the controls are next to the only pane they narrow.  The kinds
+stay in the rail: a kind has a path (a sword is a one-handed weapon) and a tree
+is the only control that says so, while a tree drawn across the top of a window
+is a tree nobody reads.  The sets are not here either, and have no control at
+all: a set is arrived at by clicking its name on a card, and what this row does
+with one is stand in for it until the player clicks the cross -- see
+:meth:`FilterBar.show_set`.
+
+The fourth control is the odd one out in exactly one way: it orders the list
+rather than narrowing it, and the list it orders is the one the other three
+have already left.  It is the reference's own -- a box of keys over a little
+button carrying an arrow -- and it stands where the reference keeps its own,
+just before the rarities, which are the one facet a sort is a reading *of*.
 
 The rarities and the levels are each in a box of their own, in the window's own
 control ink like every other control the player operates
-(:data:`app.theme.CHALK` says why).  Five pills reading ``Unique 4`` in a row
-are legible; a pair of number boxes saying ``0`` and ``100`` beside them are
-not, and two outlined rectangles are what tells a reader where the rarity chips
-stop and the level range starts.
+(:data:`app.theme.CHALK` says why), and the sort's two controls are in one of
+the same boxes.  Five pills reading ``Unique 4`` in a row are legible; a pair
+of number boxes saying ``0`` and ``100`` beside them are not, and two outlined
+rectangles are what tells a reader where the rarity chips stop and the level
+range starts.
 
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
 a chip stays worth reading while another one is ticked.
 
 Nothing here decides anything.  It draws what it is told to draw, says what is
-ticked or shown, and emits :attr:`FilterBar.changed`; :class:`~app.models.
-CollectionFilter` is what makes that mean anything.
+ticked, shown or sorted, and emits :attr:`FilterBar.changed` or
+:attr:`FilterBar.resorted`; :class:`~app.models.CollectionFilter` is what makes
+either of them mean anything.
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -48,7 +58,7 @@ from PySide6.QtWidgets import (
 
 from tl2stash.card import TIER_INK
 
-from .models import LEVEL_MAX, TIER_CHIPS
+from .models import LEVEL_MAX, SORT_KEYS, TIER_CHIPS
 from .theme import CHALK
 
 __all__ = ["FilterBar", "SpinBox"]
@@ -212,11 +222,17 @@ def _box(title: str, controls: Iterable[QWidget]) -> QGroupBox:
 
 
 class FilterBar(QWidget):
-    """The four controls that narrow a collection by something other than kind."""
+    """The controls over a collection: the ones that narrow it, and the sort."""
 
     #: Something was typed, ticked or spun.  One signal for all of them, because
     #: the window does one thing with it: re-apply every facet and re-count.
     changed = Signal()
+
+    #: The order moved -- the key or the arrow.  A signal of its own because it
+    #: is not a facet: nothing about *which* rows are on the wall has changed,
+    #: so there is nothing to count, and the numbers beside the rail and the
+    #: chips would be the same numbers they already are.
+    resorted = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -228,6 +244,10 @@ class FilterBar(QWidget):
         #: not read off a control: the chip below is written *from* it, so
         #: that the two cannot disagree about what is being shown.
         self._set = ""
+        #: Whether the sort is being read the other way about.  Not read off
+        #: the button either, for the same reason: the arrow is written *from*
+        #: this, so the glyph and what the window is told cannot come apart.
+        self._backwards = False
 
         row = QHBoxLayout(self)
         row.setContentsMargins(INSET, 0, 0, 0)
@@ -246,12 +266,18 @@ class FilterBar(QWidget):
         # the pane under it asks for as well, and the three panes together are
         # what set the window's own minimum width.  Every pixel of floor here
         # is a pixel the window cannot open narrower, and the game's list
-        # beside it is what pays for that; 180 still leaves the box readable.
+        # beside it is what pays for that; 120 still leaves the box readable.
+        #
+        # It was 180 and came down with the sort box, which is the first
+        # control this row has had to find room for; the advanced search's
+        # button is the next, and the box that takes every spare pixel is the
+        # one place that room can come from without costing a control its
+        # width.
         #
         # It is a floor and not the width: the box takes every pixel the row
         # is not already spending (below), so it is as wide as the pane has
         # room for and this is only what it cannot be squeezed under.
-        self.search.setMinimumWidth(180)
+        self.search.setMinimumWidth(120)
         self.search.setToolTip(
             "Show only the items whose name contains this.\n"
             "It narrows what the ticks beside it leave."
@@ -290,6 +316,42 @@ class FilterBar(QWidget):
         self.set_chip.setVisible(False)
         row.addWidget(self.set_chip)
 
+        # The sort, which is the one control here that does not narrow: it
+        # orders what the others leave.  It stands where the reference keeps
+        # its own -- just before the rarities, which are the one facet a sort
+        # is a reading of -- and it is in a box of the row's own language
+        # rather than a bare pair of controls, because the alternative is the
+        # word "Sort" floating in the middle of the bar with nothing to say
+        # which two of the widgets it belongs to.
+        #
+        # Neither of them takes stretch: what the row has over belongs to the
+        # search box, and a box that grew with the pane would be a select the
+        # width of the window.
+        row.addSpacing(10)
+        self.sort = QComboBox()
+        self.sort.setObjectName("sort")
+        for key in SORT_KEYS:
+            self.sort.addItem(key)
+        self.sort.setToolTip(
+            "What the cards are ordered by.  The rarity order is the wall's\n"
+            "own -- best first, the untiered last -- and the arrow reads it\n"
+            "the other way about."
+        )
+        self.sort.currentIndexChanged.connect(self._resorted)
+        # The arrow, which is the reference's: it points the way the key is
+        # read, and clicking it turns the key over.  One switch rather than one
+        # per key, also like the reference -- so a player who has turned the
+        # ladder over and then asks for the names gets them backwards, which is
+        # the one reading of *"reverse the order"* that cannot surprise anyone
+        # halfway down a list.
+        self.reverse = QPushButton()
+        self.reverse.setObjectName("reverse")
+        self.reverse.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reverse.clicked.connect(self._turn)
+        self._point_arrow()
+        self.sort_box = _box("Sort", [self.sort, self.reverse])
+
+        row.addWidget(self.sort_box)
         row.addSpacing(10)
         self.chips: dict[str, QCheckBox] = {}
         for word in TIER_CHIPS:
@@ -379,6 +441,28 @@ class FilterBar(QWidget):
         """The set being shown, or the empty string for all of them."""
         return self._set
 
+    # -- what the bar says about the order --------------------------------
+
+    def sort_key(self) -> str:
+        """What the cards are ordered by, in the words the proxy is given.
+
+        The words on the box *are* the keys -- ``app.models.SORT_KEYS`` is
+        what filled it -- so what comes out is what the player read, and there
+        is no table between the two to get out of step.
+        """
+        return self.sort.currentText()
+
+    def sort_backwards(self) -> bool:
+        """Whether the key is being read the other way about, which is the
+        arrow.
+
+        The key's own order is the one written down in the model -- for the
+        ladder, best first, which is the user's rule rather than the
+        reference's -- and this says only whether the player has turned it
+        over.  At rest it is ``False``, and the arrow points down.
+        """
+        return self._backwards
+
     # -- the set ---------------------------------------------------------
 
     def show_set(self, name: str) -> None:
@@ -433,12 +517,40 @@ class FilterBar(QWidget):
         if not self._updating:
             self.changed.emit()
 
+    def _resorted(self, *_) -> None:
+        """The order moved.  Guarded like every other signal here, and for the
+        same reason: writing the box is the window's doing and not the
+        player's."""
+        if not self._updating:
+            self.resorted.emit()
+
+    def _turn(self) -> None:
+        """The arrow: read the key the other way about."""
+        self._backwards = not self._backwards
+        self._point_arrow()
+        self._resorted()
+
+    def _point_arrow(self) -> None:
+        """Say which way the key is read, in the reference's own two glyphs.
+
+        Down is the key's own order and up is the other one, so the button
+        says what a click would *do* as well as what is being done -- which is
+        the whole of what a two-glyph button can carry.
+        """
+        self.reverse.setText("↑" if self._backwards else "↓")
+
     def _clear_controls(self) -> None:
         """Every control in the row back to the value the window starts it at.
 
         Silent, and the caller's to guard: two of the three callers below want
         the clearing *and* something else, and only the last of them wants the
         signal.
+
+        The sort is not one of these controls and is not put back.  It is not a
+        facet -- clearing the filters asks to see *everything* again, which it
+        does, and says nothing about the order any of it is in.  A player who
+        has asked for the newest first and then clears the search box is still
+        asking for the newest first.
         """
         self.search.clear()
         for chip in self.chips.values():

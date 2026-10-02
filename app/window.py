@@ -215,9 +215,18 @@ class MainWindow(QMainWindow):
         return row
 
     def _build_filters(self) -> FilterBar:
-        """The controls that narrow the collection, over the cards they narrow."""
+        """The controls that narrow the collection, over the cards they narrow.
+
+        The sort comes with its own slot because it is not a narrowing: it
+        orders what the facets leave, so nothing has to be counted again when
+        it moves.  Its *default* needs no line at all -- the box is filled from
+        :data:`app.models.SORT_KEYS` and the proxy opens on the first of them,
+        so the wall and the control agree about the opening order by
+        construction rather than by two places saying the same word.
+        """
         self.filters = FilterBar()
         self.filters.changed.connect(self._filters_changed)
+        self.filters.resorted.connect(self._resorted)
         return self.filters
 
     def _build_splitter(self) -> QSplitter:
@@ -834,6 +843,19 @@ class MainWindow(QMainWindow):
         self.collection_proxy.set_level_range(*self.filters.level_range())
         self.collection_proxy.show_set(self.filters.shown_set())
         self._count_facets()
+        self._rebuild_collection()
+
+    def _resorted(self) -> None:
+        """Order the cards, which is not a narrowing of them.
+
+        The same two calls a facet change makes, less the counting: the rows
+        the filters let through are the same rows, and only their order has
+        moved -- so the numbers beside the rail and the chips would come out
+        the numbers they already are.
+        """
+        self.collection_proxy.set_sort(
+            self.filters.sort_key(), self.filters.sort_backwards()
+        )
         self._rebuild_collection()
 
     def _count_facets(self) -> None:

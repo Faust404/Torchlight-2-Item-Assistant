@@ -70,6 +70,42 @@ COLLECTION_COLUMNS = ["Item"]
 #: neither is the unclassified tail, which is shown when nothing is ticked.
 TIER_CHIPS = ("Normal", "Magic", "Rare", "Unique", "Legendary")
 
+#: The ladder the wall opens on, best first: the chips read the other way
+#: about, with Legendary lifted off the top and Set put under it.  It is the
+#: user's own rule for the default order -- *"legendary first, normal 2nd last,
+#: untiered last, and within each tier level 1 to 100"* -- and the one place
+#: the tool's order is not the reference's, which runs the other way up.
+#:
+#: Written as the chips turned round rather than as six words spelled again, so
+#: that a rarity cannot be in one list and not the other.  Set is the word here
+#: that no chip carries and, over the archive, no item wears either: a set
+#: piece states the rarity it displaced and is sorted as what it is.  It is
+#: still a rung, because it is one of the six words a card can be coloured by
+#: (:data:`tl2stash.card.TIER_KEYS`) and the ladder is a list of those words.
+#:
+#: What the ladder does *not* name sorts after all of it: the empty word a
+#: potion, a fish, a quest object or a mod's item carries, and the two words
+#: the game writes that are not rarities at all (``Quest``, ``Level``).  That
+#: is the "untiered last" half of the rule, and the reason the rank below is a
+#: lookup with a floor rather than an ``index`` that would raise on the first
+#: item the game never gave a rarity to.
+TIER_LADDER = ("Legendary", "Set", *reversed(TIER_CHIPS[:-1]))
+
+#: Where each of the ladder's words sits, and -- through
+#: :data:`TIER_TAIL` -- where everything else does.
+TIER_RANK = {word: rung for rung, word in enumerate(TIER_LADDER)}
+TIER_TAIL = len(TIER_LADDER)
+
+#: What the sort box offers, in the order it offers them.  The reference's own
+#: list, less its two number orders: *Damage* and *Armor* order by numbers that
+#: are not on a row at all but on the item's own card, so they arrive with the
+#: panel that reads the same numbers -- a key for them before that would sort
+#: the whole collection as zeroes.
+#:
+#: The first key is what the wall opens on, so the default above is the default
+#: here without any part of the window having to say so.
+SORT_KEYS = ("Tier", "Name", "Level", "Type")
+
 #: The top of the level range, and so the level of the box that ends it.
 #: Measured over the archive: 5,974 item files state a level and the highest of
 #: them is 105 -- the Wanderer's X07 set and a legendary wand -- so this is the
@@ -91,7 +127,8 @@ LEVEL_MAX = 110
 #: thing by the same name, and there is no translation between them to get
 #: wrong.  An item with no rarity has the empty string, which no chip carries
 #: -- such an item is shown when no chip is ticked, and is simply not one of
-#: the rarities when one is.
+#: the rarities when one is.  The sort's ladder is over this same word, for
+#: the same reason.
 #:
 #: ``PLACE_ROLE`` holds where the item sits in the rail -- ``('Weapons',
 #: 'One-Handed', 'Sword')``.  The kind filter matches on that whole triple
@@ -341,6 +378,13 @@ class CollectionFilter(QSortFilterProxyModel):
     uniques there *are* rather than dropping to zero the moment something else
     is ticked.  That is the reference database's own ``matches(o, skip)``, and
     it is the whole reason the numbers beside a control are worth reading.
+
+    It also *orders* what it lets through, which is the one thing here that is
+    not a narrowing: a proxy that has not been asked to sort hands the rows on
+    in its source's order, which is the order the registry happens to be in and
+    not an order anybody asked for.  So the sort is armed at construction and
+    never off -- see :meth:`set_sort` -- and the ladder in :data:`TIER_LADDER`
+    is what the wall opens on.
     """
 
     def __init__(self, parent=None) -> None:
@@ -354,6 +398,17 @@ class CollectionFilter(QSortFilterProxyModel):
         #: The one set being shown, by the name the cards draw, or empty for
         #: all of them.
         self._set: str = ""
+        #: What the rows are ordered by, and which way about it is read.  The
+        #: first of :data:`SORT_KEYS` is the ladder, so the tool opens on the
+        #: order the user asked for without any caller having to ask.
+        self._sort: str = SORT_KEYS[0]
+        self._backwards = False
+        # Qt sorts on a *column* and an order, and neither of them is what
+        # changes here: every key is read off the row's one cell, and the
+        # arrow is this side's own.  ``sort`` is still the call that says the
+        # proxy is sorting at all -- and with the dynamic sort on, which it is
+        # by default, it is what keeps a poll's new rows arriving in place.
+        self.sort(0)
 
     # -- what is ticked --------------------------------------------------
 
@@ -395,6 +450,31 @@ class CollectionFilter(QSortFilterProxyModel):
         if (low, high) != (self._low, self._high):
             self._low, self._high = low, high
             self._refilter()
+
+    def set_sort(self, key: str, backwards: bool = False) -> None:
+        """Order the rows by one of :data:`SORT_KEYS`, or read it the other way.
+
+        ``key`` is one of the four words the box offers -- what arrives is what
+        the player read, and there is nothing to translate.  ``backwards`` is
+        the arrow: the key's own order is the one written down here, and the
+        arrow is what says the player wants the other one.
+
+        ``invalidate`` rather than ``sort``, and that is the whole of why this
+        method exists rather than the caller reaching for Qt's own.  ``sort``
+        returns early when the column and the order are the ones it already has
+        -- and here the column is always 0 and the order is always ascending,
+        because the *comparator* is what a change of key moves.  Which only
+        this side knows, so it is this side that says the order is not the one
+        it was.
+
+        As with the facets, nothing is remapped when nothing has moved: the
+        window re-applies the sort after every poll, and a poll that changed
+        nothing has no business reordering the rows under the player.
+        """
+        if (key, bool(backwards)) == (self._sort, self._backwards):
+            return
+        self._sort, self._backwards = key, bool(backwards)
+        self.invalidate()
 
     def _refilter(self) -> None:
         """Tell the view the predicate changed.
@@ -483,3 +563,64 @@ class CollectionFilter(QSortFilterProxyModel):
         whole of what there is to read.
         """
         return self.sourceModel().index(row, 0, parent).data(facet)
+
+    # -- the order -------------------------------------------------------
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        """Whether one row comes before another, under the chosen key.
+
+        Only the first thing the key says answers to the arrow.  Everything
+        after it is a tie-break and is read the same way round in both
+        directions, which is the one place this differs from the reference: it
+        multiplies its whole comparison by the direction, so turning its ladder
+        over turns its items over too and every tier runs 100 down to 1.  The
+        rule here is the user's -- *"within each tier level 1 to 100"* -- and
+        it holds whichever way the ladder is read.
+
+        The arrow still turns the *untiered* tail, and that is not an
+        exception: the tail is the last rung of the ladder rather than a
+        separate pile, so it goes where the ladder goes.
+        """
+        here, there = self._sorting(left), self._sorting(right)
+        if here[0] != there[0]:
+            return here[0] > there[0] if self._backwards else here[0] < there[0]
+        return here[1:] < there[1:]
+
+    def _sorting(self, index: QModelIndex) -> tuple:
+        """What one row is worth under the chosen key.
+
+        Every key ends the same way -- the item's level, then the name it
+        draws, then its fingerprint -- so that two rows the key itself cannot
+        tell apart hold one order instead of keeping whatever the poll left
+        them in.  The fingerprint is last because it is the only one of the
+        three that is arbitrary *and* fixed: it is a hash of the item's own
+        bytes, so it says the same thing on every poll and nothing about the
+        item that a player would want to read.
+
+        A level that reads as nothing sorts as zero rather than raising.  Every
+        row the window builds carries the item's own level -- it is in the save
+        bytes and needs no game -- so the fallback is for rows built elsewhere:
+        a comparator is no place to raise, because it runs inside a sort, where
+        an exception is not a message but a crash in the middle of a paint.
+        """
+        name = index.data(Qt.ItemDataRole.DisplayRole)
+        level = index.data(LEVEL_ROLE) or 0
+        print_ = index.data(FINGERPRINT_ROLE) or ""
+        if self._sort == "Name":
+            return (name.casefold(), level, print_)
+        if self._sort == "Level":
+            return (level, name.casefold(), print_)
+        if self._sort == "Type":
+            # The kind word, spelled as the card's type line spells it, which
+            # is the reference's own reading of *Type*.  The two spellings of
+            # one kind sit apart here -- the game writes both ``Sword`` and
+            # ``1H Sword`` -- because they are two words, and the rail is where
+            # they are made one.
+            place = index.data(PLACE_ROLE) or ("", None, "")
+            return (place[2].casefold(), level, name.casefold(), print_)
+        return (
+            TIER_RANK.get(index.data(TIER_ROLE), TIER_TAIL),
+            level,
+            name.casefold(),
+            print_,
+        )

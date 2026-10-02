@@ -60,8 +60,10 @@ from app.models import (  # noqa: E402
     LEVEL_ROLE,
     PLACE_ROLE,
     SET_ROLE,
+    SORT_KEYS,
     TIER_ROLE,
     TIER_CHIPS,
+    TIER_LADDER,
     CollectionFilter,
     fill_collection,
     new_model,
@@ -138,16 +140,20 @@ ITEMS = [
 ]
 
 
-def _built(items=ITEMS, sets=None):
-    """A collection model carrying the roles, with no game and no catalog.
+def _fill(model, items, sets=None) -> None:
+    """Put these items on a model as rows carrying the roles.
 
-    ``sets`` names the set an item belongs to, which is the one role of a row
-    that is not one of the four fields above: it comes off the item's own
-    appearance rather than off the registry, and a row built by hand has to be
-    told.  Every item not named in it is in no set, which is the empty string
-    a real row carries rather than nothing.
+    Everything a row knows is one of the four fields above it plus the set it
+    is in, and the set is the odd one: it comes off the item's own appearance
+    rather than off the registry, so a row built by hand has to be told.  Every
+    item not named in ``sets`` is in no set, which is the empty string a real
+    row carries rather than nothing.
+
+    Filling a model that already has rows is what a poll does -- the rows are
+    thrown away and built again every couple of seconds -- so the tests that
+    care what a sort does across one fill a model twice.
     """
-    model = new_model(COLLECTION_COLUMNS)
+    model.removeRows(0, model.rowCount())
     for name, tier, place, gate in items:
         cell = QStandardItem(name)
         cell.setData(name, FINGERPRINT_ROLE)
@@ -159,6 +165,12 @@ def _built(items=ITEMS, sets=None):
         model.appendRow(
             [cell, QStandardItem(str(gate)), QStandardItem("0"), QStandardItem("")]
         )
+
+
+def _built(items=ITEMS, sets=None):
+    """A collection model carrying the roles, with no game and no catalog."""
+    model = new_model(COLLECTION_COLUMNS)
+    _fill(model, items, sets)
     return model
 
 
@@ -181,6 +193,18 @@ def _shown(proxy) -> list[str]:
     return [proxy.index(row, 0).data() for row in range(proxy.rowCount())]
 
 
+def _listed(proxy) -> list[str]:
+    """The names the proxy is letting through, in alphabetical order.
+
+    Which rows survived, rather than what order they are in: a proxy orders
+    what it lets through -- the wall opens on the rarity ladder, and that is
+    pinned by :func:`test_the_wall_opens_on_the_rarity_ladder` -- so reading
+    the names back in a fixed order is how every other test here says what its
+    facet *kept* without the ladder in the way of reading it.
+    """
+    return sorted(_shown(proxy))
+
+
 # --------------------------------------------------------------------------
 # The kinds facet
 # --------------------------------------------------------------------------
@@ -191,7 +215,7 @@ def test_with_nothing_ticked_the_whole_collection_is_shown(qapp):
     to ignore, and what makes "Clear filters" a state rather than a reset."""
     proxy = _proxy()
 
-    assert _shown(proxy) == [name for name, *_ in ITEMS]
+    assert _listed(proxy) == sorted(name for name, *_ in ITEMS)
 
 
 def test_ticking_one_kind_leaves_only_that_kind(qapp):
@@ -199,7 +223,7 @@ def test_ticking_one_kind_leaves_only_that_kind(qapp):
 
     proxy.set_places({BOOTS})
 
-    assert _shown(proxy) == ["Alpha", "Beta", "Gamma"]
+    assert _listed(proxy) == ["Alpha", "Beta", "Gamma"]
 
 
 def test_ticking_two_kinds_leaves_both(qapp):
@@ -207,7 +231,7 @@ def test_ticking_two_kinds_leaves_both(qapp):
 
     proxy.set_places({BOOTS, SWORD})
 
-    assert _shown(proxy) == ["Alpha", "Beta", "Gamma", "Epsilon"]
+    assert _listed(proxy) == ["Alpha", "Beta", "Epsilon", "Gamma"]
 
 
 def test_the_two_kinds_of_nothing_are_not_the_same_tick(qapp):
@@ -253,7 +277,7 @@ def test_an_item_with_no_rarity_is_shown_until_a_rarity_is_ticked(qapp):
 
     proxy.set_tiers({"Unique"})
     assert "Zeta" not in _shown(proxy)
-    assert _shown(proxy) == ["Alpha", "Beta", "Delta", "Epsilon"]
+    assert _listed(proxy) == ["Alpha", "Beta", "Delta", "Epsilon"]
 
 
 def test_the_level_bounds_are_inclusive(qapp):
@@ -261,7 +285,7 @@ def test_the_level_bounds_are_inclusive(qapp):
 
     proxy.set_level_range(40, 40)
 
-    assert _shown(proxy) == ["Alpha", "Gamma", "Delta", "Zeta", "Eta"]
+    assert _listed(proxy) == ["Alpha", "Delta", "Eta", "Gamma", "Zeta"]
 
 
 def test_the_default_range_is_the_whole_of_it(qapp):
@@ -278,13 +302,13 @@ def test_the_default_range_is_the_whole_of_it(qapp):
     ]
     proxy = _proxy(items)
 
-    assert _shown(proxy) == ["Alpha", "Beta", "Gamma"]
+    assert _listed(proxy) == ["Alpha", "Beta", "Gamma"]
 
     proxy.set_level_range(1, 1)
-    assert _shown(proxy) == ["Alpha"], "zero is not in the range, one is"
+    assert _listed(proxy) == ["Alpha"], "zero is not in the range, one is"
 
     proxy.set_level_range(1, LEVEL_MAX - 1)
-    assert _shown(proxy) == ["Alpha", "Beta"]
+    assert _listed(proxy) == ["Alpha", "Beta"]
 
 
 def test_an_item_gated_on_nothing_is_shown_whatever_the_range(qapp):
@@ -357,10 +381,10 @@ def test_the_search_box_narrows_and_still_combines_with_the_ticks(qapp):
     proxy = _proxy()
 
     proxy.setFilterFixedString("a")
-    assert _shown(proxy) == ["Alpha", "Beta", "Gamma", "Delta", "Zeta", "Eta"]
+    assert _listed(proxy) == ["Alpha", "Beta", "Delta", "Eta", "Gamma", "Zeta"]
 
     proxy.set_places({BOOTS})
-    assert _shown(proxy) == ["Alpha", "Beta", "Gamma"]
+    assert _listed(proxy) == ["Alpha", "Beta", "Gamma"]
 
     proxy.setFilterFixedString("beta")
     assert _shown(proxy) == ["Beta"]
@@ -395,7 +419,7 @@ def test_an_item_in_no_set_is_in_no_set(qapp):
     assert "Beta" not in _shown(proxy)
 
     proxy.show_set("")
-    assert _shown(proxy) == [name for name, *_ in ITEMS]
+    assert _listed(proxy) == sorted(name for name, *_ in ITEMS)
 
 
 def test_a_set_and_every_other_facet_and_together(qapp):
@@ -499,6 +523,229 @@ def test_the_search_box_narrows_the_counts(qapp):
 
     assert proxy.counts(PLACE_ROLE) == {BOOTS: 1}
     assert proxy.counts(TIER_ROLE) == {"Unique": 1}
+
+
+# --------------------------------------------------------------------------
+# The order, which is not a facet
+# --------------------------------------------------------------------------
+
+#: One item on every rung of the ladder, three levels inside one rung, and the
+#: three ways a row can have no rarity at all: the empty word a row carries on
+#: a machine with no game installed, and the game's own two words for the
+#: objects that are not rarities at all -- ``QUESTITEM`` and ``LEVEL``, which
+#: are 186 of the archive's 6,262 item files between them.  None of the three
+#: is a rung, and the user's rule puts every one of them last.
+#:
+#: The names are in no order the ladder could be confused with.  That is the
+#: point of them: an order read off this list could only come from the ladder.
+LADDERED = [
+    ("White", "Normal", BOOTS, 40),
+    ("Green", "Magic", BOOTS, 40),
+    ("Blue", "Rare", BOOTS, 40),
+    ("Purple", "Set", BOOTS, 40),
+    ("Red", "Legendary", BOOTS, 40),
+    ("Low", "Unique", BOOTS, 3),
+    ("Orange", "Unique", BOOTS, 40),
+    ("High", "Unique", BOOTS, 97),
+    ("Fish", "", QUEST, 40),
+    ("Quest", "Quest", QUEST, 12),
+    ("Level", "Level", QUEST, 7),
+]
+
+#: The same rows in the order the wall opens on: the ladder best first, the
+#: item level running 1 to 100 inside each rung -- which is the whole of what
+#: separates the three uniques -- and the three untiered last, in the one order
+#: left to them.
+LADDER_ORDER = [
+    "Red",
+    "Purple",
+    "Low",
+    "Orange",
+    "High",
+    "Blue",
+    "Green",
+    "White",
+    "Level",
+    "Quest",
+    "Fish",
+]
+
+
+def test_the_wall_opens_on_the_ladder_the_user_asked_for(qapp):
+    """The user's third change, and the one place this tool's order is not the
+    reference's: *"legendary first, normal 2nd last, untiered last and within
+    each tier level 1 to 100"*.
+
+    Every rung is a word a card can be inked by -- which is why the ladder is
+    written in the card's own words rather than in colour keys -- and Set is
+    among them even though no item file wears it: a set piece states the
+    rarity it displaced, so the rung is one the archive cannot prove and this
+    is the fixture that pins it.
+
+    Neither the names nor the order the rows arrive in is what comes out,
+    which is the whole of what the ladder is for.
+    """
+    proxy = _proxy(LADDERED)
+
+    assert TIER_LADDER == ("Legendary", "Set", "Unique", "Rare", "Magic", "Normal")
+    assert _shown(proxy) == LADDER_ORDER
+    assert _shown(proxy) != [name for name, *_ in LADDERED], (
+        "the rows came out in the order they were handed over in"
+    )
+
+
+def test_the_arrow_turns_the_ladder_over_and_leaves_the_tiers_alone(qapp):
+    """What the arrow does, and what it deliberately does not.
+
+    The reference multiplies its whole comparison by the direction, so turning
+    its ladder over turns every tier's items over with it and each one runs
+    100 down to 1.  Here only the ladder answers to the arrow: a tier still
+    runs 3, 40, 97 whichever way it is read, because *"within each tier level
+    1 to 100"* is the user's rule and it is a rule about the tier rather than
+    about the arrow.
+
+    The untiered go with the ladder rather than holding still: they are its
+    last rung and not a separate pile, so they are first when it is read the
+    other way -- and still in level order among themselves.
+    """
+    proxy = _proxy(LADDERED)
+    proxy.set_sort("Tier", True)
+
+    assert _shown(proxy) == [
+        "Level",
+        "Quest",
+        "Fish",
+        "White",
+        "Green",
+        "Blue",
+        "Low",
+        "Orange",
+        "High",
+        "Purple",
+        "Red",
+    ]
+    shown = _shown(proxy)
+    assert shown.index("Low") < shown.index("High"), (
+        "the tier was read upside down along with the ladder"
+    )
+
+
+def test_the_name_and_the_level_each_sort_as_they_say(qapp):
+    """The two keys that read nothing but the row itself.
+
+    The level is the item's own, the number the list has always shown.  As
+    with the ladder, the arrow turns the first thing the key says and nothing
+    else, so *Level* read backwards is 97 down to 3 with the names still
+    running up inside one level -- the same rule, applied to the key a player
+    who chose *Level* is reading.
+    """
+    proxy = _proxy(LADDERED)
+
+    proxy.set_sort("Name")
+    assert _shown(proxy) == [
+        "Blue",
+        "Fish",
+        "Green",
+        "High",
+        "Level",
+        "Low",
+        "Orange",
+        "Purple",
+        "Quest",
+        "Red",
+        "White",
+    ]
+
+    proxy.set_sort("Level")
+    assert _shown(proxy) == [
+        "Low",
+        "Level",
+        "Quest",
+        "Blue",
+        "Fish",
+        "Green",
+        "Orange",
+        "Purple",
+        "Red",
+        "White",
+        "High",
+    ]
+
+    proxy.set_sort("Level", True)
+    assert _shown(proxy) == [
+        "High",
+        "Blue",
+        "Fish",
+        "Green",
+        "Orange",
+        "Purple",
+        "Red",
+        "White",
+        "Quest",
+        "Level",
+        "Low",
+    ]
+
+
+def test_the_type_sorts_by_the_kind_word_and_not_by_the_rail_s_path(qapp):
+    """*Type* is the kind the card names, and not the path the rail files the
+    item under.
+
+    Sorting on the path would order by group first -- every piece of armour
+    together, every weapon together -- which is not what a player choosing
+    *Type* is asking for: the reference reads the kind word alone, and the
+    four items here are in an order no group-first reading of them can
+    produce, whichever way the groups themselves run.
+    """
+    typed = [
+        ("Sword", "Unique", ("Weapons", "One-Handed", "Sword"), 40),
+        ("Boots", "Unique", ("Armor", None, "Boots"), 40),
+        ("Axe", "Unique", ("Weapons", "One-Handed", "Axe"), 40),
+        ("Nothing", "Unique", QUEST, 40),
+    ]
+    proxy = _proxy(typed)
+    proxy.set_sort("Type")
+
+    assert _shown(proxy) == ["Nothing", "Axe", "Boots", "Sword"]
+
+
+def test_a_sort_is_not_a_filter_and_moves_no_number(qapp):
+    """Nothing about *which* rows are on the wall changes, so nothing there is
+    to count -- which is why the window hears a signal of its own and does not
+    re-count the rail and the chips."""
+    proxy = _proxy()
+    was = _listed(proxy)
+    counts = (proxy.counts(TIER_ROLE), proxy.counts(PLACE_ROLE))
+
+    proxy.set_sort("Level")
+    proxy.set_sort("Type", True)
+
+    assert _listed(proxy) == was
+    assert (proxy.counts(TIER_ROLE), proxy.counts(PLACE_ROLE)) == counts
+
+
+def test_the_order_survives_the_rows_being_thrown_away_and_built_again(qapp):
+    """A poll takes every row off the model and puts it back, and the order
+    the player asked for is still the order when it does."""
+    proxy = _proxy(LADDERED)
+    proxy.set_sort("Name", True)
+
+    # What the window does every couple of seconds.
+    _fill(proxy.sourceModel(), LADDERED)
+
+    assert _shown(proxy) == [
+        "White",
+        "Red",
+        "Quest",
+        "Purple",
+        "Orange",
+        "Low",
+        "Level",
+        "High",
+        "Green",
+        "Fish",
+        "Blue",
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -944,8 +1191,9 @@ def test_clearing_the_bar_puts_every_control_back(qapp):
 
 
 def test_the_bar_says_so_when_anything_in_it_moves(qapp):
-    """One signal for all four controls, because the window does one thing with
-    it: re-apply every facet and re-count."""
+    """One signal for every control that narrows, because the window does one
+    thing with it: re-apply every facet and re-count.  The sort is not one of
+    them and has a signal of its own, below."""
     bar = _bar()
     heard = []
     bar.changed.connect(lambda: heard.append(1))
@@ -982,6 +1230,87 @@ def test_clearing_the_bar_is_one_change_rather_than_four(qapp):
     bar.reset()
 
     assert len(heard) == 1
+
+
+# --------------------------------------------------------------------------
+# The sort, which is in the row but is not a facet of it
+# --------------------------------------------------------------------------
+
+
+def test_the_bar_offers_every_key_the_reference_does(qapp):
+    """The reference's own four, in its own order, opening on the ladder.
+
+    *Damage* and *Armor* are the reference's other two and are not here yet:
+    they order by numbers that live on the item's card rather than on its row,
+    and a key for them before that card is read would sort the whole
+    collection as zeroes.
+
+    The first key is the wall's default, so the default the user asked for is
+    the box's own first word rather than something the window has to say.
+    """
+    bar = _bar()
+
+    assert [bar.sort.itemText(row) for row in range(bar.sort.count())] == list(
+        SORT_KEYS
+    )
+    assert bar.sort_key() == "Tier"
+    assert bar.sort_backwards() is False
+    assert bar.reverse.text() == "↓"
+
+
+def test_the_arrow_turns_the_key_over_and_says_so(qapp):
+    """One switch rather than one per key, like the reference's: the arrow
+    says which way the chosen key is read, and clicking it says the other."""
+    bar = _bar()
+    heard = []
+    bar.resorted.connect(lambda: heard.append(1))
+
+    bar.reverse.click()
+
+    assert bar.sort_backwards() is True
+    assert bar.reverse.text() == "↑"
+
+    bar.reverse.click()
+
+    assert bar.sort_backwards() is False
+    assert bar.reverse.text() == "↓"
+    assert len(heard) == 2
+
+
+def test_the_bar_says_so_when_the_order_moves(qapp):
+    """A signal of its own rather than the one for the facets: the window
+    re-orders the wall and leaves the numbers where they are, because which
+    rows are on it has not changed.
+
+    What is turned over is a flag rather than the button's own glyph, so what
+    the arrow says and what the window is told are one fact read twice.
+    """
+    bar = _bar()
+    resorted, changed = [], []
+    bar.resorted.connect(lambda: resorted.append(1))
+    bar.changed.connect(lambda: changed.append(1))
+
+    bar.sort.setCurrentText("Level")
+    bar.reverse.click()
+
+    assert len(resorted) == 2
+    assert changed == []
+
+
+def test_clearing_the_bar_leaves_the_order_alone(qapp):
+    """Clearing asks to see everything again, which says nothing about what
+    order any of it is in.  A player who asked for the newest first and then
+    cleared the search box is still asking for the newest first."""
+    bar = _bar()
+    bar.sort.setCurrentText("Name")
+    bar.reverse.click()
+
+    bar.reset()
+
+    assert bar.sort_key() == "Name"
+    assert bar.sort_backwards() is True
+    assert bar.search_text() == ""
+    assert bar.tiers() == set()
 
 
 # --------------------------------------------------------------------------
@@ -1108,22 +1437,26 @@ def _contents(box) -> list:
     return [layout.itemAt(i).widget() for i in range(layout.count())]
 
 
-def test_the_two_boxes_hold_the_controls_they_are_named_for(qapp):
+def test_the_three_boxes_hold_the_controls_they_are_named_for(qapp):
     """A box is a frame around the controls rather than a copy of them.
 
-    The very widgets go in -- the chips and the two number boxes are the ones
-    the window reads back -- so what is on screen and what the bar reports are
-    the same objects, and there is no second set of them to keep in step.
+    The very widgets go in -- the chips, the two number boxes and the sort's
+    own pair are the ones the window reads back -- so what is on screen and
+    what the bar reports are the same objects, and there is no second set of
+    them to keep in step.
     """
     bar = _bar()
 
-    assert [bar.rarity_box.title(), bar.level_box.title()] == [
+    assert [bar.sort_box.title(), bar.rarity_box.title(), bar.level_box.title()] == [
+        "Sort",
         "Rarity",
         "Player level",
     ]
+    assert bar.sort_box.objectName() == "filterbox"
     assert bar.rarity_box.objectName() == "filterbox"
     assert bar.level_box.objectName() == "filterbox"
 
+    assert _contents(bar.sort_box) == [bar.sort, bar.reverse]
     assert _contents(bar.rarity_box) == list(bar.chips.values())
     low, to, high = _contents(bar.level_box)
     assert (low, high) == (bar.low, bar.high)
@@ -1161,13 +1494,13 @@ def test_the_search_box_takes_every_width_the_row_has_over(themed):
     """The user's other half of the request: the box is widened, and this is
     where a wider pane has to put the width.
 
-    Of the four controls in the row only one is worth widening -- the two
-    facet boxes are as wide as the words in them, which is their own test, and
-    the reset at the end is a button -- so the width a wide window leaves over
-    belongs in the search box rather than as a gap between the controls, which
-    is what the user was looking at when they asked for this.  Themed, so that
-    the widths the row starts with are the ones the application ships rather
-    than whatever font the machine running the tests happens to have.
+    Of the controls in the row only one is worth widening -- the three boxes
+    are as wide as the words in them, which is their own test, and the reset at
+    the end is a button -- so the width a wide window leaves over belongs in
+    the search box rather than as a gap between the controls, which is what the
+    user was looking at when they asked for this.  Themed, so that the widths
+    the row starts with are the ones the application ships rather than whatever
+    font the machine running the tests happens to have.
     """
     bar = _bar()
     bar.show()
@@ -1175,7 +1508,12 @@ def test_the_search_box_takes_every_width_the_row_has_over(themed):
     themed.processEvents()
 
     narrow = bar.search.width()
-    others = [bar.rarity_box.width(), bar.level_box.width(), bar.clear_button.width()]
+    others = [
+        bar.sort_box.width(),
+        bar.rarity_box.width(),
+        bar.level_box.width(),
+        bar.clear_button.width(),
+    ]
     assert narrow > bar.search.minimumWidth(), (
         "the box opened on its floor, so nothing about its width can be read here"
     )
@@ -1187,6 +1525,7 @@ def test_the_search_box_takes_every_width_the_row_has_over(themed):
         "the width the row gained did not all reach the search box"
     )
     assert [
+        bar.sort_box.width(),
         bar.rarity_box.width(),
         bar.level_box.width(),
         bar.clear_button.width(),
@@ -1208,7 +1547,7 @@ def test_a_box_is_as_wide_as_what_is_in_it_and_no_wider(themed):
     """
     bar = _bar()
 
-    for box in (bar.rarity_box, bar.level_box):
+    for box in (bar.sort_box, bar.rarity_box, bar.level_box):
         layout = box.layout()
         margins = layout.contentsMargins()
         inside = sum(w.sizeHint().width() for w in _contents(box))
