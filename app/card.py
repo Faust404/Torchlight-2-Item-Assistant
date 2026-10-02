@@ -53,7 +53,6 @@ from PySide6.QtWidgets import (
 )
 
 from tl2stash.card import (
-    ADDED,
     AFFIX,
     ARMOR,
     DAMAGE,
@@ -126,11 +125,13 @@ TILE = 58
 #: some languages and the numbers are shown as they are stored.
 _NUMBER = re.compile(r"[-+]?\d+(?:[.,]\d+)?%?")
 
-#: The blocks the card draws as one run of lines.  A weapon's own damage, its
-#: armour and what was socketed or enchanted onto it are three blocks in the
-#: model and one section on the card, because that is how the game draws them
-#: and how the site parts its sections.
-_NUMERIC = (DAMAGE, ARMOR, ADDED)
+#: The blocks the card draws as one run of lines, and the only ones whose lines
+#: are damage or armour the *item* has: its own damage and its own armour are
+#: two blocks in the model and one section on the card, because that is how the
+#: game draws them and how the site parts its sections.  What an affix, a
+#: socket or an enchantment added is not among them -- it is a property, and a
+#: property is written with the properties.
+_NUMERIC = (DAMAGE, ARMOR)
 
 
 def mark(text: str) -> str:
@@ -187,16 +188,19 @@ def element_of(text: str, kind: str) -> str | None:
     bargain: the lines are :mod:`tl2stash.card`'s -- one list of strings that
     the tooltip, the tests and the card all read -- and hanging an element on
     each one would make the card's model richer than the item's own text.
-    The wording is this module's sibling's, so what the line leads with is
-    knowable: an element is the first word (``Fire Damage 52-74``), the second
-    on a line that leads with its value (``+13 Physical Damage``), and absent
-    on ``Damage 20`` -- which is physical, and is written without the word
-    precisely because saying so says nothing.
+    The wording is this module's sibling's, so the two shapes it writes are
+    knowable: an element is the first word (``Fire Damage 52-74``), and the
+    bare word is physical (``Damage 20``), written without a name precisely
+    because saying so says nothing.
 
-    ``kind`` is the guard: only the damage, armour and added-damage blocks are
-    written this way, so an affix that happens to begin with a colour --
-    ``Fire Damage Taken is reduced by 10%`` -- is not a damage line and takes
-    no mark.
+    ``kind`` is the guard, and it is the whole of the guard: only the damage
+    and armour blocks are the item's *own* numbers.  What the item has been
+    *given* -- the flat ``+13 Physical Damage`` a socket or an enchantment
+    granted -- is a property, written in the properties block with the rest,
+    and a property takes no mark: the mark is for the damage the weapon *is*.
+    The same guard is what keeps an affix that happens to begin with a colour
+    -- ``Fire Damage Taken is reduced by 10%`` -- from reading as this item
+    dealing fire.
     """
     if kind not in _NUMERIC:
         return None
@@ -205,8 +209,6 @@ def element_of(text: str, kind: str) -> str | None:
         return None
     if words[0] in ELEMENT_MARKS:
         return words[0]
-    if len(words) > 1 and words[1] in ELEMENT_MARKS:
-        return words[1]
     return "physical" if words[0] in ("damage", "armor") else None
 
 
@@ -750,7 +752,7 @@ class ItemCard(QFrame):
             label.setFont(_serif())
         label.setIndent(indent)
 
-        element = None if affix else element_of(text, kind)
+        element = element_of(text, kind)
         picture = self._icons.element(element) if self._icons and element else None
         if picture is None:
             return label

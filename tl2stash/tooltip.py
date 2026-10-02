@@ -43,7 +43,6 @@ import struct
 from typing import TYPE_CHECKING
 
 from .card import (
-    ADDED,
     AFFIX,
     ARMOR,
     DAMAGE,
@@ -563,17 +562,23 @@ def build(item: "Item", data: "GameData | None" = None) -> Card:
         if item.armor not in (0, 0xFFFFFFFF):
             blocks.append((ARMOR, [f"Armor {item.armor}"]))
 
-    # Flat damage sits with the rest of the damage, above the effects.
-    blocks.append((ADDED, _added_damage_lines(item)))
+    # Flat damage is a property of the item like any other -- it is what an
+    # affix, a socket or an enchantment granted, recorded by the save file in
+    # its own list -- so it is written *with* the properties rather than as a
+    # line of damage the item itself has.  Only the two blocks above are the
+    # item's own numbers, and they are the only ones the card marks with an
+    # element: a `+13 Physical Damage` in among the properties is a bonus, and
+    # the mark is for the damage the weapon *is*.
+    added = _added_damage_lines(item)
 
     if data is not None:
         own, socketed = _effect_lines(item, data, appearance)
-        blocks.append((AFFIX, own))
+        blocks.append((AFFIX, added + own))
     else:
         # With no data there is no index to resolve, so no record can be told
         # apart as a socket's: every named effect is the item's own.
         blocks.append(
-            (AFFIX, [e.name for e in item.effects + item.effects2 if e.name])
+            (AFFIX, added + [e.name for e in item.effects + item.effects2 if e.name])
         )
         socketed = []
 

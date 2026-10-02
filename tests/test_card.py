@@ -22,7 +22,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash.card import (  # noqa: E402
-    ADDED,
     AFFIX,
     ARMOR,
     DAMAGE,
@@ -214,19 +213,22 @@ def test_without_the_game_there_is_a_card_with_nothing_in_the_corner():
     assert lines(card) == ["Test Item"]
 
 
-def test_a_weapon_s_own_damage_and_what_was_added_to_it_are_two_blocks():
-    """The game draws them together and they come from different places.
+def test_a_weapon_s_own_damage_and_what_was_added_to_it_are_one_block():
+    """The game draws them together, and the model keeps them together.
 
     An item's own damage is worked out from its data file; flat damage is in
-    the save file, as three numbers per element.  Kept apart here so that the
-    window can draw them as one section without the model having merged them.
+    the save file, as three numbers per element.  What a socket or an
+    enchantment added is a *property* the item has been given, so it is written
+    with the properties rather than as a line of damage the weapon has -- which
+    is what leaves the damage block as one of the two the card marks with an
+    element, and this line as an unmarked one among the affixes.
     """
     it = item(max_damage=72, added_damages=[AddedDamage(0, word(13.0), 0, 0x00)])
     card = build(it, None)
 
     assert [(block.kind, block.lines) for block in card.blocks] == [
         (DAMAGE, ("Damage 72",)),
-        (ADDED, ("+13 Physical Damage",)),
+        (AFFIX, ("+13 Physical Damage",)),
     ]
 
 

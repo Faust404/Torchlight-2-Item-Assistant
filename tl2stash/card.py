@@ -24,7 +24,6 @@ if TYPE_CHECKING:  # pragma: no cover
     from tl2stash.item import Item
 
 __all__ = [
-    "ADDED",
     "AFFIX",
     "ARMOR",
     "Block",
@@ -43,19 +42,18 @@ __all__ = [
 
 #: What a block of lines is.
 #:
-#: The first two are the item's own damage and its own armour, and they are
-#: spelled the same way :class:`~tl2stash.gamedata.Derived` spells them so the
-#: two vocabularies are one.  ``ADDED`` is flat damage from a socket or an
-#: enchantment, which the game draws with the item's own damage and which is
-#: kept apart here only because it comes from somewhere else.  ``AFFIX`` is
-#: everything the item's effects say.
+#: ``DAMAGE`` and ``ARMOR`` are the item's own, and they are spelled the same
+#: way :class:`~tl2stash.gamedata.Derived` spells them so the two vocabularies
+#: are one.  ``AFFIX`` is everything the item's effects say -- *everything*:
+#: flat damage an affix, a socket or an enchantment added is a property like
+#: any other and is written here with the rest, which is what leaves the two
+#: above as the only blocks the card marks with an element.
 #:
 #: Nothing else is a block.  The level an item requires is drawn beside its
 #: name rather than among its stats, so it is a field on the card and where it
 #: lands is the window's business.
 DAMAGE = "damage"
 ARMOR = "armor"
-ADDED = "added"
 AFFIX = "affix"
 
 #: The tier word the player is shown, by the colour it is drawn in.

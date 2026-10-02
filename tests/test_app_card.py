@@ -48,7 +48,6 @@ from app.card import (  # noqa: E402
     mark,
 )
 from tl2stash.card import (  # noqa: E402
-    ADDED,
     AFFIX,
     ARMOR,
     DAMAGE,
@@ -269,20 +268,35 @@ def test_the_first_section_has_no_rule_above_it_and_the_rest_have_one(qapp):
     assert len(two.findChildren(Hairline)) == 1
 
 
-def test_a_weapon_s_own_damage_and_what_was_added_to_it_are_one_section(qapp):
-    """Three blocks in the model, one run of lines on the card: the game draws
-    them together and so does the site, so a rule between them would be this
-    window's own invention."""
+def test_a_weapon_s_own_damage_and_its_armour_are_one_section(qapp):
+    """Two blocks in the model, one run of lines on the card: the game draws a
+    weapon's damage and its armour as one section, so a rule between them would
+    be this window's own invention."""
     drawn = ItemCard(
         card(
             blocks=(
                 Block(DAMAGE, ("Physical Damage 52-74",)),
-                Block(ADDED, ("+13 Physical Damage",)),
                 Block(ARMOR, ()),
             )
         )
     )
     assert drawn.findChildren(Hairline) == []
+
+
+def test_what_was_added_to_a_weapon_is_a_property_and_not_a_damage_line(qapp):
+    """A flat ``+13 Physical Damage`` is what a socket or an enchantment
+    *granted* the item, so it is drawn with the properties rather than beside
+    the damage the item itself has -- and the rule falls between the two, the
+    same rule that parts the damage from every other affix."""
+    drawn = ItemCard(
+        card(
+            blocks=(
+                Block(DAMAGE, ("Physical Damage 52-74",)),
+                Block(AFFIX, ("+13 Physical Damage",)),
+            )
+        )
+    )
+    assert len(drawn.findChildren(Hairline)) == 1
 
 
 def test_what_the_item_asks_of_the_character_is_drawn_under_its_name(qapp):
@@ -510,31 +524,29 @@ class StubIcons:
 
 
 def test_the_element_a_stat_line_is_about_is_read_off_the_line():
-    """The four shapes the game writes a damage line in, measured over the
-    reference corpus: the element first (``Fire Damage 52-74``), the element
-    second behind its value (``+13 Physical Damage``), and the bare word --
-    which is physical, and is written without the word precisely because
-    saying so says nothing."""
+    """The two shapes the tool writes an item's own damage and armour in,
+    measured over the reference corpus: the element first (``Fire Damage
+    52-74``), and the bare word -- which is physical, and is written without
+    the word precisely because saying so says nothing."""
     assert element_of("Fire Damage 52-74", DAMAGE) == "fire"
     assert element_of("Ice Damage 12-30", DAMAGE) == "ice"
     assert element_of("Electric Damage 1-40", DAMAGE) == "electric"
     assert element_of("Poison Damage 8-12", DAMAGE) == "poison"
-    assert element_of("+13 Physical Damage", ADDED) == "physical"
+    assert element_of("Physical Damage 52-74", DAMAGE) == "physical"
     assert element_of("Damage 20", DAMAGE) == "physical"
     assert element_of("Armor 42", ARMOR) == "physical"
-
-    # ``All`` is written like an element and is not one: the game has no
-    # picture of it, and a mark would have to be invented.
-    assert element_of("+5 All Damage", ADDED) is None
     assert element_of("", DAMAGE) is None
 
 
 def test_only_a_damage_or_armour_line_is_read_for_an_element():
-    """The guard, and the line that needs it: an affix may begin with an
+    """The guard, and the lines that need it.  An affix may begin with an
     element's name and be about something else entirely -- ``Fire Damage Taken
-    is reduced by 10%`` is not this item dealing fire."""
+    is reduced by 10%`` is not this item dealing fire -- and the flat damage a
+    socket granted is an affix too: it is written with the properties now, so
+    it takes no mark even though it is shaped exactly like a damage line."""
     assert element_of("Fire Damage Taken is reduced by 10%", AFFIX) is None
     assert element_of("+13 Physical Damage", AFFIX) is None
+    assert element_of("+5 All Damage", AFFIX) is None
 
 
 def test_a_damage_line_leads_with_its_mark(qapp):
@@ -568,12 +580,16 @@ def test_a_damage_line_leads_with_its_mark(qapp):
 
 
 def test_a_line_with_no_element_is_the_plain_label(qapp):
-    """No element, no row to build: the affix above is one, and so is a damage
-    line the game has no picture for."""
+    """No element, no row to build.
+
+    Both lines here are damage-shaped and neither is damage: the first names an
+    element it is not about, and the second is the ``+5 All Damage`` a socket
+    granted, which the tool writes with the item's properties.
+    """
     icons = StubIcons()
     for blocks in (
         (Block(AFFIX, ("Fire Damage Taken is reduced by 10%",)),),
-        (Block(ADDED, ("+5 All Damage",)),),
+        (Block(AFFIX, ("+5 All Damage",)),),
     ):
         drawn = ItemCard(card(blocks=blocks), icons=icons)
         assert drawn.findChildren(QLabel, "emark") == []
