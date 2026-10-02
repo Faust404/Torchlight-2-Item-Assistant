@@ -9,6 +9,13 @@ has a path (a sword is a one-handed weapon) and a tree is the only control
 that says so, while a tree drawn across the top of a window is a tree nobody
 reads.
 
+The rarities and the levels are each in a box of their own, outlined in white
+like every other control the player operates (:data:`app.theme.WHITE` says
+why).  Five pills reading ``Unique 4`` in a row are legible; a pair of number
+boxes saying ``0`` and ``100`` beside them are not, and two white rectangles
+are what tells a reader where the rarity chips stop and the level range
+starts.
+
 The counts on the chips are what a tick *would* leave rather than what it does
 leave -- see :meth:`app.models.CollectionFilter.counts` -- so the number beside
 a chip stays worth reading while another one is ticked.
@@ -20,29 +27,90 @@ CollectionFilter` is what makes that mean anything.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
+    QStyle,
+    QStyleOptionSpinBox,
     QWidget,
 )
 
 from tl2stash.card import TIER_INK
 
-from .card import DIM
 from .models import LEVEL_MAX, TIER_CHIPS
+from .theme import WHITE
 
-__all__ = ["FilterBar"]
+__all__ = ["FilterBar", "SpinBox"]
 
-#: How dim a chip is drawn when it is not ticked.
+#: How dim a chip is drawn when it is not ticked.  The border stays white
+#: either way -- what is ticked is the chip's *ink*, and a chip the player has
+#: not ticked is still a chip.
 OFF_INK = "#6f6963"
-OFF_BORDER = "#33302c"
+
+#: The two white steppers: six pixels across at the base and three rows deep,
+#: with each edge placed half a pixel off the grid.  That last is the whole of
+#: the geometry's care: a triangle of a dozen pixels whose edges land on whole
+#: coordinates comes out a grey haze, because every one of those pixels is then
+#: half covered.  Off the grid by half a pixel, each is wholly in or wholly out
+#: -- which is why the painter below is left un-smoothed, as a stepper arrow is
+#: drawn everywhere.
+STEP = 3.0
+STEP_ROWS = 3
+
+
+class SpinBox(QSpinBox):
+    """A number box whose two steppers are drawn here rather than by the style.
+
+    Qt will give a spin box a white frame or keep the style's own stepper
+    arrows, and not both.  The moment a rule touches the box's frame, the
+    stylesheet style takes the whole control over and draws the two buttons as
+    flat blocks -- with no arrows at all, because an arrow in Qt's stylesheet
+    language is an *image file* and this application ships none.  A number box
+    whose steppers are two blank squares reads as broken, so the frame is the
+    sheet's (:mod:`app.theme`) and the triangles are painted here: a dozen
+    lines, and the corners come out cleaner than the style's own.
+
+    Everything else about the widget is ``QSpinBox``'s, including the frame
+    the sheet draws for it -- a type selector matches subclasses, which is why
+    the rule in :mod:`app.theme` reaches this class without naming it.
+    """
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(WHITE))
+        painter.drawPolygon(self._triangle(QStyle.SubControl.SC_SpinBoxUp))
+        painter.drawPolygon(self._triangle(QStyle.SubControl.SC_SpinBoxDown))
+        painter.end()
+
+    def _triangle(self, which) -> list[QPointF]:
+        """One arrow: six pixels across, three rows deep, in the style's button."""
+        option = QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        button = self.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, option, which, self
+        )
+        middle = button.center()
+        top = button.top() + (button.height() - STEP_ROWS) // 2
+        if which == QStyle.SubControl.SC_SpinBoxUp:
+            base, tip = top + STEP_ROWS, top - 0.5
+        else:
+            base, tip = top, top + STEP_ROWS + 0.5
+        return [
+            QPointF(middle.x() - STEP, base),
+            QPointF(middle.x() + STEP, base),
+            QPointF(middle.x(), tip),
+        ]
 
 
 def _chip_style(ink: str) -> str:
@@ -52,30 +120,44 @@ def _chip_style(ink: str) -> str:
     which rarities are in play without reading a single word.  The indicator is
     collapsed to nothing and the pill itself is the control -- a checkbox's box
     beside a coloured pill is two things saying one thing.
+
+    The outline is white rather than the ink it used to be, which is the one
+    change here that is about being *seen*: an unticked chip was drawn in a
+    grey so close to the ground that the row read as four words rather than as
+    four buttons.  The colour a chip is in is what it says; the white is what
+    says it can be pressed.
     """
     return (
         "QCheckBox {"
         f" color: {ink};"
-        f" border: 1px solid {ink};"
+        f" border: 1px solid {WHITE};"
         " border-radius: 9px; padding: 3px 8px;"
         " background: rgba(255, 255, 255, 0.05);"
         "}"
         "QCheckBox::indicator { width: 0px; height: 0px; }"
         "QCheckBox:!checked {"
-        f" color: {OFF_INK}; border-color: {OFF_BORDER}; background: transparent;"
+        f" color: {OFF_INK}; background: transparent;"
         "}"
     )
 
 
-def _heading(text: str) -> QLabel:
-    """A small dim word introducing the controls beside it.
+def _box(title: str, controls: Iterable[QWidget]) -> QGroupBox:
+    """A group of controls in its own white-bordered box.
 
-    Five pills reading their own names need no introduction; a pair of boxes
-    saying "Any" and "Any" do, which is what this is for.
+    A ``QGroupBox`` rather than a frame with a label over it, because its title
+    is drawn in the window's own label colour and in the same place as the
+    three panes' titles -- so a box here and a pane there are the same kind of
+    thing at two sizes, which is what they are.  What tells them apart is the
+    outline: white for a box the player operates, a hairline for a region.
     """
-    label = QLabel(text)
-    label.setStyleSheet(f"QLabel {{ color: {DIM}; }}")
-    return label
+    box = QGroupBox(title)
+    box.setObjectName("filterbox")
+    row = QHBoxLayout(box)
+    row.setContentsMargins(8, 2, 8, 4)
+    row.setSpacing(6)
+    for control in controls:
+        row.addWidget(control)
+    return box
 
 
 class FilterBar(QWidget):
@@ -97,6 +179,10 @@ class FilterBar(QWidget):
         row.setSpacing(6)
 
         self.search = QLineEdit()
+        # Named, because the window's stylesheet outlines the search box in
+        # white and a rule on ``QLineEdit`` would also reach the line edit
+        # inside each of the two number boxes below.
+        self.search.setObjectName("search")
         self.search.setPlaceholderText("Search the collection…")
         self.search.setClearButtonEnabled(True)
         # A floor, because a text box's own minimum is nothing: squeezed, it
@@ -115,23 +201,23 @@ class FilterBar(QWidget):
         row.addWidget(self.search)
 
         row.addSpacing(10)
-        row.addWidget(_heading("Rarity"))
         self.chips: dict[str, QCheckBox] = {}
         for word in TIER_CHIPS:
             chip = QCheckBox(word)
             chip.setStyleSheet(_chip_style(TIER_INK[word.lower()]))
             chip.setToolTip(f"Show only the {word.lower()} items.")
             chip.toggled.connect(self._moved)
-            row.addWidget(chip)
             self.chips[word] = chip
+        self.rarity_box = _box("Rarity", self.chips.values())
+        row.addWidget(self.rarity_box)
 
         row.addSpacing(10)
-        row.addWidget(_heading("Player level"))
         self.low = self._spin(0)
         self.high = self._spin(LEVEL_MAX)
-        row.addWidget(self.low)
-        row.addWidget(QLabel("to"))
-        row.addWidget(self.high)
+        self.level_box = _box(
+            "Player level", [self.low, QLabel("to"), self.high]
+        )
+        row.addWidget(self.level_box)
 
         row.addStretch(1)
         self.clear_button = QPushButton("Clear filters")
@@ -139,7 +225,7 @@ class FilterBar(QWidget):
         self.clear_button.clicked.connect(self.reset)
         row.addWidget(self.clear_button)
 
-    def _spin(self, value: int) -> QSpinBox:
+    def _spin(self, value: int) -> SpinBox:
         """A min or a max: two player levels, both ends included.
 
         The boxes used to read ``Any`` at zero, which was one word for "do not
@@ -152,7 +238,7 @@ class FilterBar(QWidget):
         "what can this character use", which is what a player narrowing a
         collection is asking.
         """
-        spin = QSpinBox()
+        spin = SpinBox()
         spin.setRange(0, LEVEL_MAX)
         spin.setValue(value)
         spin.setToolTip(

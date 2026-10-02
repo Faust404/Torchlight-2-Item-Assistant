@@ -35,12 +35,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QStandardItem  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtGui import QPalette, QStandardItem  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QStyle,
+    QStyleFactory,
+    QStyleOptionSpinBox,
+)
 
 from app.card import IconCache  # noqa: E402
 from app.catalog import Catalog  # noqa: E402
 from app.filters import FilterBar  # noqa: E402
+from app.theme import WHITE, apply_theme  # noqa: E402
 from app.models import (  # noqa: E402
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
@@ -67,6 +73,32 @@ def qapp():
     """One QApplication for the whole session; Qt allows no more."""
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture
+def themed(qapp):
+    """The application with the theme applied, and put back afterwards.
+
+    The same dance as :mod:`tests.test_app_theme`, and for the same reason:
+    there is one QApplication in the process and every GUI test in the suite
+    shares it, so a palette left behind would be a colour scheme decided by
+    test ordering.  Only the tests about what the controls are *drawn* in need
+    this; the rest of the bar is the same widget either way.
+    """
+    name = qapp.style().objectName()
+    palette = QPalette(qapp.palette())
+    sheet = qapp.styleSheet()
+    apply_theme(qapp)
+    try:
+        yield qapp
+    finally:
+        # By name rather than by object: setting a style hands it to Qt, which
+        # deletes the one it replaced.
+        restored = QStyleFactory.create(name) if name else None
+        if restored is not None:
+            qapp.setStyle(restored)
+        qapp.setPalette(palette)
+        qapp.setStyleSheet(sheet)
 
 
 # --------------------------------------------------------------------------
@@ -666,6 +698,172 @@ def test_clearing_the_bar_is_one_change_rather_than_four(qapp):
     bar.reset()
 
     assert len(heard) == 1
+
+
+# --------------------------------------------------------------------------
+# What the bar is drawn in, which is the one thing it does not say itself
+# --------------------------------------------------------------------------
+
+
+def _contents(box) -> list:
+    """What a box is holding, in the order the box draws it."""
+    layout = box.layout()
+    return [layout.itemAt(i).widget() for i in range(layout.count())]
+
+
+def test_the_two_boxes_hold_the_controls_they_are_named_for(qapp):
+    """A box is a frame around the controls rather than a copy of them.
+
+    The very widgets go in -- the chips and the two number boxes are the ones
+    the window reads back -- so what is on screen and what the bar reports are
+    the same objects, and there is no second set of them to keep in step.
+    """
+    bar = _bar()
+
+    assert [bar.rarity_box.title(), bar.level_box.title()] == [
+        "Rarity",
+        "Player level",
+    ]
+    assert bar.rarity_box.objectName() == "filterbox"
+    assert bar.level_box.objectName() == "filterbox"
+
+    assert _contents(bar.rarity_box) == list(bar.chips.values())
+    low, to, high = _contents(bar.level_box)
+    assert (low, high) == (bar.low, bar.high)
+    assert to.text() == "to"
+
+
+def test_a_box_is_as_wide_as_what_is_in_it_and_no_wider(themed):
+    """The title costs the row nothing, which is what it is there to prove.
+
+    A ``QGroupBox`` asks for its contents plus its own margins and its frame
+    -- the two pixels here are the sheet's one-pixel border on each side -- and
+    the title is drawn in the gap the stylesheet's ``margin-top`` opens, so it
+    is no part of the width at all.  That matters because this row is what
+    sets the window's minimum width: a box that grew to fit the words
+    ``Player level`` would be width the collection paid for.
+
+    Themed, because the frame being measured is the sheet's -- without it the
+    style's own frame is a different width and the sum proves nothing.
+    """
+    bar = _bar()
+
+    for box in (bar.rarity_box, bar.level_box):
+        layout = box.layout()
+        margins = layout.contentsMargins()
+        inside = sum(w.sizeHint().width() for w in _contents(box))
+        inside += layout.spacing() * (layout.count() - 1)
+        assert box.sizeHint().width() == inside + margins.left() + margins.right() + 2
+
+
+def test_a_chip_is_outlined_in_white_whichever_way_it_is_ticked(qapp):
+    """The chip's ink is the rarity; the outline is that it can be pressed.
+
+    An unticked chip was drawn in a grey close enough to the ground that the
+    row read as four words rather than as four buttons.  The border is white
+    in both states -- what a tick changes is the ink and a faint wash -- so
+    that where the chips are and what they are is said by two different
+    things.
+    """
+    bar = _bar()
+
+    for chip in bar.chips.values():
+        sheet = chip.styleSheet()
+        assert f"border: 1px solid {WHITE}" in sheet
+        assert "border" not in sheet.split("QCheckBox:!checked")[1], (
+            "the outline changes with the tick, so an unticked chip loses it"
+        )
+
+
+def test_the_rails_boxes_are_outlined_in_white_and_fill_when_ticked(themed):
+    """The first clause of the request, drawn rather than read off the sheet.
+
+    A ticked box is a *filled* one: Qt's stylesheet language draws a check
+    box's frame and its fill but not a check mark, which is an image file this
+    application does not ship.  So what is counted here is white pixels in the
+    box itself -- a box that is off has to be visible, and one that is on has
+    to be more of it -- which is also the check that the indicator rule
+    reaches a ``QTreeWidget`` at all, a tree view being what it is.
+    """
+    panel = _panel()
+    panel.set_shape([BOOTS, SWORD])
+    panel.resize(180, 200)
+    panel.show()
+    themed.processEvents()
+
+    boots = panel.tree.topLevelItem(0).child(0)
+
+    def ink() -> int:
+        """The white in the front of that row, where the box is and the words
+        are not."""
+        rect = panel.tree.visualItemRect(boots)
+        image = panel.tree.grab().toImage()
+        return sum(
+            1
+            for y in range(rect.top(), rect.bottom() + 1)
+            for x in range(rect.left(), rect.left() + 24)
+            if image.pixelColor(x, y).name() == WHITE
+        )
+
+    off = ink()
+    boots.setCheckState(0, Qt.CheckState.Checked)
+    themed.processEvents()
+    on = ink()
+
+    assert off > 0, "an unticked box is invisible against the ground"
+    assert on > off, "ticking it drew nothing"
+
+
+def _stepper_boxes(spin):
+    """Where the style puts the two buttons of a spin box, in widget pixels."""
+    option = QStyleOptionSpinBox()
+    spin.initStyleOption(option)
+    return [
+        spin.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, option, which, spin
+        )
+        for which in (QStyle.SubControl.SC_SpinBoxUp, QStyle.SubControl.SC_SpinBoxDown)
+    ]
+
+
+def test_the_number_boxes_draw_their_own_steppers(themed):
+    """Qt will frame a spin box in white or keep its stepper arrows, not both.
+
+    The moment a rule touches the box's frame the stylesheet style takes the
+    whole control over and draws the two buttons as flat blocks -- with no
+    arrows at all, because an arrow in that language is an *image file* and
+    this application ships none.  So the frame is the sheet's and the
+    triangles are painted by :class:`app.filters.SpinBox`, and this is the
+    check that they arrive: twelve white pixels in each button, six across at
+    the base and three rows deep, narrowing towards the end the arrow points
+    at -- which is the whole of what says which of the two is which.
+    """
+    bar = _bar()  # held, or the box it hands over goes with it
+    spin = bar.low
+    spin.resize(spin.sizeHint())
+    spin.show()
+    themed.processEvents()
+
+    image = spin.grab().toImage()
+    rows = []
+    for button in _stepper_boxes(spin):
+        rows.append(
+            [
+                sum(
+                    1
+                    for x in range(button.left(), button.right() + 1)
+                    if image.pixelColor(x, y).name() == WHITE
+                )
+                for y in range(button.top(), button.bottom() + 1)
+            ]
+        )
+
+    # Only the rows with ink in them: how tall the button is belongs to the
+    # style, and what the arrow does inside it does not.
+    drawn = [[width for width in button if width] for button in rows]
+    assert drawn == [[2, 4, 6], [6, 4, 2]], (
+        "the up arrow is narrow at the top, the down one at the bottom"
+    )
 
 
 # --------------------------------------------------------------------------

@@ -15,6 +15,12 @@ rather than invented, one step from a colour that is already in the palette --
 and each says which, so the next person who moves the palette can move these
 with it.
 
+A fourth is not derived from the palette at all: :data:`WHITE` outlines the
+controls.  A web page has no controls to outline, so there is nothing in the
+palette to derive it from -- and a control has to be the brightest thing on a
+dark screen, or a box the player ticks reads as a decoration rather than as
+something to press.
+
 **The style matters as much as the palette.**  On Windows the default style
 draws much of a widget out of the system theme and consults the palette only
 for what the theme does not say, so setting colours alone gives a light window
@@ -22,10 +28,12 @@ with dark corners.  Fusion is the one Qt style that draws all of it out of the
 palette on every platform, which is the whole reason it is chosen here.
 
 And a palette cannot say everything either -- there is no role for a group
-box's title or a header's sections -- so a small stylesheet covers what is
-left.  It is deliberately short: everything it does not mention is the palette's
-job, and every rule it does carry is a colour that is a *border*, a *title* or
-an idle sentence rather than a fill.
+box's title or a header's sections, and none for which control is a control --
+so a small stylesheet covers what is left.  It is deliberately short: every
+rule it does not carry is the palette's job, and nearly every rule it does
+carry is a colour that is a *border*, a *title* or an *idle sentence* rather
+than a fill.  The one exception is the state of a check box, which nothing
+else can say.
 
 This is applied once, to the application, before any window is built: a style
 set afterwards does not reach what is already on screen.
@@ -38,7 +46,7 @@ from PySide6.QtWidgets import QApplication, QStyleFactory
 
 from .card import BODY, DIM, DIV, GROUND, HEAD, LABEL, LINE, PANEL, TILE_BG
 
-__all__ = ["apply_theme"]
+__all__ = ["WHITE", "apply_theme"]
 
 #: A button, and anything else that sits *on* the ground rather than in a
 #: panel.  The palette has no raised neutral -- the site's cards are flat and
@@ -54,6 +62,15 @@ SELECT = "#3a3227"
 #: The bevels below every rule.  The darkest the palette goes, so that a
 #: shadowed edge reads as an edge and not as dirt.
 SHADOW = "#0c0b0a"
+
+#: What everything the player operates is outlined in -- the check boxes in the
+#: rail, the search box, the two filter boxes over the collection and the
+#: number boxes in them.  The one colour in the window that is not the card
+#: palette's and not derived from it: nothing in a dark warm palette is close
+#: enough to read as *contrast*, and a hairline in ``DIV`` or ``LINE`` -- which
+#: is what these were drawn in -- is a control the eye has to find before it
+#: can use it.
+WHITE = "#ffffff"
 
 
 def _palette() -> QPalette:
@@ -111,6 +128,14 @@ def _palette() -> QPalette:
 #: has no role for, and all of them are the same kind of thing: a word that is
 #: there to be read second.  ``DIM`` and ``LABEL`` are the palette's own two
 #: answers to that, and this is where they are spent.
+#:
+#: And what a palette cannot say *at all*: which control is a control.  Every
+#: rule below that carries :data:`WHITE` is one of those -- the rail's check
+#: boxes, the search box, the two filter boxes and the number boxes in them --
+#: and they are here together rather than in the widgets that draw them,
+#: because they are one decision: the controls are the only white in the
+#: window.  The two boxes are found by object name because the three panes are
+#: group boxes too, and a pane is a region rather than a control.
 _STYLE = f"""
 QGroupBox {{
     border: 1px solid {LINE};
@@ -124,6 +149,9 @@ QGroupBox::title {{
     left: 8px;
     padding: 0 4px;
     color: {LABEL};
+}}
+QGroupBox#filterbox {{
+    border: 1px solid {WHITE};
 }}
 QHeaderView::section {{
     background-color: {RAISED};
@@ -140,6 +168,28 @@ QTableView {{
 }}
 QTreeView {{
     border: 1px solid {LINE};
+}}
+/* A ticked box is a filled one rather than a ticked one: Qt's stylesheet
+   language can draw a box's fill and its border but not a check mark, which
+   needs an image file this application does not ship.  A solid white square
+   against a hollow one is what the rarity chips beside it do -- their
+   indicator is collapsed to nothing and the pill itself is the control -- and
+   at 13px it is the reading a glance gets.  A group row is half filled, which
+   is the same idea for a box that is neither on nor off. */
+QTreeView::indicator {{
+    width: 13px;
+    height: 13px;
+    border: 1px solid {WHITE};
+    border-radius: 3px;
+    background: transparent;
+}}
+QTreeView::indicator:checked {{
+    background: {WHITE};
+}}
+QTreeView::indicator:indeterminate {{
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 {WHITE}, stop: 0.5 {WHITE},
+        stop: 0.5 rgba(255, 255, 255, 0), stop: 1 rgba(255, 255, 255, 0));
 }}
 QSplitter::handle {{
     background-color: {LINE};
@@ -158,6 +208,19 @@ QToolTip {{
     color: {BODY};
     border: 1px solid {LINE};
     padding: 4px;
+}}
+/* The search box is found by name because a spin box holds a line edit of its
+   own, and a rule on ``QLineEdit`` would reach inside it and draw a second
+   border a few pixels from the first. */
+QLineEdit#search {{
+    border: 1px solid {WHITE};
+    border-radius: 3px;
+    padding: 3px 6px;
+}}
+QSpinBox {{
+    border: 1px solid {WHITE};
+    border-radius: 3px;
+    padding: 1px 3px;
 }}
 #banner {{
     color: {LABEL};

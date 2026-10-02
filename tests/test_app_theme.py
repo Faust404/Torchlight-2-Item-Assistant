@@ -27,11 +27,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtGui import QPalette  # noqa: E402
+from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleFactory  # noqa: E402
 
 from app.card import BODY, GROUND, LABEL  # noqa: E402
-from app.theme import apply_theme  # noqa: E402
+from app.theme import WHITE, apply_theme  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -131,3 +131,57 @@ def test_applying_it_twice_changes_nothing(themed):
     apply_theme(themed)
     assert themed.palette() == before
     assert themed.styleSheet() == sheet
+
+
+def test_the_controls_are_outlined_in_white(themed):
+    """The one colour in the window that is not the card palette's.
+
+    Everything the player *operates* -- the check boxes down the rail, the
+    search box, the two boxes over the collection and the number boxes in them
+    -- is outlined in white, and nothing else in the window is.  A hairline in
+    the palette's own greys does not read as a control against a ground this
+    dark: the rail's check boxes were there to be found before they could be
+    ticked.
+
+    The panes are group boxes too, and they are *not* in this rule -- a pane
+    is a region and a box over the collection is a control -- which is why
+    the two are found by name rather than by being group boxes at all.
+    """
+    sheet = themed.styleSheet()
+
+    assert QColor(WHITE).lightness() == 255, "the point of it is that it is white"
+    assert WHITE in sheet
+    for selector in (
+        "QTreeView::indicator",
+        "QGroupBox#filterbox",
+        "QLineEdit#search",
+        "QSpinBox",
+    ):
+        assert selector in sheet, selector
+
+
+def test_a_check_box_says_which_way_it_is(themed):
+    """A box that is on has to look different from one that is off.
+
+    Qt's stylesheet language can draw a check box's frame and its fill but not
+    a check mark, which is an image file.  So a ticked box is a *filled* one:
+    white box, or a solid one, which at 13px is the reading a glance gets --
+    and half filled for a group row, which is neither on nor off.
+    """
+    sheet = themed.styleSheet()
+
+    for state in ("QTreeView::indicator:checked", "QTreeView::indicator:indeterminate"):
+        assert state in sheet, state
+
+
+def test_the_search_box_is_outlined_by_name(themed):
+    """By name, because a spin box holds a line edit of its own.
+
+    ``QLineEdit`` as a selector matches subclasses, and the field inside a
+    number box is one -- so a rule on it would draw a second white rectangle a
+    few pixels inside the first.
+    """
+    sheet = themed.styleSheet()
+
+    assert "QLineEdit#search" in sheet
+    assert "QLineEdit {" not in sheet, "the search box is the only line edit here"
