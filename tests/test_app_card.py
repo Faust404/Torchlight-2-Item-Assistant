@@ -104,6 +104,7 @@ def card(**kwargs) -> Card:
         "icon": None,
         "level": 0,
         "sockets": 1,
+        "quantity": 1,
         "blocks": (),
         "gems": (),
         "set_ladder": (),
@@ -251,6 +252,24 @@ def test_the_corner_says_the_item_s_level_and_what_it_holds(qapp):
     assert texts(ItemCard(card(level=0, sockets=3)), "pill") == ["3 Sockets"]
     assert texts(ItemCard(card(level=7, sockets=0)), "pill") == ["Level 7"]
     assert texts(ItemCard(card(level=0, sockets=0)), "pill") == []
+
+
+def test_a_stack_says_how_many_it_is_before_the_rest_of_the_corner(qapp):
+    """Twenty potions is a different thing from one potion, so the pile leads
+    the corner: the level and the sockets beside it are then the level and the
+    sockets of *each* of the twenty.
+
+    A stack of one draws nothing, like the sockets of an item with none --
+    nearly every card is a stack of one, and ``×1`` would be a lie told
+    quietly on all of them.
+    """
+    drawn = ItemCard(card(quantity=20, level=45, sockets=1))
+    assert texts(drawn, "pill") == ["×20", "Level 45", "1 Socket"]
+
+    assert texts(ItemCard(card(quantity=1, level=45, sockets=1)), "pill") == [
+        "Level 45",
+        "1 Socket",
+    ]
 
 
 # --------------------------------------------------------------------------

@@ -238,6 +238,11 @@ class Card:
     its own because that is how the game draws one, and each carrying the whole
     of what the socket contributes: see below.
 
+    ``quantity`` is how many of the item a stack holds: 1 for everything that
+    does not stack, and the number a fish or a potion is carried in.  It is the
+    save file's own field, and the count of *stacks* is a different number
+    again -- the tile's, which is how many of these the tool holds.
+
     ``weapon_lead`` is the three lines a weapon leads with -- its Damage per
     Second, its attack speed and its reach -- and is empty on everything that
     is not a weapon.  They are the item's own numbers and the first thing the
@@ -291,6 +296,10 @@ class Card:
     gems: tuple[Card, ...]
     set_ladder: tuple[Rung, ...]
     flavor: str | None
+    # Everything from here down has a default, which is why the stack size is
+    # written here rather than beside the level and the sockets it belongs
+    # with: a dataclass will not take a defaulted field before a required one.
+    quantity: int = 1
     requires: Requirements | None = None
     weapon_lead: tuple[str, ...] = ()
     augments: tuple[Augment, ...] = ()

@@ -705,6 +705,7 @@ def build(item: "Item", data: "GameData | None" = None, host: str | None = None)
         icon=appearance.icon if appearance else None,
         level=item.level,
         sockets=item.num_sockets,
+        quantity=item.quantity,
         # An empty section is dropped rather than kept as a heading with
         # nothing under it, which is what lets `lines` concatenate them.
         blocks=tuple(Block(kind, tuple(found)) for kind, found in blocks if found),

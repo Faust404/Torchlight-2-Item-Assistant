@@ -332,11 +332,11 @@ class MainWindow(QMainWindow):
         # sitting empty beside it.
         #
         # The name takes whatever the other columns do not, and the others take
-        # exactly what they need: a level is two digits and a socket count is
-        # one, and neither is worth the 100px Qt would give it.  That the name
-        # stretches is the whole reason a wide row stays readable in a narrow
-        # pane: the two numbers cost what they cost, and every pixel left over
-        # is name.
+        # exactly what they need: a level is two digits and the two counts
+        # beside it are one or two, and none of them is worth the 100px Qt would
+        # give it.  That the name stretches is the whole reason a wide row stays
+        # readable in a narrow pane: the three numbers cost what they cost, and
+        # every pixel left over is name.
         header = view.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for column in range(1, len(columns)):

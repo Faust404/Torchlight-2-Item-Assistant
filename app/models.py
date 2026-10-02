@@ -43,14 +43,24 @@ __all__ = [
 #: column is where a row keeps what it knows, and the model is what the filters
 #: read.
 #:
-#: The stash keeps the item, the level it asks for and how many sockets it has,
-#: which is what a row of that list is for.  The socket count is a column
-#: rather than a line on the tooltip because it is the one thing about an item
-#: still in the game that decides what happens *next*: a socketed item has to
-#: be taken out of the game before its gems can be.  Where it sat -- the tab and
-#: the slot -- stays on the name cell's tooltip, which costs nothing and
-#: explains itself on hover, rather than in two columns nobody reads.
-STASH_COLUMNS = ["Item", "Lvl", "Sockets"]
+#: The stash keeps the item, the level it asks for, how many are in the stack
+#: and how many sockets it has, which is what a row of that list is for.  The
+#: socket count is a column rather than a line on the tooltip because it is the
+#: one thing about an item still in the game that decides what happens *next*:
+#: a socketed item has to be taken out of the game before its gems can be.  The
+#: quantity is a column because a stack is what a fish or a potion *is*: one
+#: row saying ``20`` says how much of the stash is that thing, where a line on
+#: a tooltip would have to be hovered over twenty times to add up.  Where it sat
+#: -- the tab and the slot -- stays on the name cell's tooltip, which costs
+#: nothing and explains itself on hover, rather than in two columns nobody
+#: reads.
+#:
+#: Two of the four columns are counts that are mostly nothing, and both are
+#: blank rather than a number on every row: the sockets of an item with none,
+#: and the quantity of everything that does not stack.  A column of noughts and
+#: ones is a column nobody can read at a glance, which is the only reason to
+#: have one at all.
+STASH_COLUMNS = ["Item", "Lvl", "Qty", "Sockets"]
 COLLECTION_COLUMNS = ["Item"]
 
 #: The rarity chips' order and their words, which is the game's own order and
@@ -176,16 +186,18 @@ def fill_stash(
 ) -> None:
     """Show what is in the save file right now.
 
-    Three columns and no more: the item, the level it asks for and how many
-    sockets it has.  Which tab and which slot it came out of is on the name
-    cell's tooltip -- it is worth having when it is asked for and worth nothing
-    in a column, since the row a player is looking at is the row they just put
-    something in.
+    Four columns and no more: the item, the level it asks for, how many are in
+    the stack and how many sockets it has.  Which tab and which slot it came
+    out of is on the name cell's tooltip -- it is worth having when it is asked
+    for and worth nothing in a column, since the row a player is looking at is
+    the row they just put something in.
 
-    The socket count is blank when there is none rather than a zero on every
-    row: nearly everything in a stash has no sockets, and a column of noughts
-    is a column nobody can read at a glance -- which is the only reason to have
-    it.
+    The quantity is the stack the item *is*, which is one for nearly everything
+    and twenty for a pile of potions, and the socket count is how many the item
+    has.  Both are blank when there is nothing to say -- no sockets, or the one
+    every unstackable item carries -- rather than a zero or a one on every row:
+    a column of noughts and ones is a column nobody can read at a glance, which
+    is the only reason to have one.
 
     ``data`` names the tabs; without it they fall back to the container id.
     ``catalog`` supplies the tier, the kind and the picture, and without it the
@@ -199,8 +211,12 @@ def fill_stash(
             _describe(name, catalog.entry(item.fingerprint, item), item.level)
         name.setToolTip(_where_it_sat(item, data))
 
+        # A stack of one is not a stack, and the numbers are the save file's
+        # own: the quantity is how many the item *is*, not how many of them the
+        # tool has seen.
+        quantity = _cell(str(item.quantity if item.quantity > 1 else ""))
         sockets = _cell(str(item.num_sockets or ""))
-        model.appendRow([name, _cell(str(item.level)), sockets])
+        model.appendRow([name, _cell(str(item.level)), quantity, sockets])
 
 
 def _where_it_sat(item: Item, data: "GameData | None") -> str:

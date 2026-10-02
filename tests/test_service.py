@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tl2stash import StashWatcher, read_stash_file  # noqa: E402
+from tl2stash import StashWatcher, parse_item, read_stash_file  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.saves import SaveLocation  # noqa: E402
 from tl2stash.service import (  # noqa: E402
@@ -25,7 +25,12 @@ from tl2stash.service import (  # noqa: E402
     ItemService,
 )
 
-from test_archive import write_stash_with_rubbish, write_synthetic_stash  # noqa: E402
+from test_archive import (  # noqa: E402
+    write_stash_of,
+    write_stash_with_rubbish,
+    write_synthetic_stash,
+)
+from test_format import synthetic_item  # noqa: E402
 
 
 @pytest.fixture
@@ -257,6 +262,30 @@ def test_restore_puts_an_item_back(service, stash_path):
 
     assert report.changed
     assert len(service.stash_items()) == 1
+
+
+def test_a_stack_is_stored_and_put_back_whole(service, stash_path):
+    """A pile of potions is one item, and the pile is what has to survive.
+
+    The count is a field of the save file's own record, so the tool's side of
+    it is nothing more than not losing the bytes: the registry keeps the record
+    and the count beside it, and putting the item back writes the record out
+    again.  Read or written one field out, twenty potions come back as one
+    potion with twenty sockets -- which is the mistake this pins.
+    """
+    stack = parse_item(synthetic_item(name="Neverending Fish", quantity=20)[0])
+    write_stash_of(stash_path, [stack])
+
+    result = service.absorb_all()
+    assert [i.base_name for i in result.taken] == ["Neverending Fish"]
+
+    (row,) = service.registry.rows()
+    assert row["quantity"] == 20, "the stack size was not recorded with the item"
+
+    service.restore({row["fingerprint"]})
+    (back,) = service.stash_items()
+    assert back.quantity == 20, "the stack came back as a single item"
+    assert back.num_sockets == 0, "the count landed on the socket field"
 
 
 def test_a_restored_item_is_not_snatched_straight_back(service, stash_path):

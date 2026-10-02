@@ -346,34 +346,39 @@ def test_modded_and_vanilla_do_not_share_a_pile(qapp, tmp_path, monkeypatch):
         two.close()
 
 
-def test_the_stash_row_is_the_item_its_level_and_its_sockets(window):
-    """Three columns, and where the thing sat is on the name cell's tooltip.
+def test_the_stash_row_is_the_item_its_level_and_its_counts(window):
+    """Four columns, and where the thing sat is on the name cell's tooltip.
 
     The "In the game" list is the list the player empties, so it is the item,
-    the level it asks for and how many sockets it has -- the tiling is for the
-    tool's own items.  Which tab and slot it came out of is a question about
-    one item, asked by pointing at it.
+    the level it asks for, how many are in the stack and how many sockets it
+    has -- the tiling is for the tool's own items.  Which tab and slot it came
+    out of is a question about one item, asked by pointing at it.
 
-    A socket count of none is a blank cell rather than a nought: nearly every
-    row in a stash has no sockets, and the point of the column is to be read at
-    a glance.  The fixture's three items are plain ones.
+    A socket count of none is a blank cell rather than a nought, and so is the
+    quantity of a stack of one: nearly every row in a stash is both, and the
+    point of either column is to be read at a glance.  The fixture's three
+    items are plain ones.
     """
     names = [
         window.stash_model.item(row, 0).text()
         for row in range(window.stash_model.rowCount())
     ]
     assert sorted(names) == ["Alpha", "Beta", "Gamma"]
-    assert window.stash_model.columnCount() == 3
+    assert window.stash_model.columnCount() == 4
     assert [
         window.stash_model.headerData(column, Qt.Orientation.Horizontal)
-        for column in range(3)
-    ] == ["Item", "Lvl", "Sockets"]
+        for column in range(4)
+    ] == ["Item", "Lvl", "Qty", "Sockets"]
     assert [
         window.stash_model.item(row, 1).text()
         for row in range(window.stash_model.rowCount())
     ] == ["5", "5", "5"]
     assert [
         window.stash_model.item(row, 2).text()
+        for row in range(window.stash_model.rowCount())
+    ] == ["", "", ""]
+    assert [
+        window.stash_model.item(row, 3).text()
         for row in range(window.stash_model.rowCount())
     ] == ["", "", ""]
 
@@ -398,7 +403,7 @@ def test_a_socketed_item_in_the_game_says_so_in_its_own_column(qapp, tmp_path):
     win = MainWindow(db_path=tmp_path / "items.db", source=stash)
     try:
         rows = {
-            win.stash_model.item(row, 0).text(): win.stash_model.item(row, 2)
+            win.stash_model.item(row, 0).text(): win.stash_model.item(row, 3)
             for row in range(win.stash_model.rowCount())
         }
         assert set(rows) == {"Plain Helm", "Socketed Helm"}
@@ -408,15 +413,46 @@ def test_a_socketed_item_in_the_game_says_so_in_its_own_column(qapp, tmp_path):
         win.close()
 
 
-def test_the_name_column_takes_the_width_the_two_numbers_do_not(qapp, tmp_path):
+def test_a_stack_in_the_game_says_how_many_it_is(qapp, tmp_path):
+    """What the quantity column is for: a fish or a potion is a *pile*, and
+    the pile is the item -- twenty potions is one row that has to say twenty,
+    because that is what goes back when it goes back.
+
+    A stack of one is a blank cell rather than a 1 -- a column of ones is the
+    column nobody reads that a column of noughts would be, and the number only
+    means something on the rows where it is not one.
+    """
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            parse_item(synthetic_item(name="Neverending Fish", quantity=20)[0]),
+            parse_item(synthetic_item(name="Plain Sword")[0]),
+        ],
+    )
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        rows = {
+            win.stash_model.item(row, 0).text(): win.stash_model.item(row, 2)
+            for row in range(win.stash_model.rowCount())
+        }
+        assert set(rows) == {"Neverending Fish", "Plain Sword"}
+        assert rows["Neverending Fish"].text() == "20"
+        assert rows["Plain Sword"].text() == ""
+    finally:
+        win.close()
+
+
+def test_the_name_column_takes_the_width_the_numbers_do_not(qapp, tmp_path):
     """The name is the column worth reading, so it is the one that stretches.
 
-    A level is two digits and a socket count is one, so those two columns take
-    what they take and every pixel left over in the pane is name.  The three
-    modes have to be set *after* ``setModel``, which rebuilds the header's
-    sections and puts them all back to Qt's default of a hundred pixels each:
-    set before, they were dropped without a word and a pane twice that wide
-    showed a hundred-pixel name column with the rest sitting empty beside it.
+    A level is two digits and the two counts are one or two, so those three
+    columns take what they take and every pixel left over in the pane is name.
+    The three modes have to be set *after* ``setModel``, which rebuilds the
+    header's sections and puts them all back to Qt's default of a hundred
+    pixels each: set before, they were dropped without a word and a pane twice
+    that wide showed a hundred-pixel name column with the rest sitting empty
+    beside it.
     """
     stash = tmp_path / "sharedstash_v2.bin"
     write_synthetic_stash(stash, ["Alpha"])
@@ -427,12 +463,14 @@ def test_the_name_column_takes_the_width_the_two_numbers_do_not(qapp, tmp_path):
         header = win.stash_view.horizontalHeader()
         assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
         assert [
-            header.sectionResizeMode(column) for column in (1, 2)
-        ] == [QHeaderView.ResizeMode.ResizeToContents] * 2
-        name, level, sockets = (header.sectionSize(column) for column in range(3))
-        assert name > level + sockets, (
+            header.sectionResizeMode(column) for column in (1, 2, 3)
+        ] == [QHeaderView.ResizeMode.ResizeToContents] * 3
+        name, level, quantity, sockets = (
+            header.sectionSize(column) for column in range(4)
+        )
+        assert name > level + quantity + sockets, (
             f"the name got {name}px of a {win.stash_group.width()}px pane, "
-            f"against {level + sockets}px for the two numbers"
+            f"against {level + quantity + sockets}px for the three numbers"
         )
     finally:
         win.close()

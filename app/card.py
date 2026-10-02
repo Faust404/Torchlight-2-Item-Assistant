@@ -769,8 +769,23 @@ class ItemCard(QFrame):
         return label
 
     def _pills(self, card: Card) -> list[str]:
-        """The corner: what the item asks of the player and what it holds."""
+        """The corner: what the item asks of the player and what it holds.
+
+        The stack size leads, because it is the one of the three that changes
+        how the card is *read*: ``×20`` is twenty potions and not one, and the
+        level and the sockets under it are the level and the sockets of each of
+        them -- the pile is one item, which is why the count is a pill here and
+        not a line of the body with the stats.
+
+        A multiplication sign rather than the word for it, because the corner
+        already reads ``Level 45`` and ``3 Sockets``: the sign is the one mark
+        that says how many of a thing there are without being taken for another
+        stat of the one item.  A stack of one draws nothing, like the sockets
+        of an item with none -- nearly every card is a stack of one.
+        """
         pills = []
+        if card.quantity > 1:
+            pills.append(f"×{card.quantity}")
         if card.level:
             pills.append(f"Level {card.level}")
         if card.sockets:

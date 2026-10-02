@@ -69,6 +69,7 @@ def synthetic_item(
     slot: int = 10,
     container: int = 24,
     level: int = 5,
+    quantity: int = 1,
     sockets: int = 0,
     extra_records: bytes = b"",
     tail: bytes | None = None,
@@ -82,6 +83,10 @@ def synthetic_item(
     ``sockets`` is the count the item says it has, which is a field of its own
     and not the list of gems in them: a socketed item with nothing socketed in
     it is the ordinary case.
+
+    ``quantity`` is how many of the item the stack holds, the field right
+    before the socket count; one is what everything that does not stack
+    carries, which is why it is the default here.
     """
     assert len(extra_records) % 8 == 0
     out = bytearray()
@@ -122,7 +127,7 @@ def synthetic_item(
     out.extend(bytes(8))
     out.extend(bytes(80))
     u32(level)
-    u32(1)                                     # quantity
+    u32(quantity)
     u32(sockets)
     u32(0)                                     # gems
     out.extend(bytes(4))
@@ -190,6 +195,22 @@ def test_synthetic_item_parses():
     assert item.location.container == 24
     assert item.location_offset == offset
     assert item.raw == blob
+
+
+def test_a_stack_says_how_many_of_it_there_are():
+    """The quantity is the save file's own field, between the level and the
+    socket count.
+
+    It is the number a fish or a potion is carried in, and 1 for everything
+    that does not stack.  One field out -- reading the sockets' word as the
+    stack's -- turns twenty potions into one with twenty holes in it, so the
+    two numbers are asserted apart on the one blob.
+    """
+    item = parse_item(synthetic_item(name="Neverending Fish", quantity=20)[0])
+    assert item.quantity == 20
+    assert item.num_sockets == 0
+
+    assert parse_item(synthetic_item(name="Test Blade")[0]).quantity == 1
 
 
 def test_an_affix_says_where_the_item_s_own_name_goes():

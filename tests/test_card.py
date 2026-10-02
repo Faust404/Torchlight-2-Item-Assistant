@@ -270,6 +270,21 @@ def test_a_gem_is_a_card_of_its_own():
     ]
 
 
+def test_the_card_carries_how_many_the_item_is():
+    """The stack size is a field of the card rather than a line of it.
+
+    A pile of potions is *one* item whose count the save file records, so it
+    is not a stat the item has and it is not written among the properties: the
+    count is how the pile is read, and the corner of the card is where the
+    window draws it.  One is what everything that does not stack carries, and
+    one is the default -- the window draws a count above one and nothing at
+    all for the rest, so a card that lost the field would draw nothing for a
+    pile of twenty.
+    """
+    assert build(item(quantity=20), None).quantity == 20
+    assert build(item(), None).quantity == 1
+
+
 # --------------------------------------------------------------------------
 # The flat list is the card, flattened
 # --------------------------------------------------------------------------
