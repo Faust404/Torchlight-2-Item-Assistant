@@ -45,6 +45,7 @@ To build it yourself, see [Building the executable](#building-the-executable).
 | desktop GUI (PySide6) | done |
 | the item card, drawn as the tl2-db site draws it | done — tier ink, game art cut from the PAK, affix lines in the game's green |
 | packaging to `.exe` (PyInstaller) | done — one file, no console; built and attached to Releases by CI on a tag |
+| exporting and importing the collection | done — one JSON file; every blob re-parsed, and the file's word for it not taken |
 
 ## How it works
 
@@ -140,6 +141,21 @@ a modded stash and a vanilla one never mix.
 The game is found by itself when it is installed. Without it the tool still
 stores and returns items exactly the same; only the wording is missing, and a
 line over the collection says so.
+
+### Backing the collection up
+
+**Export Collection** in the top right writes everything the tool holds for the
+stash being viewed to one `.tl2ia` file: the items themselves, in the same
+bytes the stash held them, with the copy counts and the place each one sat
+alongside for a person reading the file. **Import Collection** reads one back.
+Items the tool already has are left exactly as they are, so reading the same
+file in twice changes nothing the second time; a file from a modded stash will
+not go into a vanilla one. Neither button writes to a save file.
+
+The file is JSON and is meant to be readable — and editable — by hand. What is
+*believed* is the bytes: every blob is parsed again on the way in and every
+fingerprint recomputed, so an entry somebody has changed is refused by name
+while the rest of the file still comes in.
 
 ## Notes on the format
 

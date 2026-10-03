@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -40,6 +41,14 @@ from PySide6.QtWidgets import (
 from tl2stash.card import Card
 from tl2stash.gamedata import GameData, find_install
 from tl2stash.item import parse_item
+from tl2stash.portable import (
+    CollectionError,
+    ImportReport,
+    collection_text,
+    import_collection,
+    read_collection,
+    write_collection,
+)
 from tl2stash.processes import GAME_EXE, is_running
 from tl2stash.saves import SaveLocation, find_save_locations, live_location
 from tl2stash.service import STATUS_ABSORBED, ItemService
@@ -70,6 +79,7 @@ from . import paths
 from .settings import Settings
 from .sidebar import SidePanel
 from .tiles import TileGrid, TileRow
+from .version import __version__
 
 #: How often to look at the save file.  The file is a few tens of kilobytes
 #: and saves are seconds apart at the fastest, so this is generous; it exists
@@ -95,6 +105,17 @@ GAME_DATA_MISSING = (
 #: the game is running.  Spelled out because it is the *file's* name rather
 #: than the window's: it is what a hand-edited settings file has to say.
 WARN_SENDING = "warn_sending_while_running"
+
+#: The remembered choice behind both halves of export and import: the folder
+#: the last one used.  One key rather than two, because a player who keeps
+#: their backups in one place keeps them in one place -- and a dialog opening
+#: where the last file went is the whole of what there is to remember here.
+COLLECTION_FOLDER = "collection_folder"
+
+#: What the file dialogs list.  The all-files entry is not decoration: an
+#: export from an older version, or one a player has renamed to something
+#: their backup tool understands, is still the file they mean to open.
+COLLECTION_FILTER = "Item Assistant collections (*.tl2ia);;All files (*)"
 
 
 def send_warning(parent: QWidget | None, count: int) -> QMessageBox:
@@ -159,6 +180,45 @@ def send_warning(parent: QWidget | None, count: int) -> QMessageBox:
     # ways.  One handle, named, that the caller and the tests can both hold.
     box.never_show = QCheckBox("Never show this warning again")
     box.setCheckBox(box.never_show)
+    return box
+
+
+def import_report(parent: QWidget | None, report: ImportReport) -> QMessageBox:
+    """What an import did, with every item that did not make it named.
+
+    A receipt rather than a warning: it is shown whether or not anything went
+    wrong, because "12 in file, 0 new, 12 already here" is exactly what a
+    player reading a backup back in needs to see -- it is the difference
+    between a backup that worked and one that quietly did nothing.  The
+    problems are named one per line rather than counted, since the file is
+    editable and an item that will not come in is a thing to go and look at.
+
+    Built as a function rather than inside the asking, and laid out, for the
+    same reasons written out at length on :func:`send_warning`: it can be
+    built and read without a window and without a click, its paragraphs are
+    one unbroken string each, the bold is ``<b>`` around a line with no
+    stylesheet on the box, and ``<br>`` does the line breaks because a label
+    under a ``<b>`` is rich text and a typed newline is not kept.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Import")
+    box.setText(f"<b>{report.summary}</b>")
+
+    parts = []
+    if report.added == 1:
+        parts.append("1 item came in, and the tool holds it now.")
+    elif report.added:
+        parts.append(f"{report.added} items came in, and the tool holds them now.")
+    if report.already:
+        parts.append("Everything the tool already had was left exactly as it was.")
+    if report.problems:
+        parts.append(
+            "<b>These did not come in:</b><br>" + "<br>".join(report.problems)
+        )
+    if parts:
+        box.setInformativeText("<br><br>".join(parts))
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
     return box
 
 
@@ -311,6 +371,29 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.stranded_button)
 
         bar.addStretch(1)
+
+        # The collection as one file, out and back in.  At the right edge of
+        # the bar because they are about the collection as a whole rather than
+        # about either list -- which is the same reason ``Absorb everything``
+        # is *not* here but over the pane it empties.  A file is how a player
+        # survives reinstalling, or moves to another machine, and it is the
+        # one thing here that is worth asking them to keep.
+        self.export_button = QPushButton("Export Collection")
+        self.export_button.setToolTip(
+            "Write everything the tool holds to one file.\n"
+            "Nothing is written to the game's own saves."
+        )
+        self.export_button.clicked.connect(self._export_collection)
+        bar.addWidget(self.export_button)
+
+        self.import_button = QPushButton("Import Collection")
+        self.import_button.setToolTip(
+            "Read a collection file back in.  Items the tool already has\n"
+            "are left exactly as they are.  Nothing is written to the game."
+        )
+        self.import_button.clicked.connect(self._import_collection)
+        bar.addWidget(self.import_button)
+
         return bar
 
     def _build_absorb_row(self) -> QHBoxLayout:
@@ -605,6 +688,11 @@ class MainWindow(QMainWindow):
             self._set_status("No Torchlight 2 shared stash found on this machine.")
             self.absorb_button.setEnabled(False)
             self.stranded_button.setEnabled(False)
+            # A collection belongs to a stash, and both halves of this need
+            # one: there is nothing to read out of, and nothing to read into,
+            # until a stash is found.
+            self.export_button.setEnabled(False)
+            self.import_button.setEnabled(False)
             return
 
         self.source_box.blockSignals(True)
@@ -821,6 +909,99 @@ class MainWindow(QMainWindow):
             # pressed, and it moved in the player's favour: the game has this
             # one after all.
             self._set_status(f"{row.name} is in the shared stash after all")
+
+    # -- the collection as a file ----------------------------------------
+
+    def _export_collection(self) -> None:
+        """Write everything the tool holds to one file.
+
+        Everything, deliberately: the wall shows whatever the filters left,
+        and a backup holding what happened to be typed into the search box
+        when it was taken is a backup that silently stopped being one.  The
+        absorbed rows are the whole of what the tool owns, and their bytes are
+        the items -- see :func:`tl2stash.portable.collection_text`.
+
+        An empty collection says so rather than writing a file with nothing in
+        it, because a player would not find out that their backup was empty
+        until the day they needed it -- and the game's own files are not
+        touched by any of this, so there is nothing here to warn about.
+        """
+        if self.service is None:
+            return
+        rows = self.service.registry.rows(status=STATUS_ABSORBED)
+        if not rows:
+            self._set_status("nothing to export yet · the collection is empty")
+            return
+
+        location = self.service.location
+        folder = self.settings.get(COLLECTION_FOLDER, "") or str(self.db_dir)
+        suggested = str(
+            Path(folder) / f"tl2ia-{location.kind}-{location.steam_id}.tl2ia"
+        )
+        chosen, _ = QFileDialog.getSaveFileName(
+            self, "Export the collection", suggested, COLLECTION_FILTER
+        )
+        if not chosen:
+            return
+
+        try:
+            written = write_collection(
+                chosen,
+                collection_text(
+                    self.service.registry,
+                    self.service.source_key,
+                    version=__version__,
+                ),
+            )
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Could not write that file", f"{Path(chosen).name}: {exc}"
+            )
+            return
+
+        self.settings.set(COLLECTION_FOLDER, str(written.parent))
+        self._set_status(f"exported {len(rows)} items to {written.name}")
+
+    def _import_collection(self) -> None:
+        """Read a collection file back in, or say why it will not come.
+
+        The file is checked whole before anything is written, and an item the
+        tool already holds is left completely alone -- which is what makes
+        this safe to do over a collection the player has added to since: last
+        month's backup comes in, and this month's items stay.  See
+        :func:`tl2stash.portable.import_collection`.
+
+        The redraw is :meth:`_refresh_views`, deliberately *not* a refresh of
+        the stash.  A refresh re-reads the file, and the file has not changed
+        -- letting it rule on items that arrived from somewhere else would
+        mark them absent the moment they landed.  Nothing was written to any
+        save, so nothing needs re-reading.
+        """
+        if self.service is None:
+            return
+        folder = self.settings.get(COLLECTION_FOLDER, "") or str(self.db_dir)
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Import a collection", folder, COLLECTION_FILTER
+        )
+        if not chosen:
+            return
+
+        try:
+            report = import_collection(
+                self.service.registry,
+                self.service.source_key,
+                read_collection(chosen),
+            )
+        except CollectionError as exc:
+            self._set_status("nothing was imported")
+            QMessageBox.warning(self, "Could not import that file", str(exc))
+            return
+
+        self.settings.set(COLLECTION_FOLDER, str(Path(chosen).parent))
+        if report.added:
+            self._refresh_views()
+        self._set_status(f"imported · {report.summary}")
+        import_report(self, report).exec()
 
     # -- the copies ------------------------------------------------------
 

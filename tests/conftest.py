@@ -60,7 +60,16 @@ def no_writes_outside_tmp(tmp_path, monkeypatch):
     # Patch where each is *used*, not only where it is defined: these modules
     # did ``from .archive import ...``, so rebinding the name in archive.py
     # would leave the already-imported references pointing at the original.
-    for module in (_archive, _portable, _service):
+    # The window holds its own reference to the collection writer, which is
+    # the one a click reaches.
+    modules = [_archive, _portable, _service]
+    try:
+        from app import window as _window
+    except ImportError:
+        pass
+    else:
+        modules.append(_window)
+    for module in modules:
         for name in _WRITERS:
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, guard(name, getattr(module, name)))

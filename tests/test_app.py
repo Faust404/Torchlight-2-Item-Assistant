@@ -37,7 +37,7 @@ from app.card import LinkLabel  # noqa: E402
 from app.filters import INSET  # noqa: E402
 from app.models import LEVEL_MAX, NUMBER_MAX  # noqa: E402
 from app.tiles import TileRow  # noqa: E402
-from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
+from app.window import GAME_DATA_MISSING, MainWindow, import_report  # noqa: E402
 
 #: The real search, kept before any fixture can stand in front of it.
 _REAL_FIND_INSTALL = window_module.find_install
@@ -96,6 +96,11 @@ def no_modal_dialogs(monkeypatch):
     platform, so a test that trips one hangs forever instead of failing.  An
     earlier run of this file did exactly that, and produced no output at all.
     Tests that care what the user answered override these.
+
+    ``exec`` is here for the boxes built rather than asked for -- the send
+    warning and the import report -- which the three statics above do not
+    cover, because they are shown by their caller rather than shown by Qt.
+    Tests that care what the user answered override this one too.
     """
     from PySide6.QtWidgets import QMessageBox
 
@@ -104,6 +109,24 @@ def no_modal_dialogs(monkeypatch):
     )
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda box, *a, **k: QMessageBox.StandardButton.Ok
+    )
+
+
+@pytest.fixture(autouse=True)
+def no_file_dialogs(monkeypatch):
+    """Make the file dialogs answer "cancelled".
+
+    The same hazard as the boxes above and not covered by them: a
+    ``QFileDialog`` is another class, and a static method on it blocks exactly
+    as hard, with no timeout to save the run.  Tests that care which file was
+    chosen stand their own answer up in front of this one.
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: ("", ""))
 
 
 @pytest.fixture(autouse=True)
@@ -1692,3 +1715,182 @@ def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch
     window._sync()
 
     assert window.stash_model.rowCount() == 1, "the restored item vanished again"
+
+
+# --------------------------------------------------------------------------
+# The collection as a file
+# --------------------------------------------------------------------------
+
+
+def test_the_collection_file_buttons_are_at_the_right_of_the_top_bar(window):
+    """The placement the user asked for, which is most of what was asked.
+
+    Right-aligned rather than beside ``Refresh``: these two are about the
+    collection as a whole, not about the file being watched, so they stand
+    apart from the controls that are -- at the end of the bar, held there by
+    the stretch that was already in it, which is why nothing else in the row
+    moves for them and the window's own minimum width does not grow.
+    """
+    bar = window.centralWidget().layout().itemAt(0).layout()
+    assert bar.itemAt(bar.count() - 1).widget() is window.import_button
+    assert bar.itemAt(bar.count() - 2).widget() is window.export_button
+    assert bar.itemAt(bar.count() - 3).spacerItem() is not None, (
+        "the buttons are not held at the right edge of the bar"
+    )
+
+    window.show()
+    QApplication.processEvents()
+    assert window.export_button.x() > window.stranded_button.x()
+
+
+def test_export_writes_the_collection_to_the_chosen_file(stocked, tmp_path, monkeypatch):
+    """The whole of it, through the button a player would press.
+
+    ``stocked`` holds three absorbed items; the file that comes out has to
+    hold three, and it has to be the file the dialog named -- with the tool's
+    suffix added when the player typed a name without one.
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    written = tmp_path / "backup.tl2ia"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(written), "")
+    )
+
+    stocked.export_button.click()
+
+    assert written.is_file()
+    assert "exported 3 items" in stocked.status.currentMessage()
+
+
+def test_a_bare_name_is_saved_as_a_collection(stocked, tmp_path, monkeypatch):
+    """A save dialog cannot append the filter's extension for us."""
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "backup"), "")
+    )
+
+    stocked.export_button.click()
+
+    assert (tmp_path / "backup.tl2ia").is_file()
+    assert not (tmp_path / "backup").exists()
+
+
+def test_export_says_so_when_there_is_nothing_to_export(window, monkeypatch):
+    """A file with nothing in it is not a backup.
+
+    And the player would not find out that theirs was empty until the day they
+    needed it, which is the day it matters -- so this says so instead, and
+    opens no dialog at all.
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    def refuse(*args, **kwargs):
+        pytest.fail("a save dialog was opened for an empty collection")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", refuse)
+
+    window.export_button.click()
+
+    assert "nothing to export" in window.status.currentMessage()
+
+
+def test_import_puts_the_collection_into_a_database_that_never_saw_it(
+    stocked, tmp_path, monkeypatch
+):
+    """The move-to-another-machine story, end to end through the two buttons.
+
+    Export from the window holding the items, then open a window on a database
+    that has never seen them -- a reinstall, or another machine with the file
+    carried over -- and read the file in.  The cards come back.
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    written = tmp_path / "backup.tl2ia"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(written), "")
+    )
+    stocked.export_button.click()
+
+    again = MainWindow(db_path=tmp_path / "again.db", source=stocked.service.source)
+    try:
+        assert again.collection_model.rowCount() == 0
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileName", lambda *a, **k: (str(written), "")
+        )
+
+        again.import_button.click()
+
+        assert again.collection_model.rowCount() == 3
+        assert "3 new" in again.status.currentMessage()
+    finally:
+        again.close()
+
+
+def test_importing_the_same_file_again_changes_nothing(stocked, tmp_path, monkeypatch):
+    """Read over a collection the player has added to since: nothing is lost.
+
+    The items are already there the second time, so the answer is "already
+    here" and not a duplicate, a status reset, or a second copy of a card.
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    written = tmp_path / "backup.tl2ia"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(written), "")
+    )
+    stocked.export_button.click()
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", lambda *a, **k: (str(written), "")
+    )
+
+    stocked.import_button.click()
+
+    assert stocked.collection_model.rowCount() == 3
+    assert "3 already here" in stocked.status.currentMessage()
+
+
+def test_import_refuses_a_file_that_is_not_a_collection(window, tmp_path, monkeypatch):
+    """Refused whole, with the reason, and the collection untouched."""
+    from PySide6.QtWidgets import QFileDialog
+
+    notes = tmp_path / "notes.tl2ia"
+    notes.write_text("these are not the items you are looking for", encoding="utf-8")
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", lambda *a, **k: (str(notes), "")
+    )
+
+    window.import_button.click()
+
+    assert window.status.currentMessage() == "nothing was imported"
+    assert window.collection_model.rowCount() == 0
+    # Not one item of it reached the registry.
+    assert window.service.registry.absorbed_fingerprints() == set()
+
+
+def test_the_report_box_names_what_did_not_come_in(qapp):
+    """A count says something went wrong; a name says what to go and look at.
+
+    Built without a window and without a click, which is the point of it being
+    a function -- see the note on ``send_warning`` for what that is worth.
+    """
+    from tl2stash.portable import ImportReport
+
+    box = import_report(
+        None,
+        ImportReport(
+            source="vanilla/7656",
+            total=3,
+            added=1,
+            already=1,
+            unreadable=1,
+            problems=["Doomed: its bytes are not a readable item."],
+        ),
+    )
+
+    assert "3 in file" in box.text()
+    assert "1 new" in box.text()
+    assert "1 already here" in box.text()
+    assert "1 unreadable" in box.text()
+    assert "Doomed" in box.informativeText()
