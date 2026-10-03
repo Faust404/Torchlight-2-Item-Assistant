@@ -14,8 +14,9 @@ Build it from the repository root:
 
 The result is ``dist/Torchlight2ItemAssistant.exe`` -- one file, no console,
 no installer.  It writes nothing beside itself: the database and the settings
-go to the player's own profile, which is :mod:`app.paths`' decision and the
-reason this can be dropped anywhere the player likes.
+go to ``tl2ia_save`` in the game's own folder, next to the saves they belong
+with, which is :mod:`app.paths`' decision and the reason this can be dropped
+anywhere the player likes.
 """
 
 import importlib.util

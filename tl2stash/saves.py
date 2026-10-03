@@ -20,7 +20,10 @@ __all__ = ["STASH_FILENAME", "SaveLocation", "find_save_locations", "live_locati
 
 STASH_FILENAME = "sharedstash_v2.bin"
 
-#: ``…/My Games/Runic Games/Torchlight 2``
+#: ``…/My Games/Runic Games/Torchlight 2``.  The tool's *own* folder is
+#: derived from this one rather than from a path of its own -- see
+#: :func:`app.paths.data_dir` -- so the two cannot end up on different machines
+#: within one Windows profile.
 SAVE_ROOT = (
     Path(os.environ.get("USERPROFILE", Path.home()))
     / "Documents"

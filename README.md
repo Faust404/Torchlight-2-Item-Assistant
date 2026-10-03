@@ -19,12 +19,13 @@ beside the download for anyone who wants to check the file arrived whole:
 
     Get-FileHash .\Torchlight2ItemAssistant.exe -Algorithm SHA256
 
-The tool keeps its own files in `%LOCALAPPDATA%\Torchlight2ItemAssistant` —
-one database per stash, plus the settings — and that folder, not the
-executable, is the thing to back up. It is deliberately *not* beside the
-executable: the folder you download a program into is often one a program may
-not write to, and the tool's database is sometimes the only copy of an item.
-Set `TL2IA_DATA` to that folder's path to keep it somewhere else.
+The tool keeps its own files in `tl2ia_save`, inside the game's own folder
+next to `save` and `modsave` — one database per stash, plus the settings. That
+folder, not the executable, is the thing to back up, and it sits where backing
+up is easy: copy the Torchlight 2 folder and your stored items come with the
+saves they came out of. It is deliberately *not* beside the executable,
+because the folder you download a program into is often one a program may not
+write to at all. Set `TL2IA_DATA` to a path to keep it somewhere else.
 
 To build it yourself, see [Building the executable](#building-the-executable).
 
@@ -133,8 +134,8 @@ Put things in the shared stash; on the game's next save they leave the file and
 appear on the right, and each card shows the stats the game would show.
 **Transfer to Stash** on a card returns it to the game, where it stays until
 you ask for it back. Each save file gets its own database — under `var/` from a
-checkout, under `%LOCALAPPDATA%\Torchlight2ItemAssistant` from the executable —
-so a modded stash and a vanilla one never mix.
+checkout, under `tl2ia_save` in the game's own folder from the executable — so
+a modded stash and a vanilla one never mix.
 
 The game is found by itself when it is installed. Without it the tool still
 stores and returns items exactly the same; only the wording is missing, and a

@@ -197,8 +197,8 @@ class MainWindow(QMainWindow):
         # -- the default, because a player with both a vanilla and a modded
         # stash has two separate stashes, and pooling them would make "put
         # this back" a question with two possible answers.  Left out, the
-        # folder is the tool's own: ``var/`` from a checkout, the player's
-        # profile from a packaged executable -- see :mod:`app.paths` for why
+        # folder is the tool's own: ``var/`` from a checkout, the game's own
+        # folder from a packaged executable -- see :mod:`app.paths` for why
         # the two are not the same folder.
         self.db_path = Path(db_path) if db_path is not None else None
         self.db_dir = Path(db_dir) if db_dir is not None else paths.data_dir()
