@@ -110,12 +110,14 @@ class _AnItem:
         suffix: str = "",
         num_enchants: int = 0,
         num_sockets: int = 0,
+        level: int = 0,
     ):
         self.guid = guid
         self.prefix = prefix
         self.suffix = suffix
         self.num_enchants = num_enchants
         self.num_sockets = num_sockets
+        self.level = level
 
 
 def test_facts_read_an_item_that_answers_to_attributes():
@@ -521,3 +523,31 @@ def test_a_row_keeps_the_gate_beside_the_item_s_own_level(qapp):
     catalog = Catalog(_OneAnswer(Requirements(0, False, ())))
     fill_collection(model, [row], catalog)
     assert model.item(0, 0).data(GATE_ROLE) == 0
+
+
+def test_a_socketable_s_row_gate_is_read_at_the_row_s_own_level(qapp, synthetic_game):
+    """The gate a row shows is the copy's, not the item's file.
+
+    A socketable is one file for every level it drops at, so the file's own
+    level is the *lowest* version's -- the level-15 Eye of Kidrik's gate of 7
+    on a level-45 one, which is the number the player saw.  The row holds the
+    copy's level, and the facts carry it to the one gate that is read at it:
+    Test Gem's file says 20 and this copy says 45, so the socketing curve
+    answers 37 where the file's 12 used to stand.
+    """
+    row = _a_row(
+        fingerprint="0" * 40,
+        name="Test Gem",
+        level=45,
+        num_sockets=0,
+        prefix="",
+        suffix="",
+        num_enchants=0,
+        guid=f"{0x7003:016X}",
+    )
+    model = new_model(COLLECTION_COLUMNS)
+
+    fill_collection(model, [row], Catalog(synthetic_game))
+
+    cell = model.item(0, 0)
+    assert (cell.data(LEVEL_ROLE), cell.data(GATE_ROLE)) == (45, 37)

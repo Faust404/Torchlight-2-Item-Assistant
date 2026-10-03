@@ -73,9 +73,16 @@ class Facts:
     ``guid`` is an ``int`` here whatever it arrived as.  The registry stores it
     as uppercase hex text, because a 64-bit guid does not fit SQLite's signed
     integer; the save file's own field is the integer, and that is what the
-    data files are indexed by -- and it is all
-    :meth:`~tl2stash.gamedata.GameData.requirements_for` needs, which is why
-    that one is asked of these fields rather than of a whole item.
+    data files are indexed by.
+
+    ``level`` is the item's own, and it is here for the one gate that is read
+    at it rather than at the item's file: a socketable is one file for every
+    level it drops at, and its "required item level to socket" answers for the
+    copy in hand.  See :meth:`~tl2stash.gamedata.GameData.requirements_for`.
+
+    The guid, the level and the four fields below are what
+    :meth:`~tl2stash.gamedata.GameData.requirements_for` reads, which is why
+    that one is asked of these facts rather than of a whole item.
 
     ``num_sockets`` is as much an instance's fact as the prefix is: how many
     sockets an item *can* hold is in its data file, and how many the one in
@@ -90,17 +97,28 @@ class Facts:
     suffix: str
     num_enchants: int
     num_sockets: int = 0
+    level: int = 0
 
     @classmethod
     def of(cls, item: object) -> "Facts":
-        """Read the five fields off a parsed item, or off a registry row."""
+        """Read these fields off a parsed item, or off a registry row."""
 
         def read(name: str):
+            """The field, off either shape, or ``None`` where it is not there.
+
+            A row that does not carry the column at all raises ``IndexError``
+            where one that is not a mapping raises ``TypeError``, and the two
+            are one answer here: the registry's rows carry every column of the
+            schema, and a row built by hand names only the ones its case is
+            about.
+            """
             try:
                 return item[name]  # type: ignore[index]
             except TypeError:
                 # Not a mapping: an Item, which answers to attributes.
                 return getattr(item, name)
+            except IndexError:
+                return None
 
         guid = read("guid")
         return cls(
@@ -109,6 +127,7 @@ class Facts:
             suffix=read("suffix") or "",
             num_enchants=read("num_enchants") or 0,
             num_sockets=read("num_sockets") or 0,
+            level=read("level") or 0,
         )
 
 

@@ -192,7 +192,13 @@ def install(tmp_path: Path) -> Path:
     # The Normal curve stops at 20 here, as the game's stops at 50, so that a
     # level past its end falling through to the general one can be tested.
     curve("ITEM_LEVEL_REQUIREMENTS_NORMAL", {1: 1.0, 10: 8.0, 20: 15.0})
-    curve("ITEM_LEVEL_REQUIREMENTS_SOCKETABLE", {1: 1.0, 10: 2.0, 20: 12.0})
+    # The socketable curve keeps the real one's last step -- the game's runs to
+    # 105 and is the item's level less eight -- so that a copy above its end
+    # falls through and one inside it lands on the number the game shows.
+    curve(
+        "ITEM_LEVEL_REQUIREMENTS_SOCKETABLE",
+        {1: 1.0, 10: 2.0, 20: 12.0, 45: 37.0},
+    )
     curve("ITEM_STRENGTH_REQUIREMENTS", {10: 50.0, 20: 100.0})
     curve("ITEM_DEXTERITY_REQUIREMENTS", {10: 25.0, 20: 75.0})
     curve("ITEM_MAGIC_REQUIREMENTS", {10: 150.0, 20: 200.0, 50: 400.0})
@@ -1617,11 +1623,46 @@ def test_a_socketable_reads_the_socketing_curve(game):
     The level it asks for is the *host's*, which is what makes the socketing
     curve a different shape from every other one: it is not about the item's
     own level but about the level of the thing it goes into.
+
+    This copy records no level of its own -- the default of the builder, and
+    what a stripped or half-written blob holds -- so the file's answers; a copy
+    that records one is read at *it* instead.
     """
     requires = game.requirements_for(item(guid=0x7003))
 
     assert requires.level == 12, "the SOCKETABLE curve's value at level 20"
     assert requires.socketing is True
+
+
+def test_a_socketable_is_gated_at_the_level_of_the_copy_held(game):
+    """One file is every version of a socketable, and the copy says which.
+
+    The Eye of Kidrik's file is authored at 15 and the thing drops anywhere
+    between its ``MINLEVEL`` of 1 and its ``MAXLEVEL`` of 9999999, so a gate
+    read off the file alone is the *lowest* version's on every copy -- the
+    level-15 Eye's 7 on a level-45 one, which is what the player saw.  The
+    level the save records is the copy's own, and the curve is indexed by it.
+    """
+    low = game.requirements_for(item(guid=0x7003, level=10))
+    high = game.requirements_for(item(guid=0x7003, level=45))
+
+    assert low.level == 2, "the SOCKETABLE curve at the copy's level 10"
+    assert high.level == 37, "and at 45, where the file's level 20 reads 12"
+    assert low.socketing is True and high.socketing is True
+
+
+def test_a_socketable_past_its_curve_falls_through_at_the_copies_level(game):
+    """The fall-through follows the copy too, so a socketable is asked about
+    one level throughout.
+
+    The fixture's socketable curve stops at 45, as the game's stops at 105, and
+    the general curve is what answers above it -- the one every other item is
+    on.  Read at the file's level 20 this would land back on the socketing
+    curve's 12 and the fall-through would never happen at all.
+    """
+    requires = game.requirements_for(item(guid=0x7003, level=50))
+
+    assert requires.level == 57, "the general curve's value at level 50"
 
 
 def test_anything_else_reads_the_general_curve(game):

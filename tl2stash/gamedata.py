@@ -1518,6 +1518,10 @@ class GameData:
         else.  Both of the special curves stop early -- NORMAL at level 50 --
         and a level past the end falls through to the general one.
 
+        A socketable's gate is read at the level of the copy the player holds
+        rather than at the file's, which is the one curve that is and the one
+        thing the other kinds of item cannot do: see :meth:`_gate_level`.
+
         The four attributes are percentages of their own curve at the item's
         level, and this is the half that is easy to get wrong: the file states
         100 where the player reads Focus 170, because 100 is the whole of the
@@ -1541,13 +1545,17 @@ class GameData:
 
         appearance = _appearance(stated)
         return Requirements(
-            level=self._gate_level(stated, level, appearance),
+            level=self._gate_level(stated, level, appearance, item.level),
             socketing=appearance.type_name == "Socketable",
             stats=self._gate_stats(stated, level),
         )
 
     def _gate_level(
-        self, stated: dict[int, DatNode], level: int, appearance: Appearance
+        self,
+        stated: dict[int, DatNode],
+        level: int,
+        appearance: Appearance,
+        held_level: int,
     ) -> int:
         """The player level an item asks for, or 0 when it asks for none.
 
@@ -1557,12 +1565,31 @@ class GameData:
         state one are the ones authored to sit off the curve, and scaling it
         would move a level-67 gate on a level-70 item down to 52 -- the item
         would read as usable eleven levels before it can drop.
+
+        The socketing gate is read at ``held_level``, the level of the copy the
+        player holds, and it is the one gate that is: a socketable is *one file
+        for every version of it*.  The Eye of Kidrik may drop anywhere between
+        its ``MINLEVEL`` of 1 and its ``MAXLEVEL`` of 9999999, so the file's
+        ``LEVEL`` of 15 is the lowest version's and reading it put the
+        level-15 Eye's gate on the level-45 one.  The save file records each
+        copy's own level, and the game's SOCKETABLE curve is indexed by it --
+        105 points, every one of them ``level - 8`` but the first eight, which
+        are clamped to 1 -- so a level-45 Eye reads 37 and a level-15 one 7.
+        A copy that records no level at all reads the file's, which is what
+        every version used to read.
+
+        The fall-through is the held level too, so that a socketable is answered
+        at one level throughout: an install whose SOCKETABLE curve is missing or
+        stops early -- a mod's, or the game's own Normal curve one day -- reads
+        the general curve where a socketable's level now is rather than where
+        its file's was.
         """
         written = _number(stated, VAR_LEVEL_REQUIRED)
         if written:
             return int(written)
 
         if appearance.type_name == "Socketable":
+            level = held_level or level
             socket = self._curve("SOCKETABLE", level)
             if socket is not None:
                 return socket
