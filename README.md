@@ -80,6 +80,16 @@ Each card is an item, drawn with the stats the game itself would show —
 damage split by element, armour, effects, requirements. **Compare & Transfer**
 opens it beside one you already hold; **Transfer to Stash** sends it back.
 
+The wall opens on the first fifty cards of what the filters leave; the strip
+under it, **Show All Items (550)**, says how many are still behind them. One
+click draws the lot and takes the strip away, and it stays away while you
+read — until a filter, the search box, or the sort moves, which puts the wall
+back to its opening fifty. That is what keeps the search box quick: a search
+narrows to fifty cards at a time rather than to several hundred. A save
+arriving in the background changes none of that. **Show Stranded Items** is
+not capped — every stranded item is one you have to decide about, and one
+hidden behind a strip is one you would never decide about.
+
 ### When to do what
 
 There is one rule, and the tool warns you when you are about to break it:

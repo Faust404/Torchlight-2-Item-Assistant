@@ -38,7 +38,7 @@ from app.filters import INSET  # noqa: E402
 from app.models import LEVEL_MAX, NUMBER_MAX  # noqa: E402
 from app.theme import Dropdown  # noqa: E402
 from app.tiles import TileRow  # noqa: E402
-from app.window import GAME_DATA_MISSING, MainWindow, import_report  # noqa: E402
+from app.window import GAME_DATA_MISSING, PAGE_SIZE, MainWindow, import_report  # noqa: E402
 
 #: The real search, kept before any fixture can stand in front of it.
 _REAL_FIND_INSTALL = window_module.find_install
@@ -200,6 +200,34 @@ def stocked(game_window, monkeypatch):
         "the fixture did not stock the tool"
     )
     return game_window
+
+
+@pytest.fixture
+def full_window(qapp, tmp_path, monkeypatch):
+    """A window holding more of the tool's items than the wall opens on.
+
+    Sixty rather than the three the other fixtures stock: the claim under test
+    is about what the wall leaves *out*, and a fixture of three cannot tell
+    the two behaviours apart.  The names are distinct so their fingerprints
+    are -- sixty cards and not one card sixty times.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(stash, [f"Item {n:02d}" for n in range(PAGE_SIZE + 10)])
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win.collection_model.rowCount() == PAGE_SIZE + 10, (
+            "the fixture did not stock the tool"
+        )
+        yield win
+    finally:
+        win.close()
 
 
 # --------------------------------------------------------------------------
@@ -581,6 +609,140 @@ def test_a_search_that_matches_nothing_says_so(window, monkeypatch):
     empty = window.grid.findChild(QLabel, "empty")
     assert not empty.isHidden()
     assert "matches these filters" in empty.text()
+
+
+# --------------------------------------------------------------------------
+# The wall's page
+# --------------------------------------------------------------------------
+
+
+def test_the_wall_opens_on_a_page_and_the_strip_counts_the_rest(full_window):
+    win = full_window
+    assert win.grid.count() == PAGE_SIZE, "the wall did not open on its page"
+    assert not win.show_all_button.isHidden()
+    assert win.show_all_button.text() == "Show All Items (10)"
+    assert win.collection_group.title() == "In the tool (60)", (
+        "the box counts the collection, not the page"
+    )
+
+
+def test_showing_everything_draws_the_rest_and_takes_the_strip_away(full_window):
+    win = full_window
+    win.show_all_button.click()
+
+    assert win.grid.count() == PAGE_SIZE + 10
+    assert win.show_all_button.isHidden(), "the strip outlived what it was for"
+    assert sorted(row.name for row in win.grid.rows()) == [
+        f"Item {n:02d}" for n in range(PAGE_SIZE + 10)
+    ]
+
+
+def test_a_save_arriving_leaves_the_wall_revealed(full_window):
+    """The test the state snapshot exists for: the collection changed under
+    the reveal, and a reveal belongs to the filters rather than to the rows."""
+    win = full_window
+    win.show_all_button.click()
+
+    # The save-arrival path exactly: the game writes the file, `Automatic`
+    # takes what is new, and the window redraws.
+    write_synthetic_stash(
+        win.service.source, [f"Item {n:02d}" for n in range(PAGE_SIZE + 11)]
+    )
+    win.auto_absorb.setChecked(True)
+    win._sync()
+
+    assert win.collection_model.rowCount() == PAGE_SIZE + 11
+    assert win.grid.count() == PAGE_SIZE + 11, "the reveal did not survive the save"
+    assert win.show_all_button.isHidden()
+
+
+def test_a_search_puts_the_cap_back(full_window):
+    """What makes the search box quick: it narrows to a page, never to the
+    hundreds that are actually behind it."""
+    win = full_window
+    win.show_all_button.click()
+
+    win.filters.search.setText("Item")
+    assert win.collection_proxy.rowCount() == PAGE_SIZE + 10, (
+        "the search was meant to leave every item in"
+    )
+    assert win.grid.count() == PAGE_SIZE, "the search did not turn the page"
+    assert not win.show_all_button.isHidden()
+    assert win.show_all_button.text() == "Show All Items (10)"
+
+    win.filters.search.setText("Item 1")
+    assert win.grid.count() == 10, "the strip's number follows the filters"
+    assert win.show_all_button.isHidden()
+
+
+def test_the_sort_arrow_puts_the_cap_back(full_window):
+    """The sort is not a facet and nothing was counted for it, so it has its
+    own slot in the window -- and the reveal goes with the order."""
+    win = full_window
+    win.show_all_button.click()
+    assert win.grid.count() == PAGE_SIZE + 10
+
+    win.filters.reverse.click()
+
+    assert win.grid.count() == PAGE_SIZE
+    assert not win.show_all_button.isHidden()
+
+
+def test_a_short_collection_has_no_strip(stocked):
+    """Three items fit on the page; a strip counting nothing would be a
+    control for a problem the player does not have."""
+    assert stocked.grid.count() == 3
+    assert stocked.show_all_button.isHidden()
+
+
+def test_the_stranded_view_has_no_strip(full_window):
+    """The stranded list is not paged -- every item on it is one the player
+    has to decide about, and a card behind a strip is one they never would."""
+    win = full_window
+    print_ = win.grid.rows()[0].fingerprint
+    win._put_back_one(print_)
+    write_stash_of(win.service.source, [])  # the game's save, from a memory
+    win._sync(write=False)
+
+    win.stranded_button.click()
+    assert win.grid.count() == 1, "the fixture's stranded item is not on the wall"
+    assert win.show_all_button.isHidden(), "the strip is the collection's"
+
+    win.stranded_button.click()
+    assert win.grid.count() == PAGE_SIZE, "the collection comes back on its page"
+
+    win.show_all_button.click()
+    assert win.grid.count() == PAGE_SIZE + 10 - 1
+    win.stranded_button.click()
+    win.stranded_button.click()
+    assert win.grid.count() == PAGE_SIZE + 10 - 1, (
+        "a reveal belongs to the collection and not to the toggle"
+    )
+
+
+def test_the_strip_stands_under_the_wall_rather_than_in_it(full_window):
+    """In the wall it would scroll away with the cards -- the one thing a
+    control whose whole sentence is "there is more below" must not do."""
+    win = full_window
+    right = win.collection_group.layout()
+
+    assert win.show_all_button.parent() is win.collection_group
+    assert win.grid.parent() is win.collection_group
+    assert not win.grid.isAncestorOf(win.show_all_button)
+    assert right.indexOf(win.grid) < right.indexOf(win.show_all_button)
+
+
+def test_a_different_stash_puts_the_cap_back(full_window):
+    """The reveal was made against the cards on screen; another stash is
+    another collection, and it opens on its page."""
+    win = full_window
+    win.show_all_button.click()
+    assert win.grid.count() == PAGE_SIZE + 10
+
+    win._source_changed(0)
+
+    assert win.grid.count() == PAGE_SIZE
+    assert not win.show_all_button.isHidden()
 
 
 def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(

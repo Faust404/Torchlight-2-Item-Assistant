@@ -68,6 +68,7 @@ from .models import (
     PLACE_ROLE,
     STASH_COLUMNS,
     TIER_ROLE,
+    Advanced,
     CollectionFilter,
     container_label,
     fill_collection,
@@ -85,6 +86,15 @@ from .version import __version__
 #: and saves are seconds apart at the fastest, so this is generous; it exists
 #: to feel immediate, not to keep up.
 POLL_MS = 2000
+
+#: How many cards the wall draws before the rest go behind the strip under it.
+#: A card is real work to draw -- about 2.3 ms and thirty-odd widgets each --
+#: so a collection of several hundred is a wall nobody reads to the bottom of
+#: and, worse, one the window has to build in full before it can respond.  The
+#: first fifty are the page a player scrolls; everything past them is one
+#: deliberate click away, and putting any filter back to its rest is what
+#: turns the page again.  See :meth:`MainWindow._rebuild_collection`.
+PAGE_SIZE = 50
 
 #: Shown in place of an item's stats when the game's data files cannot be
 #: found.  Saying what to do about it is worth more than the space it takes --
@@ -274,6 +284,18 @@ class MainWindow(QMainWindow):
         #: redraw, because the redraw happens on every filter change and the
         #: answer only moves when the file does.
         self._stranded: list = []
+        #: Whether the wall is showing every card the filters left or only its
+        #: opening page.  A flag rather than a read of the button, because the
+        #: button is hidden in the one view where the answer still matters:
+        #: a reveal belongs to the collection, and ``Show Stranded Items``
+        #: must not lose it.
+        self._show_all = False
+        #: What the facets were when that reveal was made.  A reveal belongs
+        #: to one state of the filters and not to the window: when any of them
+        #: moves -- in the bar, in the rail, or in a committed search -- the
+        #: wall opens at its page again.  This is what tells a move apart from
+        #: a poll, which reaches the same slot with the same answer.
+        self._filter_state: tuple[Advanced, str] | None = None
 
         # The game's own data files, which supply the wording of an item's
         # stats.  Named rather than searched for when --game says where; see
@@ -503,6 +525,24 @@ class MainWindow(QMainWindow):
         self.grid.set_chosen.connect(self._show_set)
         right.addWidget(self.grid, stretch=1)
 
+        # The way to the rest of the collection, under the wall rather than on
+        # it.  A control *inside* the wall would be the one thing this must
+        # not be: something the player has to scroll to reach, in a wall whose
+        # whole sentence is that there is more below.  As a sibling of the
+        # grid it stands still while the cards scroll -- and it stays out of
+        # the compare window's own wall, which is a wall like this one and
+        # wants none of it.  Built hidden: what belongs on it is decided by
+        # the rebuild, and a window with no stash never runs one, so a button
+        # standing over an empty pane would be the only thing on it.
+        self.show_all_button = QPushButton("Show All Items")
+        self.show_all_button.setVisible(False)
+        self.show_all_button.setToolTip(
+            "Draw every card these filters leave, not only the first page.\n"
+            "Moving any filter -- or the sort -- puts the wall back to fifty."
+        )
+        self.show_all_button.clicked.connect(self._show_everything)
+        right.addWidget(self.show_all_button)
+
         # The filters stand directly over the collection and span nothing else.
         # They narrow one pane, and a row reaching across the window reads as
         # if it narrowed all three -- while the pane it does narrow is the one
@@ -726,7 +766,12 @@ class MainWindow(QMainWindow):
         # A different stash is a different collection, and filters left over
         # from the last one would silently hide most of it -- a narrowing
         # nobody asked for and, because the shape changes with it, one that can
-        # be hard to see.  Cleared before the first read, not after.
+        # be hard to see.  Cleared before the first read, not after.  The
+        # reveal is the same kind of leftover: it was made against the cards
+        # on screen, and the bar's reset emits its change whether or not it
+        # moved anything, so the state snapshot cannot be the thing that ends
+        # it here.
+        self._show_all = False
         self.sidebar.reset()
         self.filters.reset()
 
@@ -1218,8 +1263,21 @@ class MainWindow(QMainWindow):
         it.  One card per row rather than per item: these are items in the
         state the tool left them in, and every one of them is something the
         player has to decide about separately.
+
+        The collection itself is drawn :data:`PAGE_SIZE` cards at a time, with
+        the strip under the wall saying how many are behind them.  Fifty is a
+        page and not a limit: ``Show All Items`` draws every row the filters
+        leave, for as long as that filter state lasts.  The cut is made here
+        rather than in the wall, which is the whole of what a page saves: a
+        card behind it is never built at all.
         """
         if self.stranded_button.isChecked():
+            # The stranded list is not paged -- every item on it is one the
+            # player has to decide about, and a card behind a strip is one
+            # they never would.  So the strip belongs to the collection and
+            # goes with the view; ``_show_all`` is left as the player set it,
+            # so a reveal survives a trip through here.
+            self.show_all_button.setVisible(False)
             self.grid.set_rows(
                 [
                     TileRow(
@@ -1238,8 +1296,14 @@ class MainWindow(QMainWindow):
             )
             return
 
+        total = self.collection_proxy.rowCount()
+        # Everything the filters left, or as much of it as the wall opens on.
+        # ``_show_all`` is the player's click: it survives the polls, and only
+        # a move of the filters takes the wall back to its page -- see
+        # :meth:`_filters_changed`.
+        limit = total if self._show_all else min(total, PAGE_SIZE)
         rows = []
-        for row in range(self.collection_proxy.rowCount()):
+        for row in range(limit):
             index = self.collection_proxy.index(row, 0)
             fingerprint = index.data(FINGERPRINT_ROLE)
             rows.append(
@@ -1251,6 +1315,16 @@ class MainWindow(QMainWindow):
                 )
             )
         self.grid.set_rows(rows, empty=self._empty_text())
+
+        # After the wall, not with it: ``set_rows`` returns without touching a
+        # widget when the rows come back the same, and this number can move on
+        # a poll that moved no card -- an item absorbed behind the page, the
+        # count under the strip going up by one.  ``total > limit`` is also
+        # the whole of the rule: revealed means the two are equal, and nothing
+        # hidden means there is nothing to say.  The number in the brackets is
+        # cards, not items, which is what the box's own title counts too.
+        self.show_all_button.setText(f"Show All Items ({total - limit})")
+        self.show_all_button.setVisible(total > limit)
 
     def _empty_text(self) -> str:
         """What the wall says when there is nothing on it.
@@ -1265,6 +1339,19 @@ class MainWindow(QMainWindow):
             "Nothing here yet.  Put something in the shared stash in the game "
             "and it will move in here."
         )
+
+    def _show_everything(self) -> None:
+        """Draw the rest of what the filters left.
+
+        The whole of the click.  Nothing is recounted and nothing re-read --
+        the rows are already through the proxy, and a card that has ever been
+        drawn is already in the memo -- so this only moves the cut.  The
+        rebuild puts the strip away again once there is nothing behind it; a
+        move of the filters is what brings it back, see
+        :meth:`_filters_changed`.
+        """
+        self._show_all = True
+        self._rebuild_collection()
 
     # -- the cards --------------------------------------------------------
 
@@ -1385,6 +1472,19 @@ class MainWindow(QMainWindow):
             f"showing every piece of {name} · click its chip to see everything again"
         )
 
+    def _state_in_force(self) -> Advanced:
+        """Everything narrowing the wall right now, as one value.
+
+        The bar's own facets are read off the bar -- see
+        :meth:`app.filters.FilterBar.current`, which is the one place either
+        list is written down -- and the kinds off the rail, which is the one
+        control the bar cannot reach.  The same value the advanced panel opens
+        on, which is the point: a second shape for "what is in force" would be
+        a second answer to the question, and the two would come apart the
+        first time a facet was added.
+        """
+        return replace(self.filters.current(), places=frozenset(self.sidebar.places()))
+
     def _filters_changed(self) -> None:
         """Apply every facet, then say what each one would leave.
 
@@ -1399,7 +1499,19 @@ class MainWindow(QMainWindow):
         advanced search's panel and read back off the bar -- and they are
         applied here with the rest, because to the collection they are not a
         different kind of thing.
+
+        The opening page is the default for a *state* of the filters, and this
+        is the one slot every move of them passes through -- so the reveal is
+        given up here.  A poll is free to reach this method: the state comes
+        back the same and the wall is left where the player put it.  One facet
+        can move on a poll -- a kind ticked in the rail whose last item left
+        the collection is unticked by the rail itself -- and that is a move
+        like any other, so the page comes back with it.
         """
+        state = (self._state_in_force(), self.filters.shown_set())
+        if state != self._filter_state:
+            self._show_all = False
+        self._filter_state = state
         self.collection_proxy.setFilterFixedString(self.filters.search_text())
         self.collection_proxy.set_places(self.sidebar.places())
         self.collection_proxy.set_tiers(self.filters.tiers())
@@ -1424,10 +1536,18 @@ class MainWindow(QMainWindow):
         the filters let through are the same rows, and only their order has
         moved -- so the numbers beside the rail and the chips would come out
         the numbers they already are.
+
+        The reveal goes with the order, though.  The wall opens at its page
+        for a state of the filters *and* an order, and the first page of the
+        new order is not the page the player was reading -- and this signal
+        only ever carries a real move, which is why it needs no remembering
+        of what the state was (unlike :meth:`_filters_changed`, which a poll
+        also reaches).
         """
         self.collection_proxy.set_sort(
             self.filters.sort_key(), self.filters.sort_backwards()
         )
+        self._show_all = False
         self._rebuild_collection()
 
     # -- the advanced search ---------------------------------------------
@@ -1453,7 +1573,7 @@ class MainWindow(QMainWindow):
         read off the same memo the wall draws from and so costs nothing that
         has not already been paid.
         """
-        state = replace(self.filters.current(), places=frozenset(self.sidebar.places()))
+        state = self._state_in_force()
         data = self._game_data()
         offered = CLASSES if data is not None and data.has_classes else ()
         self.advanced.open_for(state, offered, self._stat_vocabulary())
