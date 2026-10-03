@@ -1014,6 +1014,100 @@ def test_putting_back_one_copy_says_the_tab_is_full(stocked):
     assert print_ in win.service.registry.absorbed_fingerprints()
 
 
+def test_a_stranded_item_is_drawn_without_a_way_back(stocked):
+    """The user's request, end to end, and the state it was written for.
+
+    An item put back and then erased by the game's own save is in no file and
+    in neither pane: the tool believes the game has it, and the file says the
+    game does not.  ``Show Stranded Items`` is the only place it can turn up
+    -- as the game's own card, with the way back taken off it, because there
+    is nowhere to send it.  The button counts what it is hiding before
+    anyone clicks it, which is the only way the player would ever know to.
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    win._put_back_one(print_)
+    assert win.stranded_button.text() == "Show Stranded Items", (
+        "the file has the item, so the game has it, so nothing is stranded"
+    )
+
+    # The game's save, from a memory that never had Alpha written into it.
+    write_stash_of(win.service.source, [])
+    win._sync(write=False)
+
+    assert win.stranded_button.text() == "Show Stranded Items (1)"
+    win.stranded_button.click()
+
+    assert win.collection_group.title() == "Stranded items (1)"
+    assert win.grid.count() == 1
+    tile = win.grid.tile(0)
+    assert tile.row.stranded
+    assert tile.row.name == "Alpha"
+    assert tile.findChild(QPushButton, "transfer") is None, (
+        "a way back into a game that has not got the item"
+    )
+    assert tile.findChild(QPushButton, "recover") is not None
+
+
+def test_recovering_makes_the_item_a_normal_member_again(stocked):
+    """What the recover button does, and what it must not do.
+
+    Recovering is the tool changing its own mind, so it is a registry write
+    and nothing else: the stash file is untouched, byte for byte, because the
+    file cannot say whether the game erased this item or a character is
+    carrying it, and a copy written back would be the player's own item twice
+    over.  Afterwards the card is an ordinary one, in the ordinary view, with
+    the ordinary button on it.
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    win._put_back_one(print_)
+    write_stash_of(win.service.source, [])
+    win._sync(write=False)
+    untouched = win.service.source.read_bytes()
+    win.stranded_button.click()
+
+    win.grid.tile(0).findChild(QPushButton, "recover").click()
+
+    assert "recovered Alpha" in win.status.currentMessage(), win.status.currentMessage()
+    assert win.service.source.read_bytes() == untouched, "recovering wrote to the game"
+    assert print_ in win.service.registry.absorbed_fingerprints()
+    assert win.grid.count() == 0, "the card stayed in a view it has left"
+    assert win.collection_group.title() == "Stranded items (0)"
+    assert win.stranded_button.text() == "Show Stranded Items"
+
+    # Back to the collection, where it is now an ordinary card: same item,
+    # and the way back to the game is on it again.
+    win.stranded_button.click()
+    assert win.collection_group.title() == "In the tool (3)"
+    assert win.grid.count() == 3
+    names = [row.name for row in win.grid.rows()]
+    tile = win.grid.tile(names.index("Alpha"))
+    assert not tile.row.stranded
+    assert tile.findChild(QPushButton, "transfer") is not None
+    assert tile.findChild(QPushButton, "recover") is None
+
+
+def test_the_stranded_view_says_what_it_is_for_when_there_is_nothing(stocked):
+    """A player who clicks the button with nothing stranded gets a sentence
+    rather than an empty pane -- the button is otherwise a word with no
+    meaning attached to it."""
+    stocked.stranded_button.click()
+
+    assert stocked.grid.count() == 0
+    empty = stocked.grid.findChild(QLabel, "empty")
+    assert "No stranded items" in empty.text()
+    assert not empty.isHidden()
+
+
 def test_an_item_with_no_placement_of_its_own_is_routed_by_its_kind(
     qapp, tmp_path, game_install, monkeypatch
 ):

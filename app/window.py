@@ -132,6 +132,11 @@ class MainWindow(QMainWindow):
         self.service: ItemService | None = None
         self.watcher: StashWatcher | None = None
         self._sources: list[SaveLocation] = []
+        #: The registry rows no file holds -- what ``Show Stranded Items``
+        #: draws.  Kept from the last refresh rather than asked for per
+        #: redraw, because the redraw happens on every filter change and the
+        #: answer only moves when the file does.
+        self._stranded: list = []
 
         # The game's own data files, which supply the wording of an item's
         # stats.  Named rather than searched for when --game says where; see
@@ -194,6 +199,23 @@ class MainWindow(QMainWindow):
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(lambda: self._sync(write=False))
         bar.addWidget(self.refresh_button)
+
+        # The third state of an item, and the only one with no pane: put back,
+        # then erased by the game's own save, so the tool believes the game
+        # has it and the file says the game does not.  It gets a view of its
+        # own rather than a corner of one of the two lists, because both of
+        # those answer "where is it?" and this is the item where the answer
+        # went wrong.  The count is on the button because the player has no
+        # other way to learn there is anything to look at.
+        self.stranded_button = QPushButton("Show Stranded Items")
+        self.stranded_button.setCheckable(True)
+        self.stranded_button.setToolTip(
+            "Items the tool put back that are in no stash file: the game's\n"
+            "own save erased the write.  Recover one to keep it here --\n"
+            "nothing is written to the game."
+        )
+        self.stranded_button.toggled.connect(self._stranded_toggled)
+        bar.addWidget(self.stranded_button)
 
         bar.addStretch(1)
         return bar
@@ -298,6 +320,7 @@ class MainWindow(QMainWindow):
         self.grid = TileGrid(self._icons())
         self.grid.compare.connect(self._compare_copies)
         self.grid.transfer.connect(self._transfer_row)
+        self.grid.recover.connect(self._recover_row)
         self.grid.set_chosen.connect(self._show_set)
         right.addWidget(self.grid, stretch=1)
 
@@ -485,6 +508,7 @@ class MainWindow(QMainWindow):
         if not self._sources:
             self._set_status("No Torchlight 2 shared stash found on this machine.")
             self.absorb_button.setEnabled(False)
+            self.stranded_button.setEnabled(False)
             return
 
         self.source_box.blockSignals(True)
@@ -649,6 +673,43 @@ class MainWindow(QMainWindow):
             note += f" · backup {backup.name}"
         self._set_status(note)
 
+    # -- the stranded ----------------------------------------------------
+
+    def _stranded_toggled(self) -> None:
+        """Show the stranded items, or stop showing them.
+
+        A redraw of everything rather than a swap of the wall, because the
+        button's count, the box's title and the wall itself all say what the
+        view is, and any one of them left behind would be the screen
+        disagreeing with itself.  It is a click and not a poll, so the rebuild
+        it costs is not the sort this window counts.
+        """
+        self._refresh_views()
+
+    def _recover_row(self, row: TileRow) -> None:
+        """Keep a stranded item in the tool, writing nothing to the game.
+
+        The one act a stranded card offers, and the reason it exists at all:
+        the item is in no file and in no list, and the player is the only one
+        who can say what became of it.  Saying "keep it" makes it an ordinary
+        member of the collection -- which writes nothing, touches no stash,
+        and is the whole of the recovery.  See
+        :meth:`tl2stash.service.ItemService.recover` for why the tool will not
+        do this by itself.
+        """
+        if self.service is None:
+            return
+        recovered = self.service.recover(set(row.members or (row.fingerprint,)))
+        self._refresh_views()
+
+        if recovered:
+            self._set_status(f"recovered {row.name} · it is in the tool to stay")
+        else:
+            # The file moved between the card being drawn and the button being
+            # pressed, and it moved in the player's favour: the game has this
+            # one after all.
+            self._set_status(f"{row.name} is in the shared stash after all")
+
     # -- the copies ------------------------------------------------------
 
     def _compare_copies(self, row: TileRow) -> None:
@@ -770,6 +831,21 @@ class MainWindow(QMainWindow):
         rows = self.service.registry.rows(status=STATUS_ABSORBED)
         fill_collection(self.collection_model, rows, catalog)
 
+        # What no file holds, asked once per refresh and kept: the button
+        # says how many, the view draws them, and the title counts them.
+        # A file that cannot be read answers "nothing" rather than "everything
+        # you ever put back" -- not knowing is not the same as losing, and a
+        # window that said the second would be believed.
+        try:
+            self._stranded = self.service.stranded_rows()
+        except Exception:  # noqa: BLE001
+            self._stranded = []
+        self.stranded_button.setText(
+            f"Show Stranded Items ({len(self._stranded)})"
+            if self._stranded
+            else "Show Stranded Items"
+        )
+
         # The rail describes what is *here*, so its shape comes from the rows
         # and not from the filters -- which is what keeps a row from vanishing
         # out from under the pointer the moment it is ticked.  The grid is
@@ -787,7 +863,14 @@ class MainWindow(QMainWindow):
 
         self._note_game()
         self.stash_group.setTitle(f"In the game ({len(items)})")
-        self.collection_group.setTitle(f"In the tool ({len(rows)})")
+        # The box is named for what is on the wall under it.  In the stranded
+        # view that is not the collection, and a title still counting the
+        # collection over a wall of eight other cards would be the one thing
+        # here that lies.
+        if self.stranded_button.isChecked():
+            self.collection_group.setTitle(f"Stranded items ({len(self._stranded)})")
+        else:
+            self.collection_group.setTitle(f"In the tool ({len(rows)})")
 
     def _rebuild_collection(self) -> None:
         """Draw what the tool holds as the game's own cards.
@@ -796,7 +879,33 @@ class MainWindow(QMainWindow):
         narrow: the grid draws what the filters left and re-implements none of
         them.  Each card is looked up in the memo, so an item is drawn the
         first time it is seen and never again, however many saves go by.
+
+        While ``Show Stranded Items`` is on, the wall is the stranded rows and
+        only they -- drawn straight from the registry, past the proxy, because
+        the filters narrow the *collection* and this is the list that is not
+        it.  One card per row rather than per item: these are items in the
+        state the tool left them in, and every one of them is something the
+        player has to decide about separately.
         """
+        if self.stranded_button.isChecked():
+            self.grid.set_rows(
+                [
+                    TileRow(
+                        fingerprint=row["fingerprint"],
+                        name=row["name"],
+                        members=(row["fingerprint"],),
+                        card=self._card_for(row["fingerprint"]),
+                        stranded=True,
+                    )
+                    for row in self._stranded
+                ],
+                empty=(
+                    "No stranded items.  Everything you have put back is in "
+                    "the shared stash, or has been recovered."
+                ),
+            )
+            return
+
         rows = []
         for row in range(self.collection_proxy.rowCount()):
             index = self.collection_proxy.index(row, 0)

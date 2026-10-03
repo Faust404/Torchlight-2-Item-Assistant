@@ -65,6 +65,7 @@ def row(
     *,
     fingerprint: str = "fp-1",
     members: tuple[str, ...] | None = None,
+    stranded: bool = False,
 ) -> TileRow:
     """A tile's worth of one item, with the fields a test is not about filled."""
     return TileRow(
@@ -72,6 +73,7 @@ def row(
         name=held.name if isinstance(held, Card) else "Broken",
         members=members if members is not None else (fingerprint,),
         card=held,
+        stranded=stranded,
     )
 
 
@@ -214,6 +216,53 @@ def test_a_row_that_changed_is_redrawn_in_place(qapp):
     assert button_label(tile, "transferall") == "Transfer all (2)"
     assert button_label(tile, "compare") == "Compare & Transfer"
     assert tile.is_selected()
+
+
+def test_a_stranded_card_offers_only_the_way_to_keep_it(qapp):
+    """A card with nowhere to go gets the one button that says so.
+
+    Every other card's footer is a way back to the game.  A stranded item has
+    none -- no file holds it -- so what is offered instead is the only true
+    thing left to do with it: keep it.  And that is the whole footer: the
+    count and the comparison are both about copies the game might have, and
+    the game has none of this one.
+    """
+    gone = ItemTile(row(card(), stranded=True))
+
+    assert button_label(gone, "recover") == "Recover Stranded Item"
+    assert button_label(gone, "transfer") is None
+    assert button_label(gone, "transferall") is None
+    assert button_label(gone, "compare") is None
+
+
+def test_the_recover_button_hands_the_tile_s_row_up(qapp):
+    """Like the transfer buttons, and for the same reason: the tile says
+    which row was clicked and the window decides what recovering means."""
+    tile = ItemTile(row(card(), stranded=True))
+    asked = []
+    tile.recover.connect(asked.append)
+
+    tile.findChild(QPushButton, "recover").click()
+
+    assert [r.stranded for r in asked] == [True]
+
+
+def test_a_card_that_becomes_stranded_exchanges_its_footer(qapp):
+    """The same item one save later, when the game's save has erased it.
+
+    Nothing about the card changes -- same fingerprint, same name, same
+    picture -- and everything about what can be done with it does.  So the
+    flag is a field of the row rather than a second kind of tile: the tile
+    that was already drawn for this item is the tile that gets redrawn.
+    """
+    held = row(card())
+    tile = ItemTile(held)
+    assert button_label(tile, "transfer") == "Transfer to Stash"
+
+    tile.set_row(replace(held, stranded=True))
+
+    assert button_label(tile, "transfer") is None
+    assert button_label(tile, "recover") == "Recover Stranded Item"
 
 
 # --------------------------------------------------------------------------

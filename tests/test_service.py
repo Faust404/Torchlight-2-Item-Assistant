@@ -391,6 +391,97 @@ def test_search_narrows_with_every_term(service):
 
 
 # --------------------------------------------------------------------------
+# Stranded items
+# --------------------------------------------------------------------------
+
+
+def test_a_returned_item_the_save_erased_is_stranded(service, stash_path):
+    """The third state, and the one only a save can produce.
+
+    An item put back is in the file, and the tool knows the game has it.  If
+    the game's own save then rewrites the whole stash from memory -- memory
+    that never had the item, because the write landed while it was playing --
+    the file loses it and the tool does not.  Returned, in no file, in
+    neither pane: stranded.  Nothing about the registry says so; the answer
+    is the difference between the two, which is why this is where it is
+    worked out.
+    """
+    service.absorb_all()
+    prints = {row["name"]: row["fingerprint"] for row in service.registry.rows()}
+    service.restore({prints["Beta"]})
+    service.refresh()
+    assert service.stranded_rows() == [], "the file has it -- the game has it"
+
+    # The save the game makes of a stash it never wrote Beta into, and the
+    # next poll that reads it.
+    write_stash_of(stash_path, [])
+    service.refresh()
+
+    assert [row["name"] for row in service.stranded_rows()] == ["Beta"]
+
+
+def test_only_what_was_promised_to_the_game_can_be_stranded(service, stash_path):
+    """Two ways to own something, and neither is stranded.
+
+    An absorbed item is the tool's own and was never written anywhere, and an
+    item that was never taken is still in the file.  Only the item that was
+    handed to the game and is not there now is in neither pane.
+    """
+    assert service.stranded_rows() == [], "nothing has been put back yet"
+
+    service.absorb_all()
+    service.refresh()
+    assert service.stranded_rows() == [], "absorbed items are not stranded"
+
+
+def test_recovering_a_stranded_item_makes_it_a_member_again(service, stash_path):
+    """The whole of the recovery, and the whole of its restraint.
+
+    Recovering decides what the *tool* believes.  The item joins the
+    collection and the file is left exactly as it was -- not re-written, not
+    touched -- because the one thing the file's state cannot tell anyone is
+    whether the game erased this item or a character is carrying it, and
+    writing it back into the stash would be a second copy of the player's own
+    item.
+    """
+    service.absorb_all()
+    print_ = {row["name"]: row["fingerprint"] for row in service.registry.rows()}[
+        "Beta"
+    ]
+    service.restore({print_})
+    write_stash_of(stash_path, [])
+    service.refresh()
+    untouched = stash_path.read_bytes()
+
+    assert service.recover({print_}) == 1
+
+    assert service.registry.get(print_)["status"] == STATUS_ABSORBED
+    assert print_ in service.registry.absorbed_fingerprints()
+    assert service.stranded_rows() == [], "it is still being reported as stranded"
+    assert stash_path.read_bytes() == untouched, "recovering wrote to the game"
+
+
+def test_an_item_the_file_has_is_not_recovered_behind_the_player_s_back(service):
+    """The guard, and what it is for.
+
+    A returned item the file still holds is one the game really does have --
+    the player has only to pick it up, or not.  Marking it ours would put it
+    on the wrong side of the vacuum and the tool would take it back out of
+    the player's stash on the next save, which is a thing nobody asked for.
+    """
+    service.absorb_all()
+    print_ = {row["name"]: row["fingerprint"] for row in service.registry.rows()}[
+        "Beta"
+    ]
+    service.restore({print_})
+
+    assert service.recover({print_}) == 0
+
+    assert service.registry.get(print_)["status"] == STATUS_RETURNED
+    assert [item.fingerprint for item in service.stash_items()] == [print_]
+
+
+# --------------------------------------------------------------------------
 # Where a returned item lands
 # --------------------------------------------------------------------------
 

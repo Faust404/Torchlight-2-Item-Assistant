@@ -92,7 +92,7 @@ _STYLE = STYLE + f"""
    a button on one is the tool's.  Word and outline are the same light, and the
    hover is the one step above it, because the resting state is already light
    and a hover that dimmed would read as the button switching itself off. */
-#compare, #transfer, #transferall {{
+#compare, #transfer, #transferall, #recover {{
     color: {PALE};
     background: transparent;
     border: 1px solid {PALE};
@@ -100,7 +100,7 @@ _STYLE = STYLE + f"""
     padding: 2px 8px;
     font-size: 11px;
 }}
-#compare:hover, #transfer:hover, #transferall:hover {{
+#compare:hover, #transfer:hover, #transferall:hover, #recover:hover {{
     color: {CHALK};
     border-color: {CHALK};
 }}
@@ -129,12 +129,18 @@ class TileRow:
     Nothing here says where the item sat in the game.  The tool holds it, so a
     tab and a slot are a fact about a stash it is no longer in -- and it is
     the game that decides where a restored item lands.
+
+    ``stranded`` is the one item the tool has that has no way back: it was put
+    back, and the game's own save erased the write, so no file holds it -- see
+    :meth:`tl2stash.service.ItemService.stranded_rows`.  It changes what the
+    footer offers, which is why it is a field here and not a flag on the wall.
     """
 
     fingerprint: str
     name: str
     members: tuple[str, ...]
     card: "Card | str"
+    stranded: bool = False
 
     @property
     def copies(self) -> int:
@@ -373,6 +379,9 @@ class ItemTile(CardFrame):
     #: buttons mean the same thing and differ only in what they say they are
     #: sending: one copy, or every copy the card stands for.
     transfer = Signal(object)
+    #: The recover button, with the row it stands for.  Only a stranded card
+    #: has one, and it is the only thing such a card can be asked to do.
+    recover = Signal(object)
 
     #: This is the collection's wall, so the set name on the card is a link:
     #: the set is a thing the tool holds and the window can show it.
@@ -430,11 +439,21 @@ class ItemTile(CardFrame):
         full of buttons would have said twice -- a card with one of something
         has one thing to do with it, and it is the same button in the same
         place either way.
+
+        A stranded item is the exception to all of that, because there is
+        nowhere to send it: no file of the game holds it, so instead of a way
+        back there is a way to keep it, alone on the line and on the left,
+        which is where that ending begins.
         """
         foot = QWidget()
         row = QHBoxLayout(foot)
         row.setContentsMargins(13, 6, 13, 7)
         row.setSpacing(8)
+
+        if self.row.stranded:
+            row.addWidget(self._recover_button())
+            row.addStretch(1)
+            return foot
 
         if self.row.copies > 1:
             row.addWidget(self._transfer_all_button())
@@ -495,6 +514,33 @@ class ItemTile(CardFrame):
         button.clicked.connect(lambda: self.transfer.emit(self.row))
         return button
 
+    def _recover_button(self) -> QPushButton:
+        """The one thing a stranded item can be asked to do: stay here.
+
+        There is no transfer to offer, because there is no copy of this item
+        in the game to transfer it to -- no file holds it.  What went wrong is
+        the *tool's* belief that it did, and this is the button that corrects
+        it: the item becomes an ordinary member of the collection.
+
+        Nothing is written to the game either way.  The state this card is in
+        -- put back, then gone from the file -- is what the game's save leaves
+        behind when it erases a write, and it is also what a character
+        carrying the item leaves behind.  The file cannot tell the two apart,
+        so a tool that wrote the item back in would be duplicating one the
+        player already has.
+        """
+        button = QPushButton("Recover Stranded Item")
+        button.setObjectName("recover")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(
+            "Keep this item in the tool.\n"
+            "No stash file has it: the game's own save may have erased it,\n"
+            "or a character may be carrying it.  Recovering decides only\n"
+            "what the tool believes -- the game is not written to."
+        )
+        button.clicked.connect(lambda: self.recover.emit(self.row))
+        return button
+
     # -- the mouse -------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 -- Qt naming
@@ -526,6 +572,9 @@ class TileGrid(CardWall):
     #: A tile's transfer button, passed on with the tile's row -- one copy or
     #: all of them, the button says which and the row says what they are.
     transfer = Signal(object)
+    #: A tile's recover button, passed on with the tile's row.  Only a stranded
+    #: card has one; what recovering means is the window's to decide.
+    recover = Signal(object)
     #: A tile's set name, passed on with the name that was clicked.  The grid
     #: does not know what a set is or what showing one would mean; the window
     #: does, and this is how it hears about it.
@@ -573,6 +622,7 @@ class TileGrid(CardWall):
                 )
                 tile.compare.connect(self.compare)
                 tile.transfer.connect(self.transfer)
+                tile.recover.connect(self.recover)
                 tile.set_chosen.connect(self.set_chosen)
                 self._pool[row.fingerprint] = tile
             else:

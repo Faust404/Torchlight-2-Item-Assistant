@@ -24,6 +24,7 @@ never has to be faster than the game, only more patient than it.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -309,6 +310,61 @@ class ItemService:
             )
         self.refresh()
         return report
+
+    # -- stranded items --------------------------------------------------
+
+    def stranded_rows(self) -> list[sqlite3.Row]:
+        """The tool's items that no stash file has.
+
+        A ``returned`` row is an item the tool wrote into the stash and handed
+        to the game.  If the current file does not hold it, then it exists
+        nowhere the player can see: the tool says the game has it, the file
+        says the game does not, and neither pane lists it.  That is the state
+        a write made during play ends in -- the game's own save rewrites the
+        whole stash from memory, which never had the item -- and it is worth
+        *finding* rather than only avoiding, because the write looked like it
+        worked.
+
+        The file decides, not the registry's memory of it.  Both an item the
+        game erased and one the player picked up onto a character leave the
+        same trace behind, and nothing short of reading the game's process
+        could tell them apart; see :meth:`recover` for what follows from that.
+
+        Read off the stash already in hand rather than re-read, like
+        :meth:`stash_items` -- every caller is a window that has just
+        refreshed, and the poll makes them very nearly fresh anyway.
+        """
+        present = {item.fingerprint for item in self.stash.items}
+        return [
+            row
+            for row in self.registry.rows(status=STATUS_RETURNED)
+            if row["fingerprint"] not in present
+        ]
+
+    def recover(self, fingerprints: set[str]) -> int:
+        """Take stranded items back into the collection, writing nothing.
+
+        This is the manual half of the stranded state, and it is manual on
+        purpose.  "The game's save erased the write" and "the player took the
+        item onto a character" are the same row, the same bytes and the same
+        absence from the file; a tool that recovered them on its own would
+        bounce back every item the player had successfully taken, and one that
+        wrote them back into the stash on its own would duplicate a real item
+        the player is carrying.  So the tool only ever offers, and this is
+        what accepting it does: the row becomes ``absorbed`` -- an ordinary
+        member of the collection, ours to keep -- and the game is not touched.
+
+        Only items that are stranded *now* are recovered.  An item the file
+        holds is one the game really does have, and its own answer is the
+        Absorb gesture, not this one; anything else in ``fingerprints`` is
+        left exactly as it was.  Returns how many rows moved, which is the
+        number of things the player would see join the collection.
+        """
+        stranded = {row["fingerprint"] for row in self.stranded_rows()}
+        wanted = stranded & set(fingerprints)
+        if not wanted:
+            return 0
+        return self.registry.set_status(wanted, STATUS_ABSORBED)
 
     def tab_for(self, print_: str) -> int:
         """Which tab an item goes in when the tool has no place of its own.
