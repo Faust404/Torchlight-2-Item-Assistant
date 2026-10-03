@@ -280,3 +280,13 @@ Nothing in the suite writes to a real save — the archive tests copy first.
 
 Python 3.10+. `PySide6` for the window, `pytest` for the tests — see
 `requirements.txt`.
+
+## Licence
+
+BSD 3-Clause — see [LICENSE](LICENSE), which is the same licence FNIStash
+carries. The save-format layer in `tl2stash/` is a port of it, so that
+licence's copyright notice travels with this one, as its terms require.
+
+The window sets its text in Bitter, which travels in `app/fonts/` under its
+own licence (`app/fonts/OFL.txt`) — the SIL Open Font License, not the one
+above.
