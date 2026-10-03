@@ -284,8 +284,14 @@ Python 3.10+. `PySide6` for the window, `pytest` for the tests — see
 ## Licence
 
 BSD 3-Clause — see [LICENSE](LICENSE), which is the same licence FNIStash
-carries. The save-format layer in `tl2stash/` is a port of it, so that
-licence's copyright notice travels with this one, as its terms require.
+carries. The save-format layer in `tl2stash/` is a port of FNIStash
+(Daniel Austin, 2013), so its copyright notice sits in that file beside this
+project's own, which is what the licence's first two conditions ask for.
+
+The file holds the licence and nothing else, deliberately: GitHub reads a
+licence file to work out which one it is, and attribution prose among the
+terms is what makes it give up and say "Other". The sentences that were there
+are these ones.
 
 The window sets its text in Bitter, which travels in `app/fonts/` under its
 own licence (`app/fonts/OFL.txt`) — the SIL Open Font License, not the one
