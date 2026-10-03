@@ -1,0 +1,9 @@
+# What the release workflow installs: the tool, plus the freezer.
+#
+# PyInstaller is pinned to the version the executable has actually been built
+# and run with.  It is the one dependency whose behaviour is a *file*: a new
+# major has changed what a build writes, and a release is a bad place to find
+# that out.  Moving this pin is a change to make on purpose, with a build and
+# a launch on the other side of it.
+-r requirements.txt
+pyinstaller==6.22.3

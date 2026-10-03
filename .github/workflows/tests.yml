@@ -1,0 +1,32 @@
+name: tests
+
+# Every push to the branch the releases come from, and every pull request.
+# The suite is the only thing standing between a change and a player's save
+# file, so it runs on the runner the release is built on -- the same Python,
+# the same PySide6, the same Windows -- rather than on whatever a contributor
+# happens to have.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: install
+        run: pip install -r requirements.txt
+
+      # Tests that need a Torchlight 2 install, or a save file, skip
+      # themselves on a runner that has neither -- which is all of them.  The
+      # ones that run are the format, the registry, the archive and the
+      # window, drawn on Qt's offscreen platform.
+      - name: the suite
+        run: python -m pytest tests/ -q

@@ -17,7 +17,8 @@ __pycache__/
 .venv/
 venv/
 
-# PyInstaller
+# PyInstaller's working folders.  Its spec files are *not* ignored even
+# though it writes them: the spec is source -- it is how the executable is
+# spelled -- and it is committed beside the code it freezes.
 build/
 dist/
-*.spec

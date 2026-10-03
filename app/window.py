@@ -66,6 +66,7 @@ from .models import (
     fill_stash,
     new_model,
 )
+from . import paths
 from .settings import Settings
 from .sidebar import SidePanel
 from .tiles import TileGrid, TileRow
@@ -195,12 +196,12 @@ class MainWindow(QMainWindow):
         # --db asks for.  Left out, each stash gets its own file in ``db_dir``
         # -- the default, because a player with both a vanilla and a modded
         # stash has two separate stashes, and pooling them would make "put
-        # this back" a question with two possible answers.
+        # this back" a question with two possible answers.  Left out, the
+        # folder is the tool's own: ``var/`` from a checkout, the player's
+        # profile from a packaged executable -- see :mod:`app.paths` for why
+        # the two are not the same folder.
         self.db_path = Path(db_path) if db_path is not None else None
-        self.db_dir = (
-            Path(db_dir) if db_dir is not None
-            else Path(__file__).resolve().parent.parent / "var"
-        )
+        self.db_dir = Path(db_dir) if db_dir is not None else paths.data_dir()
         #: The choices remembered between runs -- see :mod:`app.settings`.
         #: Built here because where the file lives is decided by the two
         #: lines above: beside the registries, or beside the one database.
@@ -239,12 +240,13 @@ class MainWindow(QMainWindow):
     def _settings_path(self) -> Path:
         """Where the tool's remembered choices live.
 
-        Beside the registries, which is the tool's own folder -- the one the
-        packaged build will put in the player's profile -- or beside the one
-        database when ``--db`` names it, so that a player keeping their
-        database somewhere keeps its settings with it.  Nothing else in the
-        window writes outside that folder, and a test that hands the window a
-        ``tmp_path`` is owed the same promise by this file too.
+        Beside the registries, which is the tool's own folder in both shapes
+        of the tool -- ``var/`` from a checkout, the player's profile from a
+        packaged executable, the choice :mod:`app.paths` makes -- or beside
+        the one database when ``--db`` names it, so that a player keeping
+        their database somewhere keeps its settings with it.  Nothing else in
+        the window writes outside that folder, and a test that hands the
+        window a ``tmp_path`` is owed the same promise by this file too.
         """
         if self.db_path is not None:
             return self.db_path.with_name("settings.json")

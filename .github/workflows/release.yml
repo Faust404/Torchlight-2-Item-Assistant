@@ -1,0 +1,99 @@
+name: release
+
+# Pushing a tag is the whole of releasing.  The version the tag names has to
+# be the version in the code -- checked below, before anything is built -- and
+# the executable lands on the release page under Releases, which is where a
+# player downloads it from.  Nothing here is published until someone pushes a
+# tag on purpose.
+on:
+  push:
+    tags: ["v*"]
+
+# gh release create writes to the repository's releases, and needs to be told
+# it may: the token every run gets is read-only without this.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      # Two copies of a version are two places to forget, so the build reads
+      # the version out of the code and refuses a tag that disagrees.  A
+      # release whose tag and whose exe say different things is a release
+      # nobody can support afterwards.
+      - name: the tag and the code agree on the version
+        shell: pwsh
+        run: |
+          $version = python -c "from app.version import __version__; print(__version__)"
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -ne "v$version") {
+            throw "the tag $tag does not match app/version.py ($version)"
+          }
+
+      - name: install
+        run: pip install -r requirements-build.txt
+
+      # Before the build, not after: a release that fails its own suite should
+      # not exist at all.  The skips are the tests that need a Torchlight 2
+      # install or a real save file, which a runner has neither of.
+      - name: the suite
+        run: python -m pytest tests/ -q
+
+      - name: build the executable
+        run: python -m PyInstaller --noconfirm Torchlight2ItemAssistant.spec
+
+      # Two smoke tests, because a bundle that is broken in the way a build
+      # gets broken -- a missing module, an entry point that cannot start --
+      # fails in ways a build log does not show.  The first needs nothing but
+      # the process; the second starts the whole thing on Qt's offscreen
+      # platform and checks that it is still running when the window would be
+      # up, which is as far as a machine with no display can go.
+      - name: the executable answers
+        shell: pwsh
+        run: |
+          $out = & dist/Torchlight2ItemAssistant.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "the executable exited $LASTEXITCODE" }
+          if ($out -notmatch '^Torchlight 2 Item Assistant \d+\.\d+\.\d+$') {
+            throw "unexpected answer: $out"
+          }
+          Write-Host $out
+
+      - name: the executable starts
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process dist/Torchlight2ItemAssistant.exe -PassThru
+          Start-Sleep -Seconds 25
+          $running = @(Get-Process Torchlight2ItemAssistant -ErrorAction SilentlyContinue)
+          if ($p.HasExited -or $running.Count -eq 0) {
+            throw "the executable is not running after 25 seconds"
+          }
+          $running | ForEach-Object { $_.Kill() }
+
+      - name: checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/Torchlight2ItemAssistant.exe -Algorithm SHA256).Hash
+          "$hash  Torchlight2ItemAssistant.exe" |
+            Out-File -Encoding ascii dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            dist/Torchlight2ItemAssistant.exe `
+            dist/SHA256SUMS.txt `
+            --title "Torchlight 2 Item Assistant $env:GITHUB_REF_NAME" `
+            --generate-notes

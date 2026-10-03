@@ -6,6 +6,28 @@ run out of room.
 Drop items into your shared stash in game, and the tool takes them out of the
 save file and into its own database.
 
+## Download
+
+The [Releases](../../releases) page carries a prebuilt
+`Torchlight2ItemAssistant.exe` for Windows: one file, nothing to install, no
+Python needed. Put it wherever you like and run it.
+
+Windows will warn you the first time ("Windows protected your PC"), because
+the file is not code-signed — a certificate is an annual cost this tool does
+not carry. *More info* → *Run anyway* is the way past it. `SHA256SUMS.txt` sits
+beside the download for anyone who wants to check the file arrived whole:
+
+    Get-FileHash .\Torchlight2ItemAssistant.exe -Algorithm SHA256
+
+The tool keeps its own files in `%LOCALAPPDATA%\Torchlight2ItemAssistant` —
+one database per stash, plus the settings — and that folder, not the
+executable, is the thing to back up. It is deliberately *not* beside the
+executable: the folder you download a program into is often one a program may
+not write to, and the tool's database is sometimes the only copy of an item.
+Set `TL2IA_DATA` to that folder's path to keep it somewhere else.
+
+To build it yourself, see [Building the executable](#building-the-executable).
+
 ## Status
 
 | piece | state |
@@ -21,7 +43,7 @@ save file and into its own database.
 | checked against an independent item database | 17 of 30 match line for line; all 13 differences accounted for |
 | desktop GUI (PySide6) | done |
 | the item card, drawn as the tl2-db site draws it | done — tier ink, game art cut from the PAK, affix lines in the game's green |
-| packaging to `.exe` (PyInstaller) | not started |
+| packaging to `.exe` (PyInstaller) | done — one file, no console; built and attached to Releases by CI on a tag |
 
 ## How it works
 
@@ -64,13 +86,20 @@ slot.
       __main__.py  entry point: python -m app
       window.py    the main window
       models.py    the two tables' models
+      paths.py     where the tool's own folders are, source run or frozen
+      version.py   the version, read by the build and by --version
       fonts/       Bitter, and the licence it travels under
+      icon.ico     the icon, drawn by tools/make_icon.py
+    tl2ia.py         entry script the executable is built from
+    Torchlight2ItemAssistant.spec  how the executable is built
+    .github/workflows/  the suite on every push, a release on every tag
     tools/
       dump_stash.py   validate the crypto and list a stash's contents
       scan.py         scan stashes into the registry
       unstash.py      take items out of a stash
       probe_item.py   field-by-field trace of one item (format debugging)
       split_registry.py  one database per save file, run once
+      make_icon.py    draw app/icon.ico at every size Windows asks for
     tests/
 
 ## Usage
@@ -88,12 +117,24 @@ slot.
 
 `unstash.py` writes only with `--yes`, and always copies the file aside first.
 
+### Building the executable
+
+    pip install -r requirements-build.txt
+    python -m PyInstaller --noconfirm Torchlight2ItemAssistant.spec
+
+That writes `dist/Torchlight2ItemAssistant.exe`: one file, no console, the
+icon and the version stamp in it. Pushing a tag of the form `v0.1.0` builds
+the same thing on CI, runs the suite first, and puts the exe and its checksum
+on the Releases page — the tag must match `__version__` in `app/version.py`,
+which the workflow checks before it builds.
+
 In the window, the left panel is the save file and the right one is the tool.
 Put things in the shared stash; on the game's next save they leave the file and
 appear on the right, and each card shows the stats the game would show.
 **Transfer to Stash** on a card returns it to the game, where it stays until
-you ask for it back. Each save file gets its own database under `var/`, so a
-modded stash and a vanilla one never mix.
+you ask for it back. Each save file gets its own database — under `var/` from a
+checkout, under `%LOCALAPPDATA%\Torchlight2ItemAssistant` from the executable —
+so a modded stash and a vanilla one never mix.
 
 The game is found by itself when it is installed. Without it the tool still
 stores and returns items exactly the same; only the wording is missing, and a

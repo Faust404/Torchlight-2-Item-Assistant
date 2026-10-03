@@ -12,11 +12,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-VAR_DIR = Path(__file__).resolve().parent.parent / "var"
+from . import paths
+from .version import __version__
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv and argv[0] in ("-V", "--version"):
+        print(f"Torchlight 2 Item Assistant {__version__}")
+        return 0
 
     try:
         from PySide6.QtWidgets import QApplication
@@ -51,9 +56,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"\n"
                 f"  --save=PATH  open this stash file instead of the one being played\n"
                 f"  --db=PATH    store every stash in one database (default: one\n"
-                f"               file per stash under {VAR_DIR})\n"
+                f"               file per stash under {paths.data_dir()})\n"
                 f"  --game=PATH  read the game's data files from this install, for\n"
-                f"               item stats; the default is to find them"
+                f"               item stats; the default is to find them\n"
+                f"\n"
+                f"  -V, --version  print the version and exit\n"
+                f"\n"
+                f"  TL2IA_DATA=PATH  move the tool's own folder, default above"
             )
             return 0
         else:
@@ -62,6 +71,16 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Torchlight 2 Item Assistant")
+
+    # The icon on the taskbar and in the title bar, which for a downloaded
+    # executable is the same face as its file in Explorer -- the one the spec
+    # stamps into the exe.  Missing is not an error: a tool drawn without an
+    # icon is the tool as it was before there was one.
+    from PySide6.QtGui import QIcon
+
+    icon = Path(__file__).resolve().parent / "icon.ico"
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
 
     # Dark, before the window exists: a style or a palette set after a widget
     # is built does not reach what is already on screen, and this window is

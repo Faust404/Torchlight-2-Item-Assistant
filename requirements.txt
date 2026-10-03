@@ -1,5 +1,9 @@
 # Runtime
-PySide6>=6.6          # desktop GUI
+# PySide6 is pinned rather than floored: the theme tests measure what it
+# draws -- button sizes, a dialog's own geometry -- and a Qt update is a
+# change to those numbers, so the version the tests pass against is the
+# version a release is built from.
+PySide6==6.11.2       # desktop GUI
 
 # Development
 pytest>=7.0
