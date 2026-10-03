@@ -40,6 +40,7 @@ from tl2stash.stash import read_stash_file  # noqa: E402
 from tl2stash.tooltip import (  # noqa: E402
     PERMANENT,
     _added_damage_lines,
+    _as_minutes,
     _effect_lines,
     _set_ladder,
     _substitute,
@@ -210,11 +211,16 @@ def test_a_precision_of_two_keeps_two_digits():
 
 
 def test_each_hole_gets_the_value_it_names():
-    """One template, every tag, so the mapping is readable in one place."""
+    """One template, every tag, so the mapping is readable in one place.
+
+    ``[VALUE1ASDURATION]`` is the one hole whose unit is not the template's
+    own: it is a length of time in minutes, and the 300 in the first value is
+    the ``5 min.`` a Warsnout's line reads.
+    """
     eff = effect(
         "ANY",
         value=10.0,
-        values=(1.0, 2.0, 3.0, 4.0, 5.0),
+        values=(300.0, 2.0, 3.0, 4.0, 5.0),
         damage_type=0x02,
         duration=5.0,
     )
@@ -227,8 +233,22 @@ def test_each_hole_gets_the_value_it_names():
         value=10.0,
     )
     assert got == (
-        "10|1|2|3|4|5|3|5 sec.|Fire|Fireball III|1 sec."
+        "10|300|2|3|4|5|3|5 sec.|Fire|Fireball III|5 min."
     )
+
+
+def test_a_length_the_game_states_in_seconds_is_shown_in_minutes():
+    """The tag's own records hold seconds; the game's lines say minutes.
+
+    The Warsnout's transform record holds 300 and the game's own line for it
+    reads ``for 5 min.``; Big Warsnout's holds 900 and reads ``15 min.``  All
+    28 transform lines the reference publishes are minutes, so reading the
+    number as seconds gave ``300 sec.``, which is not a length of time the
+    game writes anywhere.
+    """
+    assert _as_minutes(300.0, 2) == "5 min."
+    assert _as_minutes(900.0, 2) == "15 min."
+    assert _as_minutes(180.0, 2) == "3 min."
 
 
 def test_value_over_time_rounds_the_rate_before_multiplying():

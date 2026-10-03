@@ -191,6 +191,21 @@ def _as_duration(seconds: float, precision: int) -> str:
     return f"{format_value(seconds, precision)} sec."
 
 
+def _as_minutes(seconds: float, precision: int) -> str:
+    """A length of time the game writes in minutes: ``5 min.``, not ``300 sec.``.
+
+    What it is written on is ``[VALUE1ASDURATION]``, whose records hold
+    *seconds* -- 300 and 900 on the two Warsnouts -- while the game's own lines
+    for them read ``for 5 min.`` and ``for 15 min.``  All 28 transform lines
+    the reference database publishes are minutes, and not one is seconds.  The
+    effect asks for two decimals, which a length in whole minutes never needs
+    and one in minutes-and-a-bit always does.  Both effects that use the tag
+    are given this wording: only the ``TRANSFORM`` family could be measured,
+    and no summon line exists anywhere to measure the other against.
+    """
+    return f"{format_value(seconds / 60.0, precision)} min."
+
+
 def _augment_blocks(item, data, properties: list[str]) -> tuple[Augment, ...]:
     """What the item's task would grant, unless it has already granted it.
 
@@ -286,8 +301,8 @@ def _substitute(
             return name or "?"
         if tag == "VALUE1ASDURATION":
             # The first value, written as a length of time rather than as a
-            # number: '5 seconds', not '5'.
-            return _as_duration(_as_float(values[0]), precision) if values else "?"
+            # number -- and in minutes: see _as_minutes for why.
+            return _as_minutes(_as_float(values[0]), precision) if values else "?"
         if tag == "VALUE3AND4":
             return at(2)
         if tag.startswith("VALUE") and tag[5:].isdigit():
