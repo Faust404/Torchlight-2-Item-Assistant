@@ -69,12 +69,14 @@ from tl2stash.card import (  # noqa: E402
     Card,
     Rung,
 )
-from tl2stash.icons import ELEMENT_MARKS  # noqa: E402
+from tl2stash.dat import VAR_DISPLAY_NAME  # noqa: E402
 from tl2stash.gamedata import Requirements  # noqa: E402
+from tl2stash.icons import ELEMENT_MARKS  # noqa: E402
 from tl2stash.tooltip import build  # noqa: E402
 
 from test_dat import needs_game, real_game  # noqa: E402
 from test_gamedata import _bashdrill  # noqa: E402
+from test_tooltip import item  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -272,6 +274,28 @@ def test_a_stack_says_how_many_it_is_before_the_rest_of_the_corner(qapp):
         "Level 45",
         "1 Socket",
     ]
+
+
+def test_a_class_item_wears_its_class_last_in_the_corner(qapp):
+    """``Berserker Only`` -- the reference database's own pill, and its place.
+
+    The Harbinger Helmet is the item that asked for this: a hard restriction
+    on who may wear it, drawn in the corner rather than among the requirement
+    chips at the foot of the card, where it would read as a third way in.
+    The word is ``Only`` for the same reason, and the pill comes last because
+    the corner reads level, sockets, class on the reference's card too.
+
+    Nothing is drawn for the 5,494 items that name no class, which is nearly
+    every card on the wall.
+    """
+    assert texts(ItemCard(card(sockets=0, cls="Berserker")), "pill") == [
+        "Berserker Only"
+    ]
+
+    drawn = ItemCard(card(level=99, sockets=1, cls="Berserker"))
+    assert texts(drawn, "pill") == ["Level 99", "1 Socket", "Berserker Only"]
+
+    assert texts(ItemCard(card(sockets=0, cls=None)), "pill") == []
 
 
 # --------------------------------------------------------------------------
@@ -655,6 +679,34 @@ def test_a_real_item_s_requirements_are_drawn_from_its_own_file(qapp, real_game)
         "rchip",
         "flav",
     ]
+
+
+@needs_game
+def test_the_harbinger_helmet_is_drawn_berserker_only(qapp, real_game):
+    """The item the user named, from the game's file to the drawn corner.
+
+    Found by the name a player reads rather than by a guid, because the guid
+    is a number nobody can check at a glance and the name is what was asked
+    about.  The word is checked twice -- what the tool read out of the file,
+    and what the card drew -- so a class that never left the archive and one
+    that reached the card and stopped before the window both fail here.
+    """
+    helmet = next(
+        (
+            data
+            for data in real_game._item_files.values()
+            if data.root.text(VAR_DISPLAY_NAME) == "Harbinger Helmet"
+        ),
+        None,
+    )
+    if helmet is None:  # pragma: no cover -- the shipped archive has it
+        pytest.skip("this install has no Harbinger Helmet")
+    guid = next(g for g, data in real_game._item_guids.items() if data is helmet)
+
+    card = build(item(guid=guid), real_game)
+    assert card.cls == "Berserker"
+
+    assert texts(ItemCard(card), "pill")[-1] == "Berserker Only"
 
 
 def test_an_affix_line_is_green_and_a_damage_line_is_not(qapp):

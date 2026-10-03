@@ -863,17 +863,27 @@ class ItemCard(QFrame):
     def _pills(self, card: Card) -> list[str]:
         """The corner: what the item asks of the player and what it holds.
 
-        The stack size leads, because it is the one of the three that changes
+        The stack size leads, because it is the one of the four that changes
         how the card is *read*: ``×20`` is twenty potions and not one, and the
-        level and the sockets under it are the level and the sockets of each of
-        them -- the pile is one item, which is why the count is a pill here and
-        not a line of the body with the stats.
+        level, the sockets and the class under it are the level, the sockets
+        and the class of each of them -- the pile is one item, which is why
+        the count is a pill here and not a line of the body with the stats.
 
         A multiplication sign rather than the word for it, because the corner
         already reads ``Level 45`` and ``3 Sockets``: the sign is the one mark
         that says how many of a thing there are without being taken for another
         stat of the one item.  A stack of one draws nothing, like the sockets
         of an item with none -- nearly every card is a stack of one.
+
+        The class gate is last and is the reference database's own wording,
+        ``Berserker Only``.  It is in the corner rather than among the
+        requirement chips at the foot of the card because it is not one of
+        them: the two branches down there are ways in, and this is a wall in
+        front of both -- an item only a Berserker may wear cannot be reached by
+        meeting its Strength and Dexterity however high they are.  Which is
+        also why the word is ``Only`` and not a chip reading ``Class`` beside
+        the others, and why nearly every card has no pill here at all: 5,494
+        of the game's 6,262 items name no class.
         """
         pills = []
         if card.quantity > 1:
@@ -883,6 +893,8 @@ class ItemCard(QFrame):
         if card.sockets:
             word = "Socket" if card.sockets == 1 else "Sockets"
             pills.append(f"{card.sockets} {word}")
+        if card.cls:
+            pills.append(f"{card.cls} Only")
         return pills
 
     # -- the body --------------------------------------------------------

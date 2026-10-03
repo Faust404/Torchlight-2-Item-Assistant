@@ -744,6 +744,14 @@ def build(item: "Item", data: "GameData | None" = None, host: str | None = None)
             else data.requirements_for(item)
         )
 
+    # Which class may use the item at all, off its own file.  Not part of the
+    # requirements above and deliberately not folded into them: a character
+    # reaches one of those two branches or they do not, and this one is
+    # reached by nobody but the class named -- so the card draws it in the
+    # corner rather than as a third chip among the ways in.  See
+    # :class:`~tl2stash.card.Card`.
+    cls = data.class_for(item) if data is not None else None
+
     return Card(
         name=item.display_name,
         tier=TIER_KEYS.get(tier_word, TIER_NONE),
@@ -761,6 +769,7 @@ def build(item: "Item", data: "GameData | None" = None, host: str | None = None)
         set_ladder=ladder,
         flavor=flavor or None,
         requires=requires,
+        cls=cls,
         weapon_lead=lead,
         augments=augments,
         damage=damage,

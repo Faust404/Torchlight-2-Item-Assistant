@@ -34,7 +34,7 @@ from tl2stash.card import (  # noqa: E402
     lines,
     requirements_lines,
 )
-from tl2stash.gamedata import Requirements  # noqa: E402
+from tl2stash.gamedata import GameData, Requirements  # noqa: E402
 from tl2stash.item import AddedDamage  # noqa: E402
 from tl2stash.tooltip import build, render  # noqa: E402
 
@@ -43,6 +43,7 @@ from test_gamedata import (  # noqa: E402
     _a_set_item,
     _an_item_of_tier,
     _bashdrill,
+    install,
 )
 from test_tooltip import effect, item, word  # noqa: E402
 
@@ -209,7 +210,7 @@ def test_without_the_game_there_is_a_card_with_nothing_in_the_corner():
     """``data=None`` is the path a machine without the game takes.
 
     The lines are already known to survive it; what must not happen is a tier,
-    a kind or an icon being invented to fill the space.
+    a kind, an icon or a class being invented to fill the space.
     """
     card = build(item("Test Item"), None)
 
@@ -218,6 +219,7 @@ def test_without_the_game_there_is_a_card_with_nothing_in_the_corner():
     assert card.type_name == ""
     assert card.icon is None
     assert card.flavor is None
+    assert card.cls is None
     assert lines(card) == ["Test Item"]
 
 
@@ -532,6 +534,53 @@ def test_a_real_item_s_gate_reaches_the_card(real_game):
         "Strength 81",
         "Dexterity 40",
     ]
+
+
+# --------------------------------------------------------------------------
+# The class gate, which is not one of the ways in
+# --------------------------------------------------------------------------
+#
+# The restriction is the game's own, stated in the one place it states it -- an
+# unnamed child node of the item's file -- and the reading of it is
+# ``GameData.class_for``'s business, pinned in ``tests/test_gamedata.py``.
+# What is pinned here is the *card*: that the answer travels onto it, and that
+# it stays in the corner rather than joining the requirement chips, which is
+# the reference database's own arrangement and its own warning -- written
+# among the ways in, ``Berserker Only`` would say a character could reach the
+# item by meeting the numbers beside it, which is the opposite of a hard gate.
+
+
+def test_the_class_the_item_s_own_file_names_reaches_the_card(tmp_path):
+    """``build`` asks the archive and the card keeps the answer.
+
+    The synthetic install's ``Test Ember`` states ``EMBERMAGE`` on a child of
+    its node and ``Test Item``-shaped 0x7001 states no class at all, which is
+    5,494 of the game's 6,262 files.  A class that stopped at the entry would
+    be a corner the window can never draw, and ``None`` is not a failure but
+    the ordinary answer for most of the collection.
+    """
+    game = GameData.load(install(tmp_path), augments={})
+
+    assert build(item(guid=0x700B), game).cls == "Embermage"
+    assert build(item(guid=0x7001), game).cls is None
+
+
+def test_the_class_gate_is_a_corner_fact_and_not_a_way_in(tmp_path):
+    """Where the class is *not*: among the requirements, or in the flat card.
+
+    The two branches a card can offer are ways in -- the level, or the
+    attributes -- and the class is a wall in front of both, so it is drawn in
+    the corner and nowhere else.  A flat card carrying it, or a requirement
+    chip reading ``Embermage``, would state the opposite of what the gate
+    means; the reference database checks its own detail view for exactly this,
+    reading the corner and the requirements row apart.
+    """
+    game = GameData.load(install(tmp_path), augments={})
+    card = build(item(guid=0x700B), game)
+
+    assert card.cls == "Embermage"
+    assert not any("Embermage" in line for line in lines(card))
+    assert not any("Embermage" in line for line in requirements_lines(card))
 
 
 # --------------------------------------------------------------------------

@@ -283,6 +283,18 @@ class Card:
     ``requires`` is ``None`` there and the level is what the card falls back
     to showing.
 
+    ``cls`` is the one class the game restricts the item to -- ``Berserker``
+    on the Harbinger Helmet -- and ``None`` for the 5,494 of the game's 6,262
+    item files that name no class, which is most of the collection.  It is a
+    *hard* gate and not another way in: a character meets one of the two
+    branches in ``requires`` or they do not, and this is met by nobody but one
+    class, however the branches below come out.  That is why the card draws it
+    in the corner as ``Berserker Only`` and not among the requirement chips,
+    where it would read as a third alternative a non-Berserker could reach by
+    satisfying the lines beside it -- the reference database's own reason for
+    the same placement.  ``None`` is also the answer for an item whose file
+    the archive cannot reach, which is what a mod's item is.
+
     ``damage`` and ``armor`` are the same numbers the two blocks above are
     written from, kept apart from the sentence they are written into: one
     ``(element, low, high)`` per part, in the game's own order of elements, and
@@ -313,6 +325,7 @@ class Card:
     # with: a dataclass will not take a defaulted field before a required one.
     quantity: int = 1
     requires: Requirements | None = None
+    cls: str | None = None
     weapon_lead: tuple[str, ...] = ()
     augments: tuple[Augment, ...] = ()
     damage: tuple[tuple[str, int, int], ...] = ()
