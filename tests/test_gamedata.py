@@ -751,11 +751,20 @@ def test_effects_are_found_by_position_too(game):
 
 
 def test_a_description_is_chosen_by_the_type_the_item_asked_for(game):
-    """Which of the four an effect uses is decided by the item, not the data."""
+    """Which of the four an effect uses is decided by the item, not the data.
+
+    The two middle types are the over-time wording.  That 1 is one of them was
+    measured against the reference database's own lines over the collection on
+    this machine -- 48 of its records have a type-1 effect whose two texts
+    differ in more than a sign, and all 48 agree with the over-time text --
+    and it is what a resistance potion's ``for 300 sec.`` hangs on.
+    """
     node = game.by_name("MELEEDAMAGEBONUS")
 
     assert game.effect_template(node, 0x00) == "+[VALUE] Melee weapon damage bonus"
-    assert game.effect_template(node, 0x01) == "+[VALUE] Melee weapon damage bonus"
+    assert game.effect_template(node, 0x01) == (
+        "+[VALUE] Melee weapon damage bonus for [DURATION]"
+    )
     assert game.effect_template(node, 0x02) == (
         "+[VALUE] Melee weapon damage bonus for [DURATION]"
     )

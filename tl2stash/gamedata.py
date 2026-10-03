@@ -393,12 +393,34 @@ SHARED_STASH = "SHARED_STASH_"
 #: variants are the ones whose text mentions ``[DURATION]``; the others
 #: describe an effect that is simply always on.
 #:
+#: 0 is the always-on wording and 1 is the over-time one, which was measured
+#: rather than guessed.  The reference database prints a line per effect with
+#: the game's own wording in it, so over this machine's collection each record
+#: can be asked which of the node's texts its line agrees with: of the 48
+#: records of type 1 whose two texts differ in more than a sign, every one
+#: matches the over-time text and not one matches the always-on text, while
+#: type 0 does the exact reverse over 133.  Both readings agree wherever the
+#: two texts are the same string, so the effects that first suggested type 1
+#: was always-on -- the whole -900-second family, LEARN SKILL and TRANSFORM and
+#: RESPEC among them -- never said anything either way: their GOODDES and
+#: GOODDESOT are the same words.  Reading type 1 as always-on cost a resistance
+#: potion its ``for 300 sec.`` and turned a fish's health restored *over* two
+#: seconds into health restored *per* second, at twice the number the game had
+#: written down.
+#:
+#: 2 also carries a duration wherever it can be checked, and on the 25 records
+#: that have one its text agrees with both over-time variants at once -- every
+#: one of them is an effect like STUN or FREEZE, whose good and bad wordings
+#: come out the same sentence -- so which of the two it asks for cannot be
+#: measured here and it is left as it was found.  3 and 4 are unattested
+#: entirely; they keep the penalty texts they were given.
+#:
 #: The fallback is because the pair is not always complete -- 208 of the 239
 #: effects carry GOODDES and 198 carry BADDESOT -- and an always-on effect
 #: with no duration in its wording is a far better thing to show than nothing.
 TEMPLATE_FOR_TYPE = {
     0x00: (VAR_GOODDES, VAR_GOODDESOT),
-    0x01: (VAR_GOODDES, VAR_GOODDESOT),
+    0x01: (VAR_GOODDESOT, VAR_GOODDES),
     0x02: (VAR_GOODDESOT, VAR_GOODDES),
     0x03: (VAR_BADDES, VAR_BADDESOT),
     0x04: (VAR_BADDESOT, VAR_BADDES),
