@@ -147,15 +147,14 @@ class Entry:
     none of them is drawn anywhere: the number of sockets the item has, the
     attributes it asks of a character as ``(name, value)`` pairs in the game's
     own order, and the one class that may use it.  They are on the entry rather
-    than worked out at the row because they all come down the same two lookups
-    the tier and the kind already come down -- the item's file, and the
-    reference database's -- and doing them twice per row per poll is exactly
-    what this class exists to stop.
+    than worked out at the row because they all come down the same lookups the
+    tier and the kind already come down -- the item's file, and the tables
+    built from the archive once at load -- and doing them twice per row per
+    poll is exactly what this class exists to stop.
 
     ``cls`` is ``None`` for an item no class is restricted to, which is most of
-    them, *and* for every item on a machine with no reference database: an item
-    naming no class is one every class may use, so the filter that reads it
-    passes such an item whatever is ticked.  See
+    them: an item naming no class is one every class may use, so the filter
+    that reads it passes such an item whatever is ticked.  See
     :meth:`~tl2stash.gamedata.GameData.has_classes` for the other question --
     whether there are restrictions to filter *by* at all.
     """

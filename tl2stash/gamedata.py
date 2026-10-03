@@ -233,6 +233,17 @@ REQUIREMENT_FIELDS = (
     ("DEFENSE", VAR_DEFENSE_REQUIRED, "Vitality"),
 )
 
+#: The four classes, under the words the game's own item files write them in.
+#: The Engineer is ``RAILMAN`` there -- an internal name from before the class
+#: was called what it is called, which the shipped files never corrected and
+#: nothing in the archive explains.  The other three spell themselves.
+CLASS_WORDS = {
+    "EMBERMAGE": "Embermage",
+    "BERSERKER": "Berserker",
+    "OUTLANDER": "Outlander",
+    "RAILMAN": "Engineer",
+}
+
 #: The tiers that read the NORMAL level curve -- the ones with no rarity of
 #: their own for the game to name.  ``Normal`` is the game's word for a plain
 #: item; the other three are what :func:`read_unit_type` calls a file that
@@ -826,7 +837,7 @@ class GameData:
         socket_targets: dict[str, str],
         require_curves: dict[str, dict[int, float]] | None = None,
         augments: dict[str, tuple[Augment, ...]] | None = None,
-        classes: dict[str, str] | None = None,
+        classes: dict[int, str] | None = None,
     ) -> None:
         self.install = install
         self._by_name = by_name
@@ -864,7 +875,7 @@ class GameData:
         cls,
         install: str | Path,
         augments: dict[str, tuple[Augment, ...]] | None = None,
-        classes: dict[str, str] | None = None,
+        classes: dict[int, str] | None = None,
     ) -> "GameData":
         """Read every file in :data:`WANTED` out of the archive.
 
@@ -874,11 +885,13 @@ class GameData:
         the usual places; ``{}`` says there is none, which is what a caller
         that wants a card drawn from the game's own files alone passes.
 
-        ``classes`` is the second thing its file holds that the archive does
-        not: the one class that may use an item, on the 767 items that have
-        one.  The same bargain -- ``None`` looks, ``{}`` says there is none --
-        and the same consequence when there is none: the tool is smaller and
-        nothing else changes.
+        ``classes`` is the one class that may use an item, keyed by the item's
+        guid, and it is *game* data: the archive states it in the item's own
+        file, as an unnamed child node carrying ``UNITTYPE`` -- see
+        :func:`_class_word`.  So ``None`` here means the default, which is to
+        read it out of the archive along with everything else; a dict
+        overrides it, which is what the tests that need a class table without
+        a game installed pass.
 
         Raises whatever :class:`~tl2stash.pak.PakError` the archive gives if
         it cannot be opened at all; individual files that will not parse are
@@ -1119,6 +1132,19 @@ class GameData:
             numbered[cid] = blocks[0][0]
             cells[cid] = blocks
 
+        # Which class may use each item, off the game's own files -- see
+        # :func:`_class_word` for where a file keeps it.  Keyed by the guid,
+        # the one key the save file and the archive agree on and the one every
+        # other lookup here goes through, and built over ``item_guids`` rather
+        # than over every item file, so that a file no guid reaches cannot put
+        # a class on an item that could never be looked up anyway.  The sweep
+        # is 0.01 s over the 6,262 item files, which is not worth deferring.
+        stated_classes = {
+            guid: word
+            for guid, data in item_guids.items()
+            if (word := _class_word(data, item_files)) is not None
+        }
+
         return cls(
             install,
             by_name,
@@ -1140,7 +1166,7 @@ class GameData:
             socket_targets,
             require_curves,
             _augments.load(install) if augments is None else augments,
-            _augments.load_classes(install) if classes is None else classes,
+            stated_classes if classes is None else classes,
         )
 
     # -- looking things up ------------------------------------------------
@@ -1597,31 +1623,35 @@ class GameData:
     def class_for(self, item) -> str | None:
         """The one class that may use the item, or ``None`` for the rest.
 
-        Keyed the way :meth:`augment_for` is, and for the same reason: the
-        table is the reference database's and files an item under its unit
-        name, which the file reached through the item's guid states.
+        Read off the item's own file at load time -- the restriction is a
+        child node of the item's, not a field of it, so it is not something
+        the ordinary field lookups would ever reach; see :func:`_class_word`.
+        The key is the item's guid masked to the 64 bits the save and the
+        archive agree on, the same key :meth:`augment_for` enters by.
 
-        ``None`` is the ordinary answer and not a failure -- 5,406 of the
-        reference's 6,173 records name no class, and a machine with no
-        reference database names none at all.  An item with no class is one
-        every class may use, so ``None`` never means "no one may".
+        ``None`` is the ordinary answer and not a failure: 5,494 of the game's
+        6,262 item files name no class, and an item with no class is one every
+        class may use, so ``None`` never means "no one may".  It is also the
+        answer for an item that cannot be traced to a file at all, which is
+        what a mod's item is.
         """
-        data = self._item_guids.get(item.guid & 0xFFFFFFFFFFFFFFFF)
-        if data is None:
-            return None
-        return self._classes.get((data.root.text(VAR_NAME) or "").lower())
+        return self._classes.get(item.guid & 0xFFFFFFFFFFFFFFFF)
 
     @property
     def has_classes(self) -> bool:
-        """Whether there is a class table at all, which is a different question.
+        """Whether the archive states a class for anything at all.
 
         :meth:`class_for` answers ``None`` for two different things -- an item
-        no class is restricted to, and a machine with no reference database --
+        no class is restricted to, and an item the data says nothing about --
         and a caller that offers a *class filter* has to tell them apart: the
         first is most of the collection, and the second means the filter would
-        match nothing whatever was ticked.  So this says whether the file was
-        found and read, and the panel that offers the four classes disables
-        itself and says why when it was not.
+        match nothing whatever was ticked.
+
+        True for every real install, since 768 of the game's items name a
+        class; it is asked rather than assumed because a mod's archive is read
+        the same way and need not carry any of them -- "the archive loaded"
+        and "the archive answers this question" are two different facts, and
+        only the second is a reason to offer a filter.
         """
         return bool(self._classes)
 
@@ -2113,6 +2143,49 @@ def _data_path(name: str) -> str:
     the case is enough to make them the same key.
     """
     return name.replace("\\", "/").upper()
+
+
+def _class_word(data: DatFile, item_files: dict[str, DatFile]) -> str | None:
+    """Which class the item this file makes is for, or ``None`` for any.
+
+    The restriction is not a field of the item's own node -- nothing in an
+    item file says "this is armour only an Embermage may wear" as a
+    ``REQ_CLASS``-style variable.  It is a *child* node instead: one with no
+    name of its own whose single variable is ``UNITTYPE``, holding one of the
+    four words in :data:`CLASS_WORDS`.  So the item states its class by
+    carrying that child, and a walk of the item's own root variables would
+    never see it.
+
+    A file that states none is not an item without a class: 11 of the game's
+    items state it only in the file they name as their base, so the chain is
+    walked the way :meth:`GameData._inherited` walks it for everything else,
+    and a loop in that chain stops rather than running forever.
+
+    ``None`` is the answer for two things the caller does not have to tell
+    apart: an item every class may use -- 5,494 of the 6,262 item files name
+    no class at all -- and a file stating a word that is not one of the four,
+    which is what a mod's own class would be.  The rule the filter applies is
+    the same for both: an item naming no class is shown whatever is ticked.
+    """
+    seen: set[str] = set()
+    while data is not None:
+        for child in data.root.children:
+            # The single variable is what makes the child this one rather than
+            # a mere node that happens to mention a class word somewhere in it.
+            if len(child.variables) != 1:
+                continue
+            stated = child.text(VAR_UNITTYPE)
+            if stated and (word := CLASS_WORDS.get(stated.strip().upper())):
+                return word
+        base = data.root.text(VAR_BASEFILE)
+        if not base:
+            break
+        key = _data_path(base)
+        if key in seen:
+            break
+        seen.add(key)
+        data = item_files.get(key)
+    return None
 
 
 def _graph_points(data: DatFile) -> dict[int, float]:

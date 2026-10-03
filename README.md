@@ -41,6 +41,7 @@ To build it yourself, see [Building the executable](#building-the-executable).
 | a separate stash and database per save file | done |
 | the game's data files (PAK/DAT) | done — 10,355 files in 0.74 s |
 | in-game item stats | done — damage, armour, effects and flat damage all render |
+| the class an item is for | done — read off the game's own item files; 768 of the 6,262 state one |
 | checked against an independent item database | 17 of 30 match line for line; all 13 differences accounted for |
 | desktop GUI (PySide6) | done |
 | the item card, drawn as the tl2-db site draws it | done — tier ink, game art cut from the PAK, affix lines in the game's green |
@@ -244,6 +245,19 @@ Description strings carry the game's own colour markup (`|c00ff9933Charge|u
 rate`), and `[VALUE_OT]` rounds the rate *before* multiplying it by the
 duration — a 5-second affix stored at 11.259 reads `+12 Physical Damage` and
 `60 Physical Damage over 5 sec.`, where multiplying the stored float gives 57.
+
+**An item's class is a child node, not a field.** Which class may use an item
+is stated in the game's own files, though not the way a field is: an item that
+only one class may use carries a *child* of its node, with no name of its own
+and a single variable, `UNITTYPE`, holding one of four words. Three of them
+spell themselves and the Engineer is `RAILMAN` — an internal name the shipped
+files never corrected. 768 of the 6,262 item files state one (Embermage 194,
+Outlander 193, Berserker 191, Engineer 190), 11 of them only in the file they
+name as their base, and the sweep over all of them costs 0.01 s, so it runs at
+load and the advanced search's four class boxes are drawn from the game's own
+files. That agrees with the published database on all 767 records it states a
+class for, and finds one it does not: `engineer_04_chest`, the Tunic of
+Triangulation.
 
 **A socket's bonus is granted to a host, and it is not in the item's effect
 list.** An item's recorded effects are the item's own, and nothing a gem put

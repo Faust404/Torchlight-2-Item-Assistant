@@ -1,12 +1,14 @@
-"""Tests for the two things a card has that the game's own files do not hold.
+"""Tests for the one thing a card has that the game's own files do not hold.
 
 An augment block is not game data: the unlock is a triggerable the game
-resolves at runtime, and nothing in the archive points at it.  Which class may
-use an item is not game data either -- the DAT has no field for it at all -- and
-both are read out of the same file, the reference database's ``items.json``.  So
-these tests come in three parts: the reader, which is fed files written by hand;
-the class table read beside it, which is fed the same way; and the card, which
-is fed the real archive with a two-line table hung on it.
+resolves at runtime, and nothing in the archive points at it, so it is read
+out of the reference database's ``items.json``.  The file's records carry a
+class as well, and that used to be read beside the tasks -- the game's data was
+believed to have no class field at all.  It has one, so it is not read here:
+what the archive says about classes is ``tl2stash/gamedata.py``'s business and
+is tested in ``tests/test_gamedata.py``.  What these tests come in is two
+parts: the reader, which is fed files written by hand, and the card, which is
+fed the real archive with a two-line table hung on it.
 
 The item the card half is about is real, because it has to be: the table is
 keyed by the unit name the *item file* states, and the only way to a name is
@@ -28,9 +30,7 @@ from tl2stash.augments import (  # noqa: E402
     ITEMS_JSON_VAR,
     find_items_json,
     load,
-    load_classes,
     read,
-    read_classes,
 )
 from tl2stash.card import AUGMENT_LOCKED, Augment, lines  # noqa: E402
 from tl2stash.gamedata import GameData, find_install  # noqa: E402
@@ -79,14 +79,13 @@ RAT_BLOCK = Augment("Kill 5 Ratlins to Upgrade", ("+2 Physical Damage",))
 def game():
     """The real game's files, with two items' task tables beside them.
 
-    No class table, because the file this reads is about the augments: what
-    the reference database says about classes is asked for in one place, and
-    it is not here.
+    No class table is handed in, because the classes are not this file's
+    business: the archive states them itself, and what the reference database
+    is read for here is the augments alone.
     """
     return GameData.load(
         _INSTALL,
         augments={"wand_u02b": (BLOCK,), "ratkiller": (RAT_BLOCK,)},
-        classes={},
     )
 
 
@@ -249,60 +248,30 @@ def test_no_file_is_an_empty_table_and_not_an_error(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# The other field taken from the same file
+# What the file is *not* read for
 # --------------------------------------------------------------------------
 
 
-def test_the_class_restrictions_are_read_beside_the_tasks(tmp_path):
-    """One file, two fields, and the second one is the game's own four words.
+def test_the_class_field_of_the_reference_file_is_not_read(tmp_path):
+    """The reference's records carry a class and this tool takes nothing from
+    them.
 
-    ``cls`` is the one fact in the reference's file that the game's data does
-    not hold at all -- no item file says which class may use the item -- so a
-    filter over classes is a filter over this field or over nothing.  Most of
-    the file's records carry none: a restriction is the exception, and an item
-    with none is one every class may use.
+    It used to: the game's own data was believed to have no class field at
+    all, so the restriction was read off this file or not at all.  It does
+    have one -- an unnamed ``UNITTYPE`` child of the item's node, in 768 of
+    the 6,262 item files -- so the class table is built from the archive and
+    this file is read for the tasks and nothing else.  A record whose every
+    other field is empty is therefore a record with nothing in it.
     """
     path = reference(
         tmp_path / "items.json",
         [
-            {"id": "hammer_u02", "cls": "Engineer", "aug": []},
-            {"id": "wand_u02b", "cls": "  Embermage  "},
-            {"id": "sword_u01"},
-            {"id": "shield_u01", "cls": ""},
+            {"id": "hammer_u02", "cls": "Engineer"},
+            {"id": "wand_u02b", "cls": "Embermage", "aug": []},
         ],
     )
 
-    assert read_classes(path) == {"hammer_u02": "Engineer", "wand_u02b": "Embermage"}
-
-
-def test_a_class_key_is_a_unit_name_and_not_the_way_it_is_spelled(tmp_path):
-    """Lower-cased like the tasks', and for the same reason: the field this is
-    matched against is the item file's NAME, and the archive does not fix its
-    own spelling of one."""
-    path = reference(tmp_path / "items.json", [{"id": "HAMMER_U02", "cls": "Outlander"}])
-
-    assert list(read_classes(path)) == ["hammer_u02"]
-
-
-def test_no_file_is_no_class_table_and_not_an_error(tmp_path, monkeypatch):
-    """A machine without the reference database gets the tool without a class
-    filter, which is a smaller tool and not a broken one."""
-    monkeypatch.setenv(ITEMS_JSON_VAR, str(tmp_path / "gone.json"))
-    assert load_classes() == {}
-
-    broken = tmp_path / "broken.json"
-    broken.write_text("{oh no", encoding="utf-8")
-    monkeypatch.setenv(ITEMS_JSON_VAR, str(broken))
-    assert load_classes() == {}
-
-    # A file of the wrong shape is a failure to ``read_classes``, which is the
-    # caller that says so -- and still only an empty table here.
-    wrong = reference(tmp_path / "wrong.json", [])
-    wrong.write_text('{"items": []}', encoding="utf-8")
-    monkeypatch.setenv(ITEMS_JSON_VAR, str(wrong))
-    with pytest.raises(ValueError):
-        read_classes(wrong)
-    assert load_classes() == {}
+    assert read(path) == {}
 
 
 @needs_game

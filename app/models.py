@@ -182,11 +182,13 @@ ELEMENT_REST = (0, NUMBER_MAX)
 #: search that says nothing about sockets.
 SOCKET_COUNTS = (1, 2, 3, 4, 5)
 
-#: The four classes, in the game's own order.  The words come from the
-#: reference database, which is the only place they exist: the game's data says
-#: a thing is armour, not that only an Embermage may wear it.  They are its
-#: whole vocabulary for the 767 records that name one, so a fifth would be a
-#: word nothing in the collection could match.
+#: The four classes, in the game's own order.  The words are the game's own:
+#: an item's file states which class may use it, in a child node whose one
+#: variable holds one of these four -- see
+#: :func:`~tl2stash.gamedata._class_word`, which is what turns the file's
+#: ``RAILMAN`` into the ``Engineer`` a player reads.  Four is the whole
+#: vocabulary: a fifth box would be a word nothing in the collection could
+#: match, and the game does not write one.
 CLASSES = ("Embermage", "Outlander", "Berserker", "Engineer")
 
 

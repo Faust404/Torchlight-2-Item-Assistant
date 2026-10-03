@@ -337,10 +337,11 @@ needs_game = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def game():
-    # The game's own files and nothing else.  The augment table and the
-    # class restrictions are the reference database's, which may or may not
-    # be on the machine running this -- and a test whose expected lines
-    # depend on that is a test that passes here and fails somewhere else.
+    # The game's own files and nothing else.  The augment table is the
+    # reference database's, which may or may not be on the machine running
+    # this -- and a test whose expected lines depend on that is a test that
+    # passes here and fails somewhere else.  (The class table is not: it comes
+    # out of the archive like everything else here.)
     #
     # A test that uses this wears ``needs_game``, and every one of them does
     # but two -- which was found the way it would be, on a machine with no
@@ -351,7 +352,7 @@ def game():
     # ``os.fspath``.
     if _INSTALL is None:
         pytest.skip("Torchlight II is not installed on this machine")
-    return GameData.load(_INSTALL, augments={}, classes={})
+    return GameData.load(_INSTALL, augments={})
 
 
 #: The same fixture under the name the other test modules import it by.

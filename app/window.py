@@ -1444,10 +1444,10 @@ class MainWindow(QMainWindow):
         ticked.
 
         The class section is offered only when there is something to offer it
-        *from*: the game's files do not say which class an item is for, so on a
-        machine without the reference database an empty section would be a
-        control that can never match anything -- see
-        :meth:`~tl2stash.gamedata.GameData.has_classes`.
+        *from*: the classes come out of the game's own item files, so an
+        archive that states none -- a mod's, in principle -- would leave four
+        boxes that can never narrow anything, and those are left dark rather
+        than offered -- see :meth:`~tl2stash.gamedata.GameData.has_classes`.
 
         The property rows are offered the collection's own wording, which is
         read off the same memo the wall draws from and so costs nothing that

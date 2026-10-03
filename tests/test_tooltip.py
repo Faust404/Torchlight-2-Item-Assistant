@@ -62,7 +62,7 @@ def game():
     # why this skips rather than letting ``Path(None)`` raise.
     if _INSTALL is None:
         pytest.skip("Torchlight II is not installed on this machine")
-    return GameData.load(_INSTALL, augments={}, classes={})
+    return GameData.load(_INSTALL, augments={})
 
 
 def word(value: float) -> int:

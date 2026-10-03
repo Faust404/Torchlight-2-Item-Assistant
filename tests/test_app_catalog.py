@@ -42,6 +42,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from app.card import IconCache, paint_tile  # noqa: E402
 from app.catalog import ICON_SIZE, Catalog, Facts  # noqa: E402
 from app.models import (  # noqa: E402
+    CLASSES,
     COLLECTION_COLUMNS,
     FINGERPRINT_ROLE,
     GATE_ROLE,
@@ -70,12 +71,12 @@ def qapp():
 def synthetic_game(tmp_path):
     """The install ``tests/test_gamedata.py`` builds, loaded.
 
-    No reference database, for the reason that file's own fixture gives: the
-    augment table and the class restrictions are not game data, and a machine
-    with a checkout of the reference beside this one must not change what a
-    test sees.
+    No augment table, for the reason that file's own fixture gives: it is not
+    game data at all, and a machine with a checkout of the reference beside
+    this one must not change what a test sees.  The classes are left to be
+    read out of the archive, which is where they come from.
     """
-    return GameData.load(synthetic_install(tmp_path), augments={}, classes={})
+    return GameData.load(synthetic_install(tmp_path), augments={})
 
 
 # --------------------------------------------------------------------------
@@ -227,7 +228,7 @@ def test_a_row_carries_what_the_advanced_search_reads(qapp, real_game):
     """The three facets the bar has no control for.
 
     All three come down lookups the row is already making -- the item's own
-    bytes, the item's file, and the reference database -- and they are *on the
+    bytes and the tables built from the archive at load -- and they are *on the
     entry* rather than worked out per row, because the panel reads one of them
     for every row of every poll while it is set.  The sockets are the one that
     is the instance's and not the kind's: how many a sword can *hold* is in its
@@ -249,10 +250,22 @@ def test_a_row_carries_what_the_advanced_search_reads(qapp, real_game):
 
     assert entry.sockets == 2
     assert entry.stats == requires.stats
-    # This fixture has no class table, for the reason tests/test_dat.py gives,
-    # so this is the answer every item gives on a machine without the reference
-    # database -- see tests/test_gamedata.py for the other one.
-    assert entry.cls is None
+    # The class is read off the item's own file, like everything else on the
+    # row -- and most items name none, so the item this reads is deliberately
+    # one the archive *does* restrict: an entry that never asked would answer
+    # ``None``, which is the same answer 5,494 of the 6,262 files give and so
+    # the one shape of item that cannot tell a reading from a default.
+    restricted = next(
+        (
+            guid
+            for guid in real_game._item_guids
+            if real_game.class_for(_AnItem(guid)) is not None
+        ),
+        None,
+    )
+    if restricted is None:  # pragma: no cover -- the archive always has one
+        pytest.skip("no item in this install names a class")
+    assert catalog.entry("b", _AnItem(restricted)).cls in CLASSES
 
 
 @needs_game
@@ -323,9 +336,11 @@ class _OneAnswer:
         return None
 
     def class_for(self, item):
-        """``None``, which is what a machine with no reference database says --
-        and the same answer the real thing gives for an item no class is
-        restricted to.  See :mod:`tl2stash.augments` for the second reading."""
+        """``None``, which is the answer for an item no class is restricted to
+        -- most of the game's items, and the whole of an archive that names no
+        class at all.  See
+        :meth:`~tl2stash.gamedata.GameData.class_for` for what the real one
+        reads, and its ``has_classes`` for the other question."""
         return None
 
 

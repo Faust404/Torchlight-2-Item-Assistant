@@ -221,6 +221,7 @@ def install(tmp_path: Path) -> Path:
         files[f"MEDIA/UNITS/ITEMS/{path}"] = write_dat(strings, [{"vars": variables}])
 
     from tl2stash.dat import (  # noqa: PLC0415 -- the fixture's own names
+        VAR_BASEFILE,
         VAR_DEFENSE_REQUIRED,
         VAR_DEXTERITY_REQUIRED,
         VAR_LEVEL_REQUIRED,
@@ -289,6 +290,42 @@ def install(tmp_path: Path) -> Path:
     # the kind it canonicalises to, to the container a restore writes into.
     item_file("POTIONS/TEST_POTION.DAT", "Test Potion", "POTION", 10, 0x7009)
     item_file("SPELLS/TEST_SPELL.DAT", "Test Spell", "SPELL", 10, 0x700A)
+
+    # The class restriction, in the shape the game's own files state it: not a
+    # field of the item at all, but a *child* of its node with no name of its
+    # own and one variable -- UNITTYPE, holding one of the four words the game
+    # writes its classes in.  Three items, because three things about that have
+    # to be pinned and none of them is visible from the others: that a child is
+    # read where the root's own UNITTYPE (which every item here has) is not,
+    # that the word for the Engineer is ``RAILMAN``, and that a file stating
+    # none takes its class from the file it names as its base.
+    def class_file(
+        path: str, name: str, guid: int, word: str | None, base: str | None = None
+    ) -> None:
+        variables = {
+            VAR_NAME: (TEXT, string(name)),
+            VAR_UNITTYPE: (TEXT, string("UNIQUESWORD")),
+            VAR_LEVEL: (INT, 20),
+            VAR_UNIT_GUID: (TEXT, string(str(guid))),
+        }
+        node: dict = {"vars": variables}
+        if word:
+            node["kids"] = [{"vars": {VAR_UNITTYPE: (TEXT, string(word))}}]
+        if base:
+            variables[VAR_BASEFILE] = (TEXT, string(base))
+        files[f"MEDIA/UNITS/ITEMS/{path}"] = write_dat(strings, [node])
+
+    class_file("SWORDS/TEST_EMBER.DAT", "Test Ember", 0x700B, "EMBERMAGE")
+    class_file("SWORDS/TEST_RAIL.DAT", "Test Rail", 0x700C, "RAILMAN")
+    # Written the way Windows writes a path, which is the way the real files
+    # write one and the reason the key has to be normalised before lookup.
+    class_file(
+        "SWORDS/TEST_HEIR.DAT",
+        "Test Heir",
+        0x700D,
+        None,
+        base=r"MEDIA\UNITS\ITEMS\SWORDS\TEST_EMBER.DAT",
+    )
 
     # Containers: each names itself and declares the id the save file records.
     # The ARMS tab also names the slot file its cells come from, which is how
@@ -584,11 +621,11 @@ def install(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def game(tmp_path):
-    # No reference database: neither the augment table nor the class
-    # restrictions are game data and the tests here are about the game's, so
-    # a machine that happens to have a checkout of the reference beside this
-    # one must not change what they see.
-    return GameData.load(install(tmp_path), augments={}, classes={})
+    # No augment table: it is not game data at all, and a machine that happens
+    # to have a checkout of the reference beside this one must not change what
+    # these tests see.  The class table *is* game data and is left to be read
+    # out of the archive, which is what the tests below are about.
+    return GameData.load(install(tmp_path), augments={})
 
 
 # --------------------------------------------------------------------------
@@ -638,9 +675,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Forty-five parse; the forty-sixth is a DAT that will not, and the
-    forty-seventh is not a DAT at all."""
-    assert game.files_read == 45
+    """Forty-eight parse; the forty-ninth is a DAT that will not, and the
+    fiftieth is not a DAT at all."""
+    assert game.files_read == 48
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -1664,45 +1701,72 @@ def test_an_item_the_data_does_not_know_has_no_requirements(game):
 
 
 # --------------------------------------------------------------------------
-# The class restriction, which is the reference database's and not the game's
+# The class restriction, which is the game's own after all
 # --------------------------------------------------------------------------
 #
-# The DAT has no field for it at all -- the reference's own build script says
-# so -- which is why it is read out of the reference's file instead, beside the
-# augment tasks and keyed the same way: on the item file's own NAME, which the
-# guid in the save file is the way to.  Two different questions get asked of
-# it, and they are the two tests here: what class this item is restricted to,
-# and whether there are restrictions to filter by at all.
+# It is not a field of the item: it is a *child* of the item's node, with no
+# name of its own and one variable -- UNITTYPE, holding one of the four words
+# the game writes its classes in, ``RAILMAN`` among them for the Engineer.
+# That is why it went unseen for so long and why the tool read it out of the
+# reference database instead: a walk of the item's own fields finds nothing,
+# and the reference's build script states flatly that the DAT has no class
+# field at all.  The fixture above states it in the game's own shape, so what
+# is tested here is the reading and not a table handed in.
+#
+# Two different questions get asked of it, and they are the two tests here:
+# what class this item is restricted to, and whether there are restrictions to
+# filter by at all.
 
 
-def test_a_class_restriction_is_the_reference_s_word_for_the_item(tmp_path):
-    """``Test Plain`` is ``test plain`` in the table, whatever case either is
-    written in -- the archive does not fix its own spelling and neither does
-    the reference."""
-    game = GameData.load(
-        install(tmp_path), augments={}, classes={"test plain": "Embermage"}
-    )
+def test_a_class_restriction_is_read_off_an_unnamed_child_of_the_item(game):
+    """The game's own shape, and the shape is the point.
 
+    ``Test Ember`` states ``EMBERMAGE`` in a child node, which is how the
+    archive says only an Embermage may use an item; ``Test Heir`` says nothing
+    itself and names that file as its base, which is how 11 of the game's items
+    state it.  The base is written the way Windows writes paths, so the key it
+    is looked up by has to be normalised -- and every item here carries a
+    ``UNITTYPE`` of its *own* on the root, which is its kind (``UNIQUESWORD``)
+    and not its class.  The two are different fields under one name, and a
+    reading that looked at the root's would find a class on none of these
+    items.
+    """
     assert game.has_classes is True
-    assert game.class_for(item(guid=0x7001)) == "Embermage"
-    # An item the table does not name is one no class is restricted to, which
-    # is not the same answer as the one below.
-    assert game.class_for(item(guid=0x7002)) is None
+    assert game.class_for(item(guid=0x700B)) == "Embermage"
+    assert game.class_for(item(guid=0x700D)) == "Embermage", "the base chain is walked"
+    # An item whose file states no class is one every class may use, which is
+    # not the same answer as the one below.
+    assert game.class_for(item(guid=0x7001)) is None
     # And an item the *files* do not know cannot be looked up at all.
     assert game.class_for(item(guid=0xDEAD)) is None
 
 
-def test_a_machine_with_no_reference_table_has_no_class_to_filter_by(game):
+def test_the_engineer_is_railman_in_the_files_and_engineer_to_the_player(game):
+    """The one word out of four that is not spelled the way it is read.
+
+    ``RAILMAN`` is an internal name the class had before it had its own, and
+    the shipped files never corrected it -- so a card drawn from the raw word
+    would name a class the game does not have and the filter would never match
+    the Engineer's 190 items.  The mapping is the tool's, and this is what pins
+    it: a wrong spelling here is invisible everywhere else.
+    """
+    assert game.class_for(item(guid=0x700C)) == "Engineer"
+
+
+def test_an_archive_that_states_no_class_has_none_to_filter_by(tmp_path):
     """``has_classes`` is a different question from what one item answers.
 
-    Every item answers ``None`` on a machine without the reference database,
+    Every item answers ``None`` for an archive that names no class -- which is
+    a mod's, in principle, since the game's own 6,262 item files name 768 --
     and the advanced search's panel has to be able to tell "this item is for
-    every class" from "nothing here can say" -- because one of those is a
-    section with nothing ticked in it and the other is a section that could not
-    match anything whatever was ticked.
+    every class" from "nothing here can say", because one of those is a section
+    with nothing ticked in it and the other is a section that could not match
+    anything whatever was ticked.
     """
+    game = GameData.load(install(tmp_path), augments={}, classes={})
+
     assert game.has_classes is False
-    assert game.class_for(item(guid=0x7001)) is None
+    assert game.class_for(item(guid=0x700B)) is None
 
 
 @needs_game
