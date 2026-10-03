@@ -1159,13 +1159,25 @@ def test_sending_while_the_game_runs_asks_first_and_can_be_refused(
     assert print_ in win.service.registry.absorbed_fingerprints()
     assert win.status.currentMessage() == "nothing was sent"
 
-    # And the question wears the answer it is asking for: the warning itself,
-    # a way past it, and the checkbox that turns it off for good.
+    # And the box wears the words the user asked for, in the shape they asked
+    # for: the question set bold, and the two paragraphs under it each an
+    # unbroken string so that Qt wraps them to the width of the box.  A break
+    # typed into a paragraph is a line that stops halfway across a box with
+    # room for more, which is what the first version of this text did.
     box = asked[0]
-    assert "main menu" in box.informativeText()
-    assert "Show Stranded Items" in box.informativeText()
+    assert box.text() == (
+        "<b>Send this item to the shared stash while the game is running?</b>"
+    )
+    assert box.informativeText() == (
+        "Please make sure to send items to the stash only when you are in "
+        "the main-menu!!\n"
+        "\n"
+        "Sending an item to the shared stash while in-game can lead to the "
+        "loss of item. Although a lost item can later be recovered in the "
+        'tool using "Show Stranded Items" button.'
+    )
     assert box.button(QMessageBox.StandardButton.Ok).text() == "Send anyway"
-    assert box.checkBox() is not None
+    assert box.never_show.text() == "Never show this warning again"
 
     # Asked again next time, and this time the player says yes.
     win._put_back_one(print_)
@@ -1246,7 +1258,7 @@ def test_never_show_again_is_remembered_for_the_next_run(
 
     def tick_and_ok(box):
         asked.append(box)
-        box.checkBox().setChecked(True)
+        box.never_show.setChecked(True)
         return QMessageBox.StandardButton.Ok
 
     monkeypatch.setattr(QMessageBox, "exec", tick_and_ok)
@@ -1273,6 +1285,36 @@ def test_never_show_again_is_remembered_for_the_next_run(
         assert len(asked) == 1, "the next run asked a question already answered"
     finally:
         again.close()
+
+
+def test_clear_filters_puts_the_collection_back(stocked):
+    """``Clear filters`` clears the third thing the bar cannot reach.
+
+    The toggle is not a filter -- it swaps which list the wall is drawn from
+    rather than narrowing one -- so it is not in the bar and the bar cannot
+    reach it.  But it is a state the player is looking at, and a ``Clear
+    filters`` that cleared the search box and the rail and left the wall
+    showing something else would be the one control here that does not do what
+    it says.  "Everything again" has to mean the collection itself.
+    """
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    win._put_back_one(print_)
+    write_stash_of(win.service.source, [])  # the game's save, from a memory
+    win._sync(write=False)
+
+    win.stranded_button.click()
+    assert win.grid.count() == 1, "the fixture's stranded item is not on the wall"
+
+    win.filters.clear_button.click()
+
+    assert not win.stranded_button.isChecked(), "the stranded view is still on"
+    assert win.collection_group.title() == "In the tool (2)", (
+        "the box is still counting the stranded list"
+    )
+    assert sorted(row.name for row in win.grid.rows()) == ["Beta", "Gamma"]
 
 
 def test_an_item_with_no_placement_of_its_own_is_routed_by_its_kind(

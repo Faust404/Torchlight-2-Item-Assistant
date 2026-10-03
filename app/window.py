@@ -96,6 +96,65 @@ GAME_DATA_MISSING = (
 WARN_SENDING = "warn_sending_while_running"
 
 
+def send_warning(parent: QWidget | None, count: int) -> QMessageBox:
+    """The box shown before items are sent while the game is running.
+
+    The words are the user's own, and so is the layout: the question is the
+    box's *main* text -- the one line here that asks rather than advises, and
+    the one line set bold -- and the two paragraphs under it are each a single
+    unbroken string.  That last part is the whole of the layout: Qt wraps the
+    label to the width the box gives it, so lines come out full, and a break
+    typed into the middle of a paragraph is a line that stops halfway across a
+    box with room for more.  The first version of this text had those breaks in
+    it and read as a poem.
+
+    The bold is ``<b>`` around that one line rather than a stylesheet on the
+    box, which is not a style preference: a widget stylesheet re-polishes the
+    box's own icon when the box is shown, and this PySide6 build segfaults
+    doing it -- measured, with the icon on.  A stylesheet on the *application*
+    would have been the other way to say it, and would have emboldened the
+    main text of every dialog in the tool, which is more than was asked for.
+    Setting the label's font is a third way and does not survive the polish.
+
+    The count is the one thing not copied from the user, because a card can
+    stand for several copies and one click on ``Transfer all (3)`` would
+    otherwise be described as "this item".  At one item the sentence is
+    exactly the one asked for.
+
+    Built as a function rather than inside the asking so that the box can be
+    built, shown and measured without a window -- a dialog whose paragraphs
+    wrap badly is a thing to look at, not to reason about.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Torchlight II is running")
+    what = "this item" if count == 1 else f"these {count} items"
+    box.setText(f"<b>Send {what} to the shared stash while the game is running?</b>")
+    box.setInformativeText(
+        "Please make sure to send items to the stash only when you are in "
+        "the main-menu!!\n"
+        "\n"
+        "Sending an item to the shared stash while in-game can lead to the "
+        "loss of item. Although a lost item can later be recovered in the "
+        'tool using "Show Stranded Items" button.'
+    )
+    box.setStandardButtons(
+        QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+    )
+    box.button(QMessageBox.StandardButton.Ok).setText("Send anyway")
+    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+
+    # The tick box is kept on the box as well as given to it, and that is not
+    # tidiness: Qt owns the widget, but a *wrapper* lives only while something
+    # in Python points at it, and a box whose wrapper has gone answers
+    # ``checkBox()`` with a bare ``QObject`` that has no ``isChecked`` on it at
+    # all -- which is what the asking below would then call.  Measured, both
+    # ways.  One handle, named, that the caller and the tests can both hold.
+    box.never_show = QCheckBox("Never show this warning again")
+    box.setCheckBox(box.never_show)
+    return box
+
+
 def _copies_note(rows: list[TileRow]) -> str:
     """Say which of the cards that went back stood for more than one item.
 
@@ -233,6 +292,7 @@ class MainWindow(QMainWindow):
         # went wrong.  The count is on the button because the player has no
         # other way to learn there is anything to look at.
         self.stranded_button = QPushButton("Show Stranded Items")
+        self.stranded_button.setObjectName("stranded")
         self.stranded_button.setCheckable(True)
         self.stranded_button.setToolTip(
             "Items the tool put back that are in no stash file: the game's\n"
@@ -297,6 +357,9 @@ class MainWindow(QMainWindow):
         # not a poll.  The rail says nothing when it had nothing ticked, so a
         # click on an empty rail is one rebuild rather than two.
         self.filters.cleared.connect(self.sidebar.reset)
+        # And the third thing the bar cannot reach: which list the wall is
+        # showing at all.  See `_reset_stranded`.
+        self.filters.cleared.connect(self._reset_stranded)
         return self.filters
 
     def _build_splitter(self) -> QSplitter:
@@ -711,6 +774,22 @@ class MainWindow(QMainWindow):
         """
         self._refresh_views()
 
+    def _reset_stranded(self) -> None:
+        """``Clear filters`` puts the wall back to the collection, this and all.
+
+        The toggle is not a filter -- it swaps which list is drawn rather than
+        narrowing one -- but it is a state the player is looking at, and the
+        bar's own docstring is the argument: a ``Clear filters`` that cleared
+        the search box and the rail while leaving the wall showing something
+        else would be the one control here that does not do what it says.  The
+        stranded items are not a narrowing of the collection and were never
+        one, so "everything again" has to mean the collection itself.
+
+        Unticking is silent when it was never ticked, so an ordinary click on
+        ``Clear filters`` costs no more than it did before this existed.
+        """
+        self.stranded_button.setChecked(False)
+
     def _recover_row(self, row: TileRow) -> None:
         """Keep a stranded item in the tool, writing nothing to the game.
 
@@ -775,35 +854,19 @@ class MainWindow(QMainWindow):
         send would teach them to dismiss boxes.  Ticking it is remembered on
         the spot, whether or not this particular send goes ahead: the
         checkbox is about the message, and the buttons are about the item.
+
+        The box itself -- its words and the way they are laid out -- is
+        :func:`send_warning`, which is a function of its own so that it can be
+        looked at without going through a send to see it.
         """
         if not self.settings.get(WARN_SENDING, True):
             return True
         if not is_running(GAME_EXE):
             return True
 
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Torchlight II is running")
-        what = "this item" if count == 1 else f"these {count} items"
-        box.setText(f"Send {what} to the shared stash while the game is running?")
-        box.setInformativeText(
-            "Send items at the main menu only, with no character loaded.\n"
-            "\n"
-            "The game holds the shared stash in memory and writes over the\n"
-            "whole file when it saves, so an item sent while you are playing\n"
-            "is erased at the next save point.  If one is erased anyway, it\n"
-            "turns up under Show Stranded Items and can be recovered there."
-        )
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
-        )
-        box.button(QMessageBox.StandardButton.Ok).setText("Send anyway")
-        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        never = QCheckBox("Never show this warning again")
-        box.setCheckBox(never)
-
+        box = send_warning(self, count)
         answer = box.exec()
-        if never.isChecked():
+        if box.never_show.isChecked():
             self.settings.set(WARN_SENDING, False)
         return answer == QMessageBox.StandardButton.Ok
 

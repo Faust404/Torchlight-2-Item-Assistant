@@ -466,6 +466,28 @@ QPushButton#reverse {{
     border-radius: 3px;
     padding: 3px 12px;
 }}
+/* The stranded toggle while it is on, which is the one thing on the row that
+   stands for a *view* rather than for an action -- and a view that is showing
+   something other than the collection is exactly the thing a player cannot
+   tell from the outside.  So it wears the window's own word for "this one is
+   chosen", the same warm fill and tan ink a selected row and the collection's
+   ticks wear, and it wears it only while it is on: at rest it is an ordinary
+   button beside ``Refresh``, because a control that is always lit cannot say
+   that the view it opens is the one on screen.
+
+   Claimed in the sheet for the size as much as for the colour.  The moment a
+   state has a rule, that state is measured from its own box model instead of
+   Fusion's -- so the padding is the one that measures *exactly* what the
+   unchecked button measures (146x23 against 146x23, measured), and the button
+   does not twitch as it is ticked.  Only ``:checked`` is claimed, so the two
+   states still sit on the row as two states of one control. */
+QPushButton#stranded:checked {{
+    background: {SELECT};
+    color: {HEAD};
+    border: 1px solid {EDGE};
+    border-radius: 3px;
+    padding: 3px 6px;
+}}
 #banner {{
     color: {LABEL};
     font-size: 12px;

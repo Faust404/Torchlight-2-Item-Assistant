@@ -29,9 +29,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
 from PySide6.QtGui import QColor, QFont, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication, QStyleFactory  # noqa: E402
+from PySide6.QtWidgets import QApplication, QPushButton, QStyleFactory  # noqa: E402
 
-from app.card import BODY, GROUND, LABEL, PANEL, TABULAR, _serif  # noqa: E402
+from app.card import BODY, GROUND, HEAD, LABEL, PANEL, TABULAR, _serif  # noqa: E402
 from app.theme import (  # noqa: E402
     BODY_PX,
     CHALK,
@@ -280,6 +280,59 @@ def test_the_reverse_arrow_is_a_button_by_name(themed):
     assert f"border: 1px solid {CHALK};" in rule, "the outline is not the combo's"
     assert "padding" in rule, "the padding is what makes the button small"
     assert "QPushButton {" not in sheet, "the rule reached every button here"
+
+
+def test_the_stranded_toggle_is_filled_while_it_is_on(themed):
+    """The one control that stands for a *view*, so it says so in the window's
+    own word for "this one is chosen".
+
+    That word is the warm fill a selected row and the collection's ticks
+    already wear, with the cards' title tan written on it -- no new colour, so
+    a player who has seen one selected thing in this window has seen this too.
+    And it is worn *only* while it is on: a button that was always lit could
+    not say that the view it opens is the one on screen, which is exactly what
+    the stranded toggle has to say, since what it shows is a list the player
+    cannot otherwise see is being shown.
+
+    By name, like the arrow and the search box: a rule on ``QPushButton``
+    would restyle every button in the window.
+    """
+    sheet = themed.styleSheet()
+    opener = sheet.index("QPushButton#stranded:checked {")
+    rule = sheet[opener : sheet.index("}", opener)]
+
+    assert f"background: {SELECT};" in rule, "the fill is not the chosen shade"
+    assert f"color: {HEAD};" in rule, "the ink is not what is written on it"
+    assert "padding" in rule, "the padding is what keeps the button from moving"
+    assert "QPushButton {" not in sheet, "the rule reached every button here"
+    assert "QPushButton#stranded {" not in sheet, (
+        "the resting state is claimed too, so the control is lit always"
+    )
+
+
+def test_ticking_it_does_not_move_the_button(themed):
+    """The checked rule is measured from its own box model, so the padding in
+    it is what keeps the button the same size in both states.
+
+    Left to itself a claimed state is measured from *its* box model rather
+    than Fusion's, and the button would grow or shrink by a few pixels the
+    moment it was ticked -- a twitch on a toolbar, for a control whose whole
+    job is to be a steady thing to press.  Measured here rather than asserted
+    as a number in the sheet, because what matters is the two sizes agreeing,
+    not what either of them is.
+    """
+    resting = QPushButton("Show Stranded Items (3)")
+    resting.setObjectName("stranded")
+    resting.setCheckable(True)
+    pressed = QPushButton("Show Stranded Items (3)")
+    pressed.setObjectName("stranded")
+    pressed.setCheckable(True)
+    pressed.setChecked(True)
+
+    assert pressed.sizeHint() == resting.sizeHint(), (
+        f"the button moves when it is ticked: {resting.sizeHint()} then "
+        f"{pressed.sizeHint()}"
+    )
 
 
 def test_the_window_is_set_in_the_site_s_own_voice(themed):
