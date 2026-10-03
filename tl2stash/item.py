@@ -44,8 +44,17 @@ EFFECT_HAS_FILE = frozenset(
 #: Effect types whose serialised form carries a u64 GUID.
 EFFECT_HAS_GUID = frozenset({0xA141, 0xA041, 0x2141, 0x2041, 0xA541})
 
-#: Effect type that carries two extra bytes, seen on the giant fish/shark/
-#: warsnout boss items.
+#: Effect type whose record carries two extra bytes, and where they sit is what
+#: the four blobs that settled it say: *before* the value list, between the
+#: effect's file path and its count of values.  Read that way every field lands
+#: on the number the game's own item file states -- 9374.0 for the health a
+#: Tasty Fish Meat recharges, 500.0 and 300 seconds for a resistance potion --
+#: and the second effect begins exactly on its own type byte.  FNIStash reads
+#: the same two bytes *after* the value list, on the authority of "Giant Tunnel
+#: Shark, Giant Flying Fish, Giant Warsnout"; that reading cannot be told from
+#: this one on an effect whose bytes here are all zero, which is the only way
+#: both can have parsed those items, so they were never evidence either way.
+#: Read FNIStash's way, all four of these blobs fail outright.
 EFFECT_TYPE_2EXTRA = 0x9141
 
 #: An effect of this type is followed by a throwaway u32.
@@ -328,12 +337,12 @@ def _read_effect(reader: Reader) -> Effect:
     file = reader.torch_text() if eff_type in EFFECT_HAS_FILE else None
     guid = reader.u64() if eff_type in EFFECT_HAS_GUID else None
 
+    if eff_type == EFFECT_TYPE_2EXTRA:
+        reader.u16()
+
     num_values = reader.u8()
     values = [reader.u32() for _ in range(num_values)]
     reader.torch_text()  # always empty in practice
-
-    if eff_type == EFFECT_TYPE_2EXTRA:
-        reader.u16()
 
     index = reader.u32()
     damage_type = reader.u32()

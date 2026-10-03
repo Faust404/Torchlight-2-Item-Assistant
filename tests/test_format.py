@@ -8,6 +8,7 @@ are absent -- the saves are the player's data, not fixtures to check in.
 from __future__ import annotations
 
 import sqlite3
+import struct
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from tl2stash import (  # noqa: E402
 )
 from tl2stash.binary import ParseError, Reader  # noqa: E402
 from tl2stash.crypto import SaveFile, checksum  # noqa: E402
-from tl2stash.item import _read_item, strip_markup  # noqa: E402
+from tl2stash.item import _read_item, as_float, strip_markup  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.saves import find_save_locations  # noqa: E402
 
@@ -38,20 +39,26 @@ def synthetic_tail(
     *,
     records: int = 0,
     trailer: bytes = b"",
+    effects: tuple[bytes, ...] = (),
     stats: tuple[int, ...] = (),
     junk: bytes = b"",
 ) -> bytes:
     """Build an item's tail: the part whose shape has to be worked out.
 
     ``records`` added-damage records of three u32s each, then an optional
-    ``trailer`` word, then the four lists -- all empty but for ``stats`` --
-    and ``junk`` past the end, which nothing should read.
+    ``trailer`` word, then the four lists -- the first holding ``effects``
+    (see ``synthetic_effect``), all empty but for ``stats`` -- and ``junk``
+    past the end, which nothing should read.  A list's count is derived from
+    what is put in it, as with the extra records above.
     """
     out = bytearray()
     out.extend(records.to_bytes(2, "little"))
     out.extend(b"\x00" * (12 * records))
     out.extend(trailer)
-    for _ in range(3):  # effects, effects2, triggerables
+    out.extend(len(effects).to_bytes(4, "little"))
+    for effect in effects:
+        out.extend(effect)
+    for _ in range(2):  # effects2, triggerables
         out.extend((0).to_bytes(4, "little"))
     out.extend(len(stats).to_bytes(4, "little"))
     for guid in stats:
@@ -145,6 +152,76 @@ def synthetic_item(
     out.extend(b"\xff" * 12)
     out.extend(synthetic_tail() if tail is None else tail)
     return bytes(out), location_offset
+
+
+def synthetic_effect(
+    *,
+    kind: int = 0x8041,
+    name: str = "",
+    file: str | None = None,
+    guid: int | None = None,
+    extra: int | None = None,
+    values: tuple[float, ...] = (),
+    index: int = 0,
+    damage_type: int = 0,
+    description_type: int = 0,
+    item_level: int = 0,
+    duration: float = 0.0,
+    value: float = 0.0,
+    link: int = 0,
+) -> bytes:
+    """Build one effect record, written the way the game writes it.
+
+    Mirrors ``tl2stash.item._read_effect`` field for field, and like it needs
+    to be told nothing about the type: ``file``, ``guid`` and ``extra`` are
+    written only when given, because which effect types carry them is the
+    data's business.  ``values`` is a tuple of the floats the fields really
+    are -- the packing is here so no caller has to do it -- and the count is
+    derived from it rather than passed, so the two cannot disagree.
+    """
+    out = bytearray()
+
+    def u8(v):
+        out.append(v)
+
+    def u16(v):
+        out.extend(v.to_bytes(2, "little"))
+
+    def u32(v):
+        out.extend(v.to_bytes(4, "little"))
+
+    def u64(v):
+        out.extend(v.to_bytes(8, "little"))
+
+    def text(s):
+        u16(len(s))
+        out.extend(s.encode("utf-16-le"))
+
+    def f32(v):
+        out.extend(struct.pack("<f", v))
+
+    u16(kind)
+    u16(0)                                     # extra-string flag
+    text(name)
+    if file is not None:
+        text(file)
+    if guid is not None:
+        u64(guid)
+    if extra is not None:
+        u16(extra)
+    u8(len(values))
+    for v in values:
+        f32(v)
+    text("")                                   # always empty in practice
+    u32(index)
+    u32(damage_type)
+    u32(description_type)
+    u32(item_level)
+    f32(duration)
+    u32(0)                                     # unknown
+    f32(value)
+    u32(link)
+    return bytes(out)
 
 
 # --------------------------------------------------------------------------
@@ -344,6 +421,62 @@ def test_a_tail_that_is_not_read_to_the_end_is_refused():
     tail = synthetic_tail(records=2, stats=(0xAB,), junk=b"\x00" * 64)
     with pytest.raises(ParseError, match="reaches the end"):
         parse_item(synthetic_item(tail=tail)[0])
+
+
+# --------------------------------------------------------------------------
+# Effects
+# --------------------------------------------------------------------------
+
+
+def test_the_two_extra_bytes_are_read_before_the_value_list():
+    """The record that made Tasty Fish Meat unreadable, rebuilt from its bytes.
+
+    ``0x9141`` is the one effect type carrying two unexplained bytes, and the
+    only question about them is which side of the value list they sit on.  The
+    game's own record answers it: after the file path come ``00 00``, then the
+    value count ``02``, then two copies of 9374.0 -- the health a Tasty Fish
+    Meat recharges, exactly as the game's item file states it.  Read the pair
+    on the other side of the list, as FNIStash does, and the first of those
+    zeroes is taken for the count while the real count becomes the length of a
+    512-character string, which runs off the end of the item.  Both readings
+    parse an effect whose extra pair is zero *and* whose value count is zero,
+    which is every giant fish FNIStash was tested on.
+    """
+    effect = synthetic_effect(
+        kind=0x9141,
+        name="FISHHPRECHARGE",
+        file="MEDIA/PARTICLES/EVENTS/HEALTHPOTION.LAYOUT",
+        extra=0,
+        values=(9374.0, 9374.0),
+        index=124,
+        description_type=1,
+        duration=2.0,
+        value=18748.0,
+    )
+    # The tail of the real record, transcribed from the item's own bytes and
+    # grouped by field: the extra pair, the count, the two values, the empty
+    # text, then index, damage type, description type, item level, duration,
+    # the unknown word, the value and the link.  This is what keeps the test
+    # honest -- a builder that drifted along with a reverted parser would
+    # still fail here.
+    assert effect[-45:] == bytes.fromhex(
+        "0000" "02" "00781246" "00781246" "0000"
+        "7c000000" "00000000" "01000000" "00000000"
+        "00000040" "00000000" "00789246" "00000000"
+    )
+
+    blob, _ = synthetic_item(
+        name="Tasty Fish Meat", tail=synthetic_tail(effects=(effect,))
+    )
+    [parsed] = parse_item(blob).effects
+
+    assert parsed.name == "FISHHPRECHARGE"
+    assert parsed.num_values == 2
+    assert [as_float(v) for v in parsed.values] == [9374.0, 9374.0]
+    assert parsed.index == 124
+    assert parsed.description_type == 1
+    assert as_float(parsed.duration) == 2.0
+    assert as_float(parsed.value) == 18748.0
 
 
 def _stored_blobs() -> list[bytes]:
