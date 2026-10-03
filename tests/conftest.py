@@ -88,3 +88,49 @@ def no_writes_outside_tmp(tmp_path, monkeypatch):
 
     original_set = _Settings.set
     monkeypatch.setattr(_Settings, "set", guarded_set)
+
+
+@pytest.fixture(autouse=True)
+def no_widgets_left_behind():
+    """Delete the widgets a test built, because nothing else can.
+
+    A Qt widget tree built from Python cannot die on its own.  Giving a widget
+    a parent hands ownership to C++, and PySide keeps the parent's reference to
+    the child wrapper out of sight of the garbage collector -- which also
+    cannot see the connections a child's signals hold to the window's own
+    bound methods.  So a ``MainWindow`` that is closed and dropped stays in
+    memory with its ~300 widgets, and every later ``setStyleSheet`` in the
+    process re-polishes all of them: the suite ran for hours, ~17 s of
+    restyling per test, once ``test_app.py`` had run in the same process.
+
+    Deleting the top-level widgets is what releases the tree -- the C++
+    objects go, the hidden references go with them -- so this runs after every
+    test, whether or not the test closed what it built.  ``close`` goes first
+    so that a window's own closeEvent still runs (the poll timer stops, the
+    service closes); ``deleteLater`` is queued rather than immediate, and no
+    event loop runs between tests, so the queue is flushed by hand.
+    """
+
+    yield
+
+    # Qt is optional for this suite: most modules never import it, and a test
+    # module that does may skip.  Import nothing that is not already loaded.
+    if "PySide6.QtWidgets" not in sys.modules:
+        return
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        try:
+            widget.close()
+            widget.deleteLater()
+        except RuntimeError:
+            # A widget parented to another top-level goes with its parent's
+            # deletion, and the wrapper is a stub by the time it is reached
+            # here.  Nothing left to delete is not a problem.
+            pass
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
