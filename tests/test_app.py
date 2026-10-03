@@ -36,6 +36,7 @@ import app.window as window_module  # noqa: E402
 from app.card import LinkLabel  # noqa: E402
 from app.filters import INSET  # noqa: E402
 from app.models import LEVEL_MAX, NUMBER_MAX  # noqa: E402
+from app.tiles import TileRow  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow  # noqa: E402
 
 #: The real search, kept before any fixture can stand in front of it.
@@ -103,6 +104,22 @@ def no_modal_dialogs(monkeypatch):
     )
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def no_game_process(monkeypatch):
+    """Never ask the machine running the tests whether Torchlight II is up.
+
+    The window warns before sending an item while the game is open, and that
+    warning is a modal box -- which, over a headless window, is a test that
+    hangs instead of failing.  Whether the game happens to be running in the
+    background while the suite is (it is a Torchlight tool; it very well may
+    be) is not something any test's outcome may depend on, so the answer is
+    no unless a test stands its own answer up in front of this one.
+    """
+    import app.window as window_module
+
+    monkeypatch.setattr(window_module, "is_running", lambda name: False)
 
 
 @pytest.fixture
@@ -1106,6 +1123,156 @@ def test_the_stranded_view_says_what_it_is_for_when_there_is_nothing(stocked):
     empty = stocked.grid.findChild(QLabel, "empty")
     assert "No stranded items" in empty.text()
     assert not empty.isHidden()
+
+
+def test_sending_while_the_game_runs_asks_first_and_can_be_refused(
+    stocked, monkeypatch
+):
+    """The user's request: a warning when an item is sent while the game is up.
+
+    The tool cannot tell the main menu from a session in progress -- nothing
+    outside the game's own memory can -- so it says what it does know and the
+    player decides.  Cancelling sends nothing at all: no write, no status
+    change, the item exactly where it was.
+    """
+    import app.window as window_module
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(window_module, "is_running", lambda name: True)
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    asked = []
+    answers = [QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Ok]
+
+    def fake_exec(box):
+        asked.append(box)
+        return answers.pop(0)
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+
+    win._put_back_one(print_)
+
+    assert len(asked) == 1, "the send went ahead without asking"
+    assert win.service.stash_items() == [], "the item went back after Cancel"
+    assert print_ in win.service.registry.absorbed_fingerprints()
+    assert win.status.currentMessage() == "nothing was sent"
+
+    # And the question wears the answer it is asking for: the warning itself,
+    # a way past it, and the checkbox that turns it off for good.
+    box = asked[0]
+    assert "main menu" in box.informativeText()
+    assert "Show Stranded Items" in box.informativeText()
+    assert box.button(QMessageBox.StandardButton.Ok).text() == "Send anyway"
+    assert box.checkBox() is not None
+
+    # Asked again next time, and this time the player says yes.
+    win._put_back_one(print_)
+
+    assert len(asked) == 2
+    assert [item.fingerprint for item in win.service.stash_items()] == [print_]
+
+
+def test_nothing_is_asked_when_the_game_is_not_running(stocked, monkeypatch):
+    """The warning is about the game being open and about nothing else -- a
+    send with the game closed is the ordinary way this tool is used, and
+    nothing may stand between the button and the item."""
+    import app.window as window_module
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(window_module, "is_running", lambda name: False)
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda box: pytest.fail("the player was asked")
+    )
+    print_ = [r for r in stocked.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+
+    stocked._put_back_one(print_)
+
+    assert [item.fingerprint for item in stocked.service.stash_items()] == [print_]
+
+
+def test_the_warning_counts_what_is_about_to_be_sent(stocked, monkeypatch):
+    """One click on ``Transfer all`` can be several items, and the box says
+    how many -- a sentence about "this item" over a button that sends three
+    would be the tool's own small lie."""
+    import app.window as window_module
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(window_module, "is_running", lambda name: True)
+    win = stocked
+    asked = []
+
+    def fake_exec(box):
+        asked.append(box)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    prints = [r["fingerprint"] for r in win.service.registry.rows()]
+    win._transfer_row(
+        TileRow(
+            fingerprint=prints[0],
+            name="Alpha",
+            members=tuple(prints[:2]),
+            card="",
+        )
+    )
+
+    assert len(asked) == 1
+    assert "these 2 items" in asked[0].text(), asked[0].text()
+
+
+def test_never_show_again_is_remembered_for_the_next_run(
+    stocked, monkeypatch, tmp_path
+):
+    """The checkbox the user asked for, and the file it writes.
+
+    Ticking it is remembered immediately and in the tool's own folder -- not
+    in the database, which is a fact about a stash, and not in memory, which
+    forgets at the end of the session.  A second window opening on the same
+    folder reads it back and never asks again.
+    """
+    import json
+
+    import app.window as window_module
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(window_module, "is_running", lambda name: True)
+    win = stocked
+    source = win.service.source
+    asked = []
+
+    def tick_and_ok(box):
+        asked.append(box)
+        box.checkBox().setChecked(True)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "exec", tick_and_ok)
+    prints = [r["fingerprint"] for r in win.service.registry.rows()]
+
+    win._put_back_one(prints[0])
+    assert len(asked) == 1
+    assert win.settings.path == tmp_path / "settings.json", (
+        "the remembered choice went somewhere other than the window's folder"
+    )
+
+    win._put_back_one(prints[1])
+    assert len(asked) == 1, "it asked again after Never show this warning again"
+    assert json.loads(win.settings.path.read_text(encoding="utf-8"))[
+        window_module.WARN_SENDING
+    ] is False
+
+    # A second window on the same folder is the next run of the tool, and it
+    # reads that file -- which is the whole point of writing one.
+    win.close()
+    again = MainWindow(db_path=tmp_path / "items.db", source=source)
+    try:
+        again._put_back_one(prints[2])
+        assert len(asked) == 1, "the next run asked a question already answered"
+    finally:
+        again.close()
 
 
 def test_an_item_with_no_placement_of_its_own_is_routed_by_its_kind(

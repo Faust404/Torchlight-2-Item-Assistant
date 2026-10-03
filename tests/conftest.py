@@ -11,6 +11,11 @@ So writes are fenced.  Every function that can write a stash file is wrapped
 for the duration of a test and refuses a path outside that test's temporary
 directory.  The fence is the point: it turns "a test wandered into the
 player's Documents folder" from silent data loss into a loud failure.
+
+The settings file is the tool's other write, and it is the same kind of thing
+-- a file the player owns, in the player's folder -- so it is fenced the same
+way.  Nothing in the suite writes one today; the fence is what keeps that true
+once something does.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tl2stash.archive as _archive  # noqa: E402
 import tl2stash.service as _service  # noqa: E402
+from app.settings import Settings as _Settings  # noqa: E402
 
 _WRITERS = ("archive_stash", "restore_items")
 
@@ -55,3 +61,18 @@ def no_writes_outside_tmp(tmp_path, monkeypatch):
         for name in _WRITERS:
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, guard(name, getattr(module, name)))
+
+    # The settings file, whose writer is a method rather than a function: same
+    # check, on the path the instance was built with.
+    def guarded_set(self, name, value):
+        target = Path(self.path).resolve()
+        if target != allowed and allowed not in target.parents:
+            raise AssertionError(
+                f"Settings.set() was asked to write {target}, which is outside "
+                f"the test's temporary directory. A test must never modify a "
+                f"file in the player's own folders."
+            )
+        return original_set(self, name, value)
+
+    original_set = _Settings.set
+    monkeypatch.setattr(_Settings, "set", guarded_set)

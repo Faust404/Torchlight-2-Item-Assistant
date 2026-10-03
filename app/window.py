@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 from tl2stash.card import Card
 from tl2stash.gamedata import GameData, find_install
 from tl2stash.item import parse_item
+from tl2stash.processes import GAME_EXE, is_running
 from tl2stash.saves import SaveLocation, find_save_locations, live_location
 from tl2stash.service import STATUS_ABSORBED, ItemService
 from tl2stash.taxonomy import stash_tab_for
@@ -65,6 +66,7 @@ from .models import (
     fill_stash,
     new_model,
 )
+from .settings import Settings
 from .sidebar import SidePanel
 from .tiles import TileGrid, TileRow
 
@@ -87,6 +89,11 @@ GAME_DATA_MISSING = (
     "    python -m app --game=\"<the Torchlight II folder>\"\n"
     "or set TL2_INSTALL to it."
 )
+
+#: The remembered choice behind the warning shown before items are sent while
+#: the game is running.  Spelled out because it is the *file's* name rather
+#: than the window's: it is what a hand-edited settings file has to say.
+WARN_SENDING = "warn_sending_while_running"
 
 
 def _copies_note(rows: list[TileRow]) -> str:
@@ -129,6 +136,10 @@ class MainWindow(QMainWindow):
             Path(db_dir) if db_dir is not None
             else Path(__file__).resolve().parent.parent / "var"
         )
+        #: The choices remembered between runs -- see :mod:`app.settings`.
+        #: Built here because where the file lives is decided by the two
+        #: lines above: beside the registries, or beside the one database.
+        self.settings = Settings(self._settings_path())
         self.service: ItemService | None = None
         self.watcher: StashWatcher | None = None
         self._sources: list[SaveLocation] = []
@@ -159,6 +170,20 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._poll)
         self._timer.start(POLL_MS)
+
+    def _settings_path(self) -> Path:
+        """Where the tool's remembered choices live.
+
+        Beside the registries, which is the tool's own folder -- the one the
+        packaged build will put in the player's profile -- or beside the one
+        database when ``--db`` names it, so that a player keeping their
+        database somewhere keeps its settings with it.  Nothing else in the
+        window writes outside that folder, and a test that hands the window a
+        ``tmp_path`` is owed the same promise by this file too.
+        """
+        if self.db_path is not None:
+            return self.db_path.with_name("settings.json")
+        return self.db_dir / "settings.json"
 
     # -- construction ----------------------------------------------------
 
@@ -733,6 +758,55 @@ class MainWindow(QMainWindow):
             ]
         )
 
+    def _confirm_send(self, count: int) -> bool:
+        """Ask before sending items while the game is running.  True to go on.
+
+        The one thing the window knows that the player at that moment may not
+        is that the game is open -- and the measured behaviour is that an item
+        written while a character is loaded is erased by the game's own save
+        at the next save point.  So this is a reminder about the ritual rather
+        than a guess about intent: the tool cannot tell the main menu from a
+        session in progress (nothing outside the game's own memory can), which
+        is exactly why this is a warning and not a lock.
+
+        ``Never show this warning again`` is what makes the warning worth
+        having.  A player who reads it once and sends at the main menu from
+        then on is doing it right, and a box they have to dismiss at every
+        send would teach them to dismiss boxes.  Ticking it is remembered on
+        the spot, whether or not this particular send goes ahead: the
+        checkbox is about the message, and the buttons are about the item.
+        """
+        if not self.settings.get(WARN_SENDING, True):
+            return True
+        if not is_running(GAME_EXE):
+            return True
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Torchlight II is running")
+        what = "this item" if count == 1 else f"these {count} items"
+        box.setText(f"Send {what} to the shared stash while the game is running?")
+        box.setInformativeText(
+            "Send items at the main menu only, with no character loaded.\n"
+            "\n"
+            "The game holds the shared stash in memory and writes over the\n"
+            "whole file when it saves, so an item sent while you are playing\n"
+            "is erased at the next save point.  If one is erased anyway, it\n"
+            "turns up under Show Stranded Items and can be recovered there."
+        )
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+        )
+        box.button(QMessageBox.StandardButton.Ok).setText("Send anyway")
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        never = QCheckBox("Never show this warning again")
+        box.setCheckBox(never)
+
+        answer = box.exec()
+        if never.isChecked():
+            self.settings.set(WARN_SENDING, False)
+        return answer == QMessageBox.StandardButton.Ok
+
     def _transfer_row(self, row: TileRow) -> None:
         """Send a card's copies back, from a button on the card itself.
 
@@ -747,6 +821,9 @@ class MainWindow(QMainWindow):
             return
         prints = set(row.members or (row.fingerprint,))
         if not prints:
+            return
+        if not self._confirm_send(len(prints)):
+            self._set_status("nothing was sent")
             return
 
         report = self.service.restore(prints)
@@ -779,6 +856,9 @@ class MainWindow(QMainWindow):
         would be the collection's button again.
         """
         if self.service is None:
+            return
+        if not self._confirm_send(1):
+            self._set_status("nothing was sent")
             return
         report = self.service.restore({print_})
         self.watcher.accept()
