@@ -324,10 +324,12 @@ def container_label(container: int, data: "GameData | None" = None) -> str:
     """A display name for one of the shared stash's tabs.
 
     With the game's data to hand this is the tab's *position*: the player
-    counts tabs from one, and the internal names -- ``SHARED_STASH_BAG_ARMS``
-    and so on -- describe what each bag was originally built for while any
-    item goes in any tab.  The name is still worth having, which is why it is
-    the cell's tooltip rather than its text.
+    counts tabs from one, and each of the three takes one kind of thing -- the
+    first everything that is neither consumed nor cast, the second the
+    consumables, the third the spells, which is
+    :func:`tl2stash.taxonomy.stash_tab_for`'s rule.  The internal names --
+    ``SHARED_STASH_BAG_ARMS`` and so on -- say the same thing in the game's own
+    words, and are on the cell's tooltip beside this.
 
     Without the data, the container id is the honest label -- better than
     inventing names that would be wrong the moment a mod added a tab.

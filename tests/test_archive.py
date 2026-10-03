@@ -375,6 +375,40 @@ def test_next_free_slot_appends_when_full():
     assert next_free_slot({10, 11, 12}) == 13
 
 
+def test_next_free_slot_stops_at_the_container_s_last_cell():
+    """A tab with no room answers ``None`` rather than the next number along.
+
+    Without a known end the walk above counts out of the container and hands
+    back a number the game has no cell for -- 3362 in a real stash tab, which
+    holds 3322 to 3361 -- and the item goes into the save file at a slot
+    nothing will ever draw.  Told where the container ends, it refuses instead.
+    """
+    full = set(range(10, 14))
+    assert next_free_slot(full, last=13) is None
+    assert next_free_slot(full, preferred=11, last=13) is None
+    assert next_free_slot(full, preferred=99, last=13) is None, "and not past the end either"
+
+
+def test_next_free_slot_refuses_a_cell_the_container_has_not_got():
+    """A preferred slot outside the container, which the caller can reach.
+
+    A placement is a memory of where an item *was*, and one of them can name a
+    cell this container does not have -- before the ceiling existed, a full tab
+    made the search return one past its end and the item was written there.
+    Restoring such an item into an empty tab used to raise, and raising is what
+    a slot the container has not got must not do: the honest answer is that
+    there is nowhere to put it, which the caller can act on.
+    """
+    assert next_free_slot(set(), preferred=99, last=13) is None
+    assert next_free_slot({10}, preferred=99, last=13) == 11, "or somewhere inside it"
+
+
+def test_next_free_slot_still_fills_a_gap_before_the_end():
+    """Refusing is about being full, not about the end being in sight."""
+    assert next_free_slot({10, 11, 13}, preferred=11, last=13) == 12
+    assert next_free_slot({10, 11, 13}, last=13) == 12
+
+
 def test_next_free_slot_needs_a_hint_for_an_empty_container():
     """An empty container with nowhere to start is the one case this refuses.
 
@@ -387,6 +421,73 @@ def test_next_free_slot_needs_a_hint_for_an_empty_container():
     with pytest.raises(ValueError):
         next_free_slot(set())
     assert next_free_slot(set(), preferred=7) == 7
+
+
+def test_restore_refuses_an_item_whose_container_is_full(tmp_path):
+    """A full tab leaves the item in the tool rather than writing it nowhere.
+
+    This is the whole reason ``last_slot`` exists.  The walk that finds a free
+    cell counts upward from the lowest occupied one, so a full container sends
+    it one past the end -- and a slot past the end is in no container at all,
+    which the game answers by simply not drawing the item.  The player would
+    have watched it leave the collection and never arrive in the stash.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    prints = write_synthetic_stash(path, ["Alpha", "Beta", "Gamma"])
+    beta = read_stash_file(path).items[1]
+    archive_stash(path, {prints[1]})
+    before = path.read_bytes()
+
+    # Beta's old cell is taken by someone else, and the container -- 3322 to
+    # 3324, three cells -- is full once they are all spoken for.
+    squatter = parse_item(synthetic_item(name="Delta", slot=3323)[0])
+    _write(path, [e.blob for e in read_stash_file(path).entries] + [squatter.raw])
+    full = path.read_bytes()
+
+    report = restore_items(
+        path,
+        [RestoreRequest(raw=beta.raw, container=24, slot=3323, label="Beta", last_slot=3324)],
+    )
+
+    assert report.refused == [(beta.fingerprint, "Beta", 24)]
+    assert report.restored == []
+    assert not report.changed, "nothing was written"
+    assert path.read_bytes() == full, "and the file is byte for byte what it was"
+    assert before != full, "the squatter did land, so this is not a no-op fixture"
+    assert "Beta" not in {i.base_name for i in read_stash_file(path).items}
+
+
+def test_restore_of_several_keeps_the_ones_that_fit(tmp_path):
+    """One item's refusal is not the whole gesture's.
+
+    A player putting back twelve things into a tab with three cells free wants
+    the three, not an error and eleven retries: the loop is per item and so is
+    the answer.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    prints = write_synthetic_stash(path, ["Alpha", "Beta", "Gamma"])
+    held = [read_stash_file(path).items[1], read_stash_file(path).items[2]]
+    archive_stash(path, {prints[1], prints[2]})
+    # Alpha is still in 3322, and the tab the caller names is 3322 to 3323 --
+    # one cell, which the first request takes and the second cannot have.
+    report = restore_items(
+        path,
+        [
+            RestoreRequest(raw=item.raw, container=24, slot=3322, label=item.base_name,
+                           last_slot=3323)
+            for item in held
+        ],
+    )
+
+    assert [label for _, label, _, _ in report.restored] == ["Beta"]
+    assert [label for _, label, _ in report.refused] == ["Gamma"]
+    assert report.changed, "the one that fit was still written"
+    after = read_stash_file(path)
+    assert sorted((i.location.slot_index, i.base_name) for i in after.items) == [
+        (3322, "Alpha"),
+        (3323, "Beta"),
+    ]
+    assert after.save.checksum_ok
 
 
 def test_restore_puts_an_item_back_where_it_was(tmp_path):
@@ -404,7 +505,9 @@ def test_restore_puts_an_item_back_where_it_was(tmp_path):
                         slot=beta.location.slot_index, label="Beta")],
     )
     assert report.changed
-    assert report.restored == [("Beta", beta.location.container, beta.location.slot_index)]
+    assert report.restored == [
+        (beta.fingerprint, "Beta", beta.location.container, beta.location.slot_index)
+    ]
 
     # The same items back in the same slots.  Not the same *file order*:
     # restoring appends, so the item returns at the end of the list rather
@@ -495,7 +598,7 @@ def test_restore_moves_over_when_the_slot_it_wants_is_taken(tmp_path):
         [RestoreRequest(raw=beta.raw, container=24, slot=3323, label="Beta")],
     )
 
-    assert report.restored == [("Beta", 24, 3325)]
+    assert report.restored == [(beta.fingerprint, "Beta", 24, 3325)]
     after = read_stash_file(path)
     assert sorted((i.location.slot_index, i.base_name) for i in after.items) == [
         (3322, "Alpha"),

@@ -19,11 +19,17 @@ from tl2stash import StashWatcher, parse_item, read_stash_file  # noqa: E402
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.saves import SaveLocation  # noqa: E402
 from tl2stash.service import (  # noqa: E402
+    DEFAULT_CONTAINER,
     STATUS_ABSORBED,
     STATUS_IN_STASH,
     STATUS_RETURNED,
     ItemService,
 )
+
+#: The container id of the shared stash's consumables tab, as the game numbers
+#: it.  Only used to stand for "the app answered something other than the
+#: default" -- the routing rule itself is not this module's to test.
+CONSUMABLES_CONTAINER = 25
 
 from test_archive import (  # noqa: E402
     write_stash_of,
@@ -423,18 +429,131 @@ def test_the_game_s_answer_outranks_the_registry_s(stash_path, db_path):
     An empty stash the tool has never absorbed anything from has no placements
     at all, so the registry cannot say where its first tab begins -- and the
     game's own files can, which is what makes the first item ever put into a
-    fresh install land in the right cell.
+    fresh install land in the right cell.  The same answer carries the tab's
+    *end*, which is what a full one is measured against.
     """
     write_synthetic_stash(stash_path, [])
 
-    def slot_base(container: int) -> int | None:
-        return 3322 if container == 24 else None
+    def container_cells(container: int) -> tuple[tuple[int, int], ...]:
+        return ((3322, 40),) if container == 24 else ()
 
     with ItemService(
-        db_path, SaveLocation.at(stash_path), slot_base=slot_base
+        db_path, SaveLocation.at(stash_path), container_cells=container_cells
     ) as svc:
         assert svc.first_slot(24) == 3322
+        assert svc.last_slot(24) == 3361, "40 cells from 3322 end at 3361"
         assert svc.first_slot(25) is None, "a container the game does not number"
+        assert svc.last_slot(25) is None, "and so has no end to measure against"
+
+
+def test_a_full_tab_refuses_and_the_item_stays_ours(stash_path, db_path):
+    """The item is left where the player can see it, and still marked ours.
+
+    Both halves are the same fact seen twice: the item is not in the game, so
+    it must not be marked as though it were.  A refused item marked
+    ``returned`` would be exempt from the automatic vacuum *and* gone from the
+    collection's own accounting -- sitting in neither place, which is the
+    whole of what the refusal exists to avoid.
+    """
+    write_synthetic_stash(stash_path, ["Alpha", "Beta", "Gamma"])
+
+    def container_cells(container: int) -> tuple[tuple[int, int], ...]:
+        return ((3322, 3),) if container == 24 else ()
+
+    with ItemService(
+        db_path, SaveLocation.at(stash_path), container_cells=container_cells
+    ) as service:
+        service.absorb_all()
+        (alpha,) = [r for r in service.registry.rows() if r["name"] == "Alpha"]
+        print_ = alpha["fingerprint"]
+
+        # The player fills the tab with new loot while Alpha waits in the tool.
+        write_synthetic_stash(stash_path, ["Delta", "Epsilon", "Zeta"])
+        report = service.restore({print_})
+
+        assert report.refused == [(print_, "Alpha", 24)]
+        assert report.restored == []
+        assert service.registry.get(print_)["status"] == STATUS_ABSORBED
+        assert service.registry.get(print_)["raw"], "its bytes are still ours to keep"
+        assert "Alpha" not in {i.base_name for i in service.stash_items()}
+
+
+def test_an_item_left_past_the_end_of_its_tab_comes_back_inside_it(stash_path, db_path):
+    """The old bug's leftovers, which may be in the player's save right now.
+
+    Before the ceiling existed, a full tab made the search return one cell past
+    the end -- 3362 for the first tab, which no container of the game numbers
+    -- and the item was written there.  The game draws nothing at such a slot,
+    so the player never saw it land; the tool marked it returned and took it out
+    of the collection's hands.  If the game saved while the item was there, it
+    is in the file at that number and that is the placement the registry has
+    remembered, and putting it back has to honour none of it: not the cell
+    (there is no cell), and not the crash the search would raise on an empty
+    tab it cannot walk out of.
+    """
+    write_stash_of(stash_path, [parse_item(synthetic_item(name="Stray", slot=3362)[0])])
+
+    def container_cells(container: int) -> tuple[tuple[int, int], ...]:
+        return ((3322, 40),) if container == 24 else ()
+
+    with ItemService(
+        db_path, SaveLocation.at(stash_path), container_cells=container_cells
+    ) as service:
+        service.absorb_all()
+        (row,) = service.registry.rows()
+        place = service.registry.last_placement(row["fingerprint"], service.source_key)
+        assert place["slot"] == 3362, "the fixture did not reproduce the old write"
+        assert not service.slot_is_a_cell(24, 3362)
+
+        report = service.restore({row["fingerprint"]})
+
+        assert report.refused == []
+        (back,) = service.stash_items()
+        assert back.location.slot_index == 3322, "back inside the tab, at its first cell"
+
+
+def test_an_item_with_no_place_of_its_own_is_routed_by_the_app(stash_path, db_path):
+    """The service asks; the app answers; the rule lives in neither.
+
+    Which tab a potion goes in is a fact about kinds, and the kind is in the
+    game's data files rather than in the save -- so the service holds a
+    callable and the app is what fills it in.  What is pinned here is the
+    asking, and that the answer is the one used.
+    """
+    write_synthetic_stash(stash_path, [])
+    asked: list[str] = []
+
+    # 25 is the consumables tab's container id -- what the app's own routing
+    # answers with for a potion.  The service must not care why.
+    def container_of(print_: str) -> int | None:
+        asked.append(print_)
+        return CONSUMABLES_CONTAINER
+
+    with ItemService(
+        db_path, SaveLocation.at(stash_path), container_of=container_of
+    ) as service:
+        assert service.tab_for("a potion's fingerprint") == CONSUMABLES_CONTAINER
+        assert asked == ["a potion's fingerprint"]
+
+
+def test_without_the_game_an_item_goes_to_the_first_tab(stash_path, db_path):
+    """No game means no kind to read, and the first tab takes all of them.
+
+    This is the machine without Torchlight installed, and the item imported
+    from somewhere else entirely: there is nothing to work the kind out from,
+    so the answer is the tab the game itself files nothing else into.
+    """
+    write_synthetic_stash(stash_path, [])
+    with ItemService(db_path, SaveLocation.at(stash_path)) as service:
+        assert service.tab_for("anything") == DEFAULT_CONTAINER
+
+    def no_answer(print_: str) -> int | None:
+        return None
+
+    with ItemService(
+        db_path, SaveLocation.at(stash_path), container_of=no_answer
+    ) as service:
+        assert service.tab_for("anything") == DEFAULT_CONTAINER
 
 
 # --------------------------------------------------------------------------

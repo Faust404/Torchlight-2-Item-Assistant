@@ -42,6 +42,7 @@ from tl2stash.gamedata import GameData, find_install
 from tl2stash.item import parse_item
 from tl2stash.saves import SaveLocation, find_save_locations, live_location
 from tl2stash.service import STATUS_ABSORBED, ItemService
+from tl2stash.taxonomy import stash_tab_for
 from tl2stash.tooltip import build
 from tl2stash.watcher import StashWatcher
 
@@ -59,6 +60,7 @@ from .models import (
     STASH_COLUMNS,
     TIER_ROLE,
     CollectionFilter,
+    container_label,
     fill_collection,
     fill_stash,
     new_model,
@@ -404,17 +406,37 @@ class MainWindow(QMainWindow):
             self._game_error = str(exc)
         return self._game
 
-    def _slot_base(self, container: int) -> int | None:
-        """Where the game says this container's cells begin.
+    def _container_cells(self, container: int) -> tuple[tuple[int, int], ...]:
+        """The cells the game says this container is made of.
 
         Handed to :class:`~tl2stash.service.ItemService` as a callable rather
         than as an answer, because reading the game's files takes a second and
-        is only needed when an item is being put back into a tab the tool has
-        never seen it in.  ``None`` without the game, which the service has an
-        answer of its own for.
+        is only needed when an item is being put back.  ``()`` without the
+        game, which the service has answers of its own for.
         """
         game = self._game_data()
-        return game.slot_base(container) if game is not None else None
+        return game.container_cells(container) if game is not None else ()
+
+    def _container_for(self, print_: str) -> int | None:
+        """Which tab the game puts this kind of item in.
+
+        The typed half of putting an item back: an item the tool has no
+        placement of its own for still has to go in the tab its kind belongs
+        in, and the kind is read out of the game's data -- which is why this
+        answers by fingerprint, and why it is handed to the service as a
+        callable rather than as a table.  ``None`` when there is no game to say
+        or no row to look up.
+        """
+        game = self._game_data()
+        if game is None or self.service is None:
+            return None
+        row = self.service.registry.get(print_)
+        if row is None:
+            return None
+        kind = self._catalog_for(game).entry(print_, row).kind
+        position = stash_tab_for(kind)
+        tabs = game.stash_tabs
+        return tabs[position - 1] if len(tabs) >= position else None
 
     def _note_game(self) -> None:
         """Say, in one line, that there is no game data -- if there is not.
@@ -505,7 +527,12 @@ class MainWindow(QMainWindow):
         db_path = (
             self.db_path if self.db_path is not None else self.db_dir / location.db_name
         )
-        self.service = ItemService(db_path, location, slot_base=self._slot_base)
+        self.service = ItemService(
+            db_path,
+            location,
+            container_cells=self._container_cells,
+            container_of=self._container_for,
+        )
         self.watcher = StashWatcher(location.path)
 
         self._sync(write=False)
@@ -665,7 +692,18 @@ class MainWindow(QMainWindow):
         self.watcher.accept()
         self._refresh_views()
 
-        if report.restored:
+        if report.refused:
+            # A refusal is the only outcome here the player has to act on, so
+            # it is the one that gets said whether or not the rest went back.
+            # It leads: "put back 3 · 2 stayed here" is a sentence that ends
+            # with the thing to do something about.
+            where = self._full_tab(report.refused)
+            stayed = f"{len(report.refused)} stayed here — {where}"
+            if report.restored:
+                self._set_status(f"put back {len(report.restored)} · {stayed}")
+            else:
+                self._set_status(stayed)
+        elif report.restored:
             note = f"put back {len(report.restored)}{_copies_note([row])}"
             tail = "it returns" if len(report.restored) == 1 else "they return"
             self._set_status(f"{note} · {tail} to the game on its next load")
@@ -690,8 +728,25 @@ class MainWindow(QMainWindow):
             # drew is a thing the tool no longer holds.
             self.compare.drop(print_)
             self._set_status("put back 1 · it returns to the game on its next load")
+        elif report.refused:
+            self._set_status(f"it stayed here — {self._full_tab(report.refused)}")
         elif report.skipped:
             self._set_status("that copy was already in the stash")
+
+    def _full_tab(self, refused: list[tuple[str, str, int]]) -> str:
+        """Which tab a refusal was about, named the way the panes name it.
+
+        The tab is named by its position -- ``Tab 1`` -- because that is what
+        the tool calls it everywhere else and the player is already reading
+        those words in the game pane's tooltips.  One tab is the ordinary case
+        and gets named; several at once means the player has emptied more of
+        the stash than they meant to, and saying so beat listing them.
+        """
+        containers = {container for _, _, container in refused}
+        data = self._game_data()
+        if len(containers) == 1:
+            return f"{container_label(next(iter(containers)), data)} is full"
+        return "their tabs are full"
 
     # -- display ---------------------------------------------------------
 

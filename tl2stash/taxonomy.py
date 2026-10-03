@@ -57,6 +57,13 @@ type and one ``Scroll``, and its own records say so: ``Health Potion`` and
 the item's *name* -- ``Mana Potion``, ``Grand Health Potion`` -- which is where
 a player reads it anyway.
 
+One more thing lives here, because it is a fact about kinds rather than about
+any one view: which of the shared stash's three tabs a kind belongs in.  Those
+tabs are typed -- the game will not take a potion in the arms tab, nor a sword
+in the spells tab -- so :func:`stash_tab_for` decides where an item goes when
+the tool has no placement of its own to go by, and being wrong means the item
+lands where the game will not draw it.
+
 Qt-free, like the rest of ``tl2stash``: this says how the game's kinds group,
 and ``app.sidebar`` says what that looks like.
 """
@@ -64,13 +71,19 @@ and ``app.sidebar`` says what that looks like.
 from __future__ import annotations
 
 __all__ = [
+    "ARMS_TAB",
+    "CONSUMABLE_KINDS",
+    "CONSUMABLES_TAB",
     "KIND_ALIASES",
     "KIND_PLACES",
     "OTHER",
+    "SPELL_KINDS",
+    "SPELLS_TAB",
     "TYPE_GROUPS",
     "Place",
     "canonical_kind",
     "group_of",
+    "stash_tab_for",
 ]
 
 #: One item's place in the rail: ``(group, subgroup, kind)``, with ``None`` for
@@ -346,3 +359,64 @@ def group_of(kind: str) -> tuple[str, str | None]:
     if not kind:
         return "Misc", None
     return _BY_KIND.get(canonical_kind(kind).upper(), (OTHER, None))
+
+
+#: The shared stash's three tabs by the number the player counts them off by,
+#: which is the identity to use: the game's own names for them
+#: (``SHARED_STASH_BAG_ARMS`` and so on) describe what each bag was built for,
+#: and a mod may add a tab or spell them differently, but the first tab is the
+#: first tab.  :meth:`tl2stash.gamedata.GameData.stash_tabs` turns a position
+#: into the container id the save file writes.
+ARMS_TAB = 1
+CONSUMABLES_TAB = 2
+SPELLS_TAB = 3
+
+#: The kinds the shared stash's second tab takes: everything a character
+#: consumes rather than wears or casts.
+#:
+#: The tabs are *typed* -- a potion cannot be dragged into the arms tab in the
+#: game, and a sword cannot be dragged into the spells tab -- so this table is
+#: not a preference about tidiness.  It is the only thing that decides where an
+#: item goes when the tool has no placement of its own to go by, and getting it
+#: wrong puts the item in a tab the game will not show it in.
+#:
+#: The game's own data does not state the rule: the six bag containers
+#: (``PLAYER_BAG_ARMS``, the three shared tabs, and their consumable and spell
+#: counterparts) are shaped alike -- a name, an id, a sort order and a slot
+#: list -- and none of them lists what it will take; and no item file names a
+#: bag at all, measured over all 6,262 of them, where a search for one turns up
+#: the quest bag's model path and a pair of items that happen to be called
+#: ``Babbage``.  The rule lives in the game's own code, so it is stated here,
+#: once, where ``tests/test_taxonomy.py`` can hold it against every kind the
+#: archive can produce.
+CONSUMABLE_KINDS: frozenset[str] = frozenset(
+    {"Potion", "Fish", "Scroll", "Dynamite", "Map", "Gold"}
+)
+
+#: The kinds the shared stash's third tab takes -- the one tab that is
+#: exclusively anything.
+SPELL_KINDS: frozenset[str] = frozenset({"Spell"})
+
+
+def stash_tab_for(kind: str) -> int:
+    """Which shared stash tab a kind of item goes in, counting from 1.
+
+    ``'Spell'`` is the third tab, ``'Potion'`` and the rest of
+    :data:`CONSUMABLE_KINDS` the second, and everything else the first -- the
+    game's own arrangement, and the reason the tabs are not interchangeable.
+
+    The kind is canonicalised first, so the game's ``HEALTHPOTION`` routes as
+    the ``Potion`` it is and an item with no kind word at all -- a quest object
+    -- routes to the first tab like the rest of what is neither consumed nor
+    cast.  A kind nothing here recognises routes there too, because the first
+    tab is the one that takes everything the game files nowhere else; a mod
+    that adds a potion under a word this table has never seen gets the arms tab
+    rather than a guess read off the item's name, and the arms tab at least
+    shows it.
+    """
+    canonical = canonical_kind(kind)
+    if canonical in SPELL_KINDS:
+        return SPELLS_TAB
+    if canonical in CONSUMABLE_KINDS:
+        return CONSUMABLES_TAB
+    return ARMS_TAB

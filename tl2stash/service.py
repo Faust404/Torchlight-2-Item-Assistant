@@ -68,7 +68,10 @@ STATUS_IN_STASH = "in_stash"
 STATUS_RETURNED = "returned"
 
 #: Which container to restore into when the item was never seen in a stash
-#: (imported from elsewhere, say).  The shared stash's general tab.
+#: (imported from elsewhere, say) and there is no game to ask what it is --
+#: :meth:`ItemService.tab_for` is what answers that question normally, and it
+#: answers by the item's kind.  This is the shared stash's *first* tab, the one
+#: that takes everything the game files nowhere else.
 DEFAULT_CONTAINER = 24
 
 
@@ -118,17 +121,24 @@ class ItemService:
         db_path: str | Path,
         location: SaveLocation,
         *,
-        slot_base: Callable[[int], int | None] | None = None,
+        container_cells: Callable[[int], tuple[tuple[int, int], ...]] | None = None,
+        container_of: Callable[[str], int | None] | None = None,
     ) -> None:
         self.registry = Registry(db_path)
         self.location = location
         self.source = Path(location.path)
-        #: Where a container's cells begin, by the game's own reckoning, or
-        #: ``None`` on a machine without the game -- see :meth:`first_slot`.
-        #: Taken as a callable rather than as the data itself so that reading
-        #: the game's files, which takes a second, stays where it is: behind
-        #: the window's first need for it.
-        self._slot_base = slot_base
+        #: The cells each container is made of, by the game's own reckoning, or
+        #: ``None`` on a machine without the game -- see :meth:`first_slot` and
+        #: :meth:`last_slot`.  Taken as a callable rather than as the data
+        #: itself so that reading the game's files, which takes a second, stays
+        #: where it is: behind the window's first need for it.
+        self._cells = container_cells
+        #: Which tab an item belongs in, asked by fingerprint, for an item the
+        #: tool has no placement of its own for -- see :meth:`tab_for`.  A
+        #: callable for the same reason, and because the answer follows from
+        #: the item's *kind*: that lives in the game's data files and not in
+        #: the save, so the app is the one that can say it.
+        self._container_of = container_of
         self._stash: Stash | None = None
 
     @property
@@ -255,10 +265,21 @@ class ItemService:
 
         Where each one lands is :func:`~tl2stash.archive.next_free_slot`'s
         answer: the slot it had, if the tool saw it in one and the game is not
-        sitting in it, and otherwise the first empty slot of the tab.  Nothing
-        is written down on the way back -- which tab and which cell are the
-        game's business, and the player asked only that the item be in the
-        stash.
+        sitting in it, and otherwise the first empty cell of the tab.  A
+        placement that names a cell the game does not number in that container
+        is no placement at all -- see :meth:`slot_is_a_cell` -- and the tab an
+        item with no placement goes in is its *kind*'s, which is
+        :meth:`tab_for`'s answer.  Nothing is written down on the way back --
+        which tab and which cell are the game's business, and the player asked
+        only that the item be in the stash -- *except* when the tab has no
+        room, which the item is refused over: a full tab is the one answer that
+        has to be said out loud, because the item stays here and the player is
+        the one who has to make the room.
+
+        Only the items that went back are marked returned.  A refused one is
+        not in the game, and marking it as though it were would take it off the
+        collection's hands as well -- the item would then be nowhere the player
+        can see, which is the whole of what this is careful about.
         """
         self.refresh()
         requests = []
@@ -267,21 +288,48 @@ class ItemService:
             if row is None:
                 continue
             place = self.registry.last_placement(print_, self.source_key)
-            container = place["container"] if place else DEFAULT_CONTAINER
+            container = place["container"] if place else self.tab_for(print_)
+            slot = place["slot"] if place else None
+            if slot is None or not self.slot_is_a_cell(container, slot):
+                slot = self.first_slot(container)
             requests.append(
                 RestoreRequest(
                     raw=row["raw"],
                     container=container,
-                    slot=place["slot"] if place else self.first_slot(container),
+                    slot=slot,
                     label=row["name"],
+                    last_slot=self.last_slot(container),
                 )
             )
 
         report = restore_items(self.source, requests, dry_run=dry_run)
         if not dry_run and report.restored:
-            self.registry.set_status(fingerprints, STATUS_RETURNED)
+            self.registry.set_status(
+                {print_ for print_, _, _, _ in report.restored}, STATUS_RETURNED
+            )
         self.refresh()
         return report
+
+    def tab_for(self, print_: str) -> int:
+        """Which tab an item goes in when the tool has no place of its own.
+
+        The item's *kind* decides, because the three tabs are typed -- a potion
+        goes in the consumables tab and nowhere else -- and the rule is
+        :func:`tl2stash.taxonomy.stash_tab_for`'s.  The kind comes from the
+        game's data files rather than from the save, so this asks the app for
+        the container rather than working it out, and the app answers by
+        fingerprint.
+
+        Without the game there is no kind to read and no rule to apply, so the
+        item goes to the tab the tool has always used for one it has no place
+        for: the first, which is the tab that takes everything the game files
+        nowhere else.
+        """
+        if self._container_of is not None:
+            container = self._container_of(print_)
+            if container is not None:
+                return container
+        return DEFAULT_CONTAINER
 
     def first_slot(self, container: int) -> int | None:
         """Where an item goes when the tool has no place of its own for it.
@@ -294,8 +342,43 @@ class ItemService:
         way round.  ``None`` when neither can answer, which is the one case
         the placement refuses to guess at.
         """
-        if self._slot_base is not None:
-            base = self._slot_base(container)
-            if base is not None:
-                return base
+        cells = self._cells(container) if self._cells is not None else ()
+        if cells:
+            return cells[0][0]
         return self.registry.first_slot(container, self.source_key)
+
+    def last_slot(self, container: int) -> int | None:
+        """A container's own final cell, when the game's data says what it is.
+
+        This is what makes a full tab a refusal rather than a slot number the
+        game has no cell for: 40 cells from 3322 end at 3361, and 3362 is not a
+        slot in any container of the game.  ``None`` without the game, which is
+        the honest answer rather than a disappointing one -- the registry knows
+        the slots this save has *used*, and the highest of those is not the end
+        of the container but only the last thing that happened to be in it.
+        Measured that way, a tab holding one item in its last cell would read
+        as full.
+        """
+        cells = self._cells(container) if self._cells is not None else ()
+        if not cells:
+            return None
+        start, count = cells[-1]
+        return start + count - 1
+
+    def slot_is_a_cell(self, container: int, slot: int) -> bool:
+        """Whether the game numbers this cell in this container.
+
+        The tool's own placements are memories of where an item *was*, and one
+        of them can name a cell the container does not have: before the ceiling
+        existed a full tab made the search return one past its end, and the item
+        was written there -- 3362 for the first tab, which no container of the
+        game numbers.  A remembered cell like that is not a cell, and honouring
+        it would put the item back where the game draws nothing.
+
+        ``True`` when there is no game to ask, which is not the same answer as
+        "yes" so much as the absence of a question: a placement the tool
+        recorded is all it has to go on, and contradicting it against nothing
+        would send every item to a tab's first cell instead of its own.
+        """
+        cells = self._cells(container) if self._cells is not None else ()
+        return not cells or any(start <= slot < start + count for start, count in cells)

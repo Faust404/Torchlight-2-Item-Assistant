@@ -26,11 +26,15 @@ from tl2stash.dat import VAR_UNITTYPE  # noqa: E402
 from tl2stash.gamedata import archive_path, read_unit_type  # noqa: E402
 from tl2stash.pak import PakIndex  # noqa: E402
 from tl2stash.taxonomy import (  # noqa: E402
+    ARMS_TAB,
+    CONSUMABLES_TAB,
     KIND_PLACES,
     OTHER,
+    SPELLS_TAB,
     TYPE_GROUPS,
     canonical_kind,
     group_of,
+    stash_tab_for,
 )
 
 from test_dat import needs_game, real_game  # noqa: E402
@@ -477,3 +481,86 @@ def test_every_listed_kind_is_a_place_and_the_empty_kind_is_not():
     # makes the grid's boxes and the rail's leaves the same leaves.
     for place in KIND_PLACES:
         assert group_of(place[2]) == (place[0], place[1]), place
+
+
+# --------------------------------------------------------------------------
+# Which tab an item goes in
+# --------------------------------------------------------------------------
+
+
+def test_the_tabs_are_counted_from_one():
+    """Positions, not container ids.
+
+    The player counts the shared stash's tabs off from one and the game's own
+    files order the three bags the same way; which container id each position
+    turns into is :meth:`tl2stash.gamedata.GameData.stash_tabs`'s business,
+    pinned over there.
+    """
+    assert (ARMS_TAB, CONSUMABLES_TAB, SPELLS_TAB) == (1, 2, 3)
+
+
+def test_the_three_buckets_are_the_whole_taxonomy():
+    """Every kind the reference names has exactly one tab, and these are they.
+
+    The tabs are typed -- a potion cannot be dragged into the arms tab -- so
+    "every kind goes somewhere" is not tidiness, it is the difference between
+    an item being drawn and an item being nowhere.  Stated as a partition, so
+    a kind added to the lists later cannot quietly join the wrong bucket.
+    """
+    listed = {kind for _, _, kind in KIND_PLACES}
+    buckets = {
+        tab: {kind for kind in listed if stash_tab_for(kind) == tab}
+        for tab in (ARMS_TAB, CONSUMABLES_TAB, SPELLS_TAB)
+    }
+
+    assert buckets[SPELLS_TAB] == {"Spell"}
+    assert buckets[CONSUMABLES_TAB] == {
+        "Potion", "Fish", "Scroll", "Dynamite", "Map", "Gold"
+    }
+    assert buckets[ARMS_TAB] == listed - {"Spell"} - buckets[CONSUMABLES_TAB]
+    assert set().union(*buckets.values()) == listed
+
+
+def test_the_kind_is_canonicalised_before_the_tab_is_chosen():
+    """The game's own words for kinds, and a name that is not a kind at all.
+
+    ``Healthpotion`` is the ``Potion`` the reference files under one name, so
+    it is the consumables tab; ``Socketable`` is what an ember canonicalises
+    to, and socketables are worn, not consumed.  A word nothing here knows
+    goes to the first tab rather than to a guess read off the item's name --
+    the arms tab is the one that at least shows it.
+    """
+    assert stash_tab_for("Healthpotion") == CONSUMABLES_TAB
+    assert stash_tab_for("2H Sword") == ARMS_TAB, "canonicalised to Greatsword"
+    assert stash_tab_for("Blood Ember") == ARMS_TAB, "canonicalised to Socketable"
+    assert stash_tab_for("") == ARMS_TAB, "no kind word at all is a quest object"
+    assert stash_tab_for("Babbage Belt") == ARMS_TAB
+
+
+@needs_game
+def test_every_kind_the_game_writes_lands_in_the_tab_the_player_said(real_game):
+    """The same sweep as the group test, asked the other question.
+
+    The rule itself is not in the game's data -- no container lists what it
+    takes, and no item file names a bag, measured over all 6,262 of them -- so
+    this cannot check the rule against an authority.  What it can do is hold
+    the table against every word the archive actually writes: the six potion
+    words, the embers that canonicalise to socketables, the game's ``Stud``
+    for a tag, and the 194 files that say ``Spell``.
+    """
+    kinds = _every_kind(real_game)
+    tabs = {kind: stash_tab_for(kind) for kind in kinds}
+
+    assert {k for k, tab in tabs.items() if tab == SPELLS_TAB} == {"Spell"}
+    assert {k for k, tab in tabs.items() if tab == CONSUMABLES_TAB} == {
+        "Potion", "Healthpotion", "Manapotion", "Rejuvpotion",
+        "Fish", "Scroll", "Identify Scroll", "Dynamite", "Map", "Gold",
+    }
+    assert tabs["Socketable"] == tabs["Blood Ember"] == ARMS_TAB
+    assert tabs["Stud"] == ARMS_TAB, "the game's word for a Tag"
+
+    # How many files each tab would hold, for the two tabs the player will
+    # notice: the game's 194 spell files are the third tab's, and the 195
+    # consumable ones are the second's.
+    assert sum(n for k, n in kinds.items() if tabs[k] == SPELLS_TAB) == 194
+    assert sum(n for k, n in kinds.items() if tabs[k] == CONSUMABLES_TAB) == 195

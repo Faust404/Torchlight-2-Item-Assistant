@@ -247,18 +247,33 @@ class RestoreRequest:
     container: int
     slot: int | None = None
     label: str = ""
+    #: The container's own last cell, when the caller knows it -- see
+    #: :func:`next_free_slot`.  ``None`` for a container with no known end,
+    #: which is what a machine without the game has to say.
+    last_slot: int | None = None
 
 
 @dataclass
 class RestoreReport:
     path: Path
     backup: Path | None = None
-    restored: list[tuple[str, int, int]] = field(default_factory=list)
+    #: What went back: ``(fingerprint, label, container, slot)``.  The label is
+    #: for the player and the fingerprint for the registry, which marks exactly
+    #: these as returned -- see :meth:`tl2stash.service.ItemService.restore`.
+    restored: list[tuple[str, str, int, int]] = field(default_factory=list)
+    #: Items their tab had no room for, as ``(fingerprint, label, container)``.
+    #: Refused rather than put somewhere else: the tabs are typed, so there is
+    #: nowhere else the item is allowed to go, and a slot past the tab's last
+    #: cell is not a slot at all -- the game has no cell there and does not
+    #: draw what is written to it.
+    refused: list[tuple[str, str, int]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     changed: bool = False
 
 
-def next_free_slot(occupied: set[int], preferred: int | None = None) -> int:
+def next_free_slot(
+    occupied: set[int], preferred: int | None = None, last: int | None = None
+) -> int | None:
     """Lowest free slot, preferring the item's original one.
 
     Slots are not compacted when items leave -- removal leaves a hole -- so
@@ -271,15 +286,37 @@ def next_free_slot(occupied: set[int], preferred: int | None = None) -> int:
     :meth:`tl2stash.service.ItemService.first_slot`).  With neither, and
     nothing in the container to measure from, this refuses to guess: a slot
     number means nothing on its own, and a wrong one puts the item where the
-    game will not show it.
+    game will not show it.  A *preferred* cell the container has not got is
+    refused the same way and not raised over, because it is a number the tool
+    can arrive at honestly: a placement remembered from before the ceiling
+    existed is exactly that, and an item restored to an empty tab would
+    otherwise fail here rather than go to the only cell there is.
+
+    ``last`` is the container's final cell, when the caller knows it, and it
+    is the difference between a full tab and a hole in the number space.  The
+    walk below counts *up* from the lowest occupied cell and stops at the
+    first number nothing is sitting in -- which, in a container with no end,
+    is a number the game has no cell for.  A tab that is full therefore has to
+    answer ``None`` rather than invent the next number along, and the caller
+    has to say so to the player rather than write it down.
     """
-    if preferred is not None and preferred not in occupied:
+    if (
+        preferred is not None
+        and preferred not in occupied
+        and (last is None or preferred <= last)
+    ):
         return preferred
     if occupied:
         slot = min(occupied)
         while slot in occupied:
             slot += 1
+        if last is not None and slot > last:
+            return None
         return slot
+    if preferred is not None:
+        # An anchor was given and the container has no such cell: there is
+        # nothing to place against and nothing to walk up from.
+        return None
     raise ValueError("nowhere to put an item: the container is empty and no slot is known")
 
 
@@ -294,6 +331,12 @@ def restore_items(
 
     An item already present in the stash is skipped rather than duplicated --
     restoring something that never left would otherwise silently clone it.
+
+    An item whose container has no room left is *refused*: nothing is written
+    for it and it is named in :attr:`RestoreReport.refused`.  The one thing
+    this must not do is write it anyway, at a slot past the container's last
+    cell -- the game has no cell there, so the item would be in the file, out
+    of the tool's hands, and invisible in the player's stash.
     """
     path = Path(path)
     report = RestoreReport(path=path)
@@ -316,14 +359,21 @@ def restore_items(
             continue
 
         slots = occupied.setdefault(request.container, set())
-        slot = next_free_slot(slots, request.slot)
+        slot = next_free_slot(slots, request.slot, request.last_slot)
+        if slot is None:
+            report.refused.append(
+                (item.fingerprint, request.label or item.display_name, request.container)
+            )
+            continue
         slots.add(slot)
 
         # ``relocated`` returns the item's bytes with only its container and
         # slot fields patched, so there is nothing to re-parse on the way in.
         blobs.append(item.relocated(slot, request.container))
         present.add(item.fingerprint)
-        report.restored.append((request.label or item.display_name, request.container, slot))
+        report.restored.append(
+            (item.fingerprint, request.label or item.display_name, request.container, slot)
+        )
 
     if not report.restored or dry_run:
         return report

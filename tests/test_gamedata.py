@@ -282,17 +282,35 @@ def install(tmp_path: Path) -> Path:
         0x7008,
         {VAR_SET: (TEXT, string("TEST_SET"))},
     )
+    # The two kinds that are neither worn nor cast.  The shared stash's tabs
+    # are typed -- the first takes everything else, the second the consumables
+    # and the third the spells -- and these two exist so that the routing can
+    # be followed all the way through: from this file's ``UNITTYPE``, through
+    # the kind it canonicalises to, to the container a restore writes into.
+    item_file("POTIONS/TEST_POTION.DAT", "Test Potion", "POTION", 10, 0x7009)
+    item_file("SPELLS/TEST_SPELL.DAT", "Test Spell", "SPELL", 10, 0x700A)
 
     # Containers: each names itself and declares the id the save file records.
     # The ARMS tab also names the slot file its cells come from, which is how
     # the game ties a container to the numbers its slots carry: the container
     # says *which* file, and the file says *which number* the first cell has.
+    # The count beside that name is how many cells the file contributes, which
+    # is what says the tab is full -- 40 of them, the same as the real game's.
     files["MEDIA/INVENTORY/CONTAINERS/SHARED_STASH_BAG_ARMS.DAT"] = write_dat(
         {0: "SHARED_STASH_BAG_ARMS", 1: "BAG_ARMS_SLOT"},
         [
             {
                 "vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 24)},
-                "kids": [{"vars": {VAR_SLOT_NAME: (TEXT, 1)}}],
+                "kids": [{"vars": {VAR_SLOT_NAME: (TEXT, 1), VAR_COUNT: (2, 40)}}],
+            }
+        ],
+    )
+    files["MEDIA/INVENTORY/CONTAINERS/SHARED_STASH_BAG_CONSUMABLES.DAT"] = write_dat(
+        {0: "SHARED_STASH_BAG_CONSUMABLES", 1: "BAG_CONSUMABLES_SLOT"},
+        [
+            {
+                "vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 25)},
+                "kids": [{"vars": {VAR_SLOT_NAME: (TEXT, 1), VAR_COUNT: (2, 40)}}],
             }
         ],
     )
@@ -304,6 +322,10 @@ def install(tmp_path: Path) -> Path:
     files["MEDIA/INVENTORY/BAG_ARMS_SLOT.DAT"] = write_dat(
         {0: "BAG_ARMS_SLOT"},
         [{"vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 3322)}}],
+    )
+    files["MEDIA/INVENTORY/BAG_CONSUMABLES_SLOT.DAT"] = write_dat(
+        {0: "BAG_CONSUMABLES_SLOT"},
+        [{"vars": {VAR_NAME: (TEXT, 0), VAR_SLOT_BASE: (2, 4322)}}],
     )
     # A slot file *beside* the containers: same idea, different space of
     # numbers, and its 0 is not container 0.
@@ -616,9 +638,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Forty-one parse; the forty-second is a DAT that will not, and the
-    forty-third is not a DAT at all."""
-    assert game.files_read == 41
+    """Forty-five parse; the forty-sixth is a DAT that will not, and the
+    forty-seventh is not a DAT at all."""
+    assert game.files_read == 45
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -1054,15 +1076,17 @@ def test_a_damage_type_the_file_writes_is_the_number_a_record_carries(game):
 
 
 def test_the_stash_bags_are_named_and_ordered(game):
-    assert game.stash_tabs == [24, 26]
+    assert game.stash_tabs == [24, 25, 26]
     assert game.container_name(24) == "SHARED_STASH_BAG_ARMS"
+    assert game.container_name(25) == "SHARED_STASH_BAG_CONSUMABLES"
     assert game.container_name(26) == "SHARED_STASH_BAG_SPELLS"
 
 
 def test_a_tab_is_reported_as_the_player_counts_it(game):
     """The player sees "the first tab", not "container 24"."""
     assert game.stash_tab(24) == 1
-    assert game.stash_tab(26) == 2
+    assert game.stash_tab(25) == 2
+    assert game.stash_tab(26) == 3
 
 
 def test_the_slot_files_beside_the_containers_are_not_containers(game):
@@ -1094,6 +1118,22 @@ def test_a_container_says_where_its_cells_begin(game):
     assert game.slot_base(24) == 3322
 
 
+def test_a_container_says_how_many_cells_it_has(game):
+    """The count beside the slot file's name, which is what a full tab is.
+
+    Every ``SLOTS`` entry is ``(slot file, count)``, and the count used to be
+    dropped on the floor: a caller could find where a container began and not
+    how far it went, so a container with no room left looked like one with room
+    one cell past its end.  The synthetic arms tab declares 40 here and the
+    stash really does hold 40; the same block is what
+    :meth:`tl2stash.service.ItemService.last_slot` measures a refusal against.
+    """
+    assert game.container_cells(24) == ((3322, 40),)
+    assert game.container_cells(25) == ((4322, 40),)
+    assert game.container_cells(26) == (), "the synthetic spells tab names no slot file"
+    assert game.container_cells(999) == (), "and neither does a container that is not one"
+
+
 def test_a_container_that_names_no_slot_file_has_no_base(game):
     """Which is every container whose cells are not numbered consecutively
     from one place, and the reason a caller has to be able to ask at all."""
@@ -1119,11 +1159,22 @@ def test_the_shared_stash_tabs_begin_where_the_game_says(real_game):
     sits at 3322 or above, and the three tabs start 1000 apart -- 3322, 4322,
     5322 -- which is what makes the number usable as a slot to put something
     back into an empty tab.
+
+    Each tab is also 40 cells and no more, which is the count the container
+    file carries beside the slot file's name and which nothing read until a
+    full tab had to be told apart from a roomy one: 40 cells from 3322 end at
+    3361, and 3362 -- what the search would return next -- is in no container
+    of the game at all.
     """
     assert [real_game.slot_base(tab) for tab in real_game.stash_tabs] == [
         3322,
         4322,
         5322,
+    ]
+    assert [real_game.container_cells(tab) for tab in real_game.stash_tabs] == [
+        ((3322, 40),),
+        ((4322, 40),),
+        ((5322, 40),),
     ]
 
 

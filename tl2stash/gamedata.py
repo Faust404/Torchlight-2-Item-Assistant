@@ -785,6 +785,7 @@ class GameData:
         "files_read",
         "install",
         "slot_bases",
+        "slot_cells",
         "_affix_effects",
         "_armor_curve",
         "_augments",
@@ -813,6 +814,7 @@ class GameData:
         affix_effects: dict[str, set[str]],
         containers: dict[int, str],
         slot_bases: dict[int, int],
+        slot_cells: dict[int, tuple[tuple[int, int], ...]],
         sets: dict[str, DatNode],
         failed: list[tuple[str, str]],
         files_read: int,
@@ -835,6 +837,7 @@ class GameData:
         self._affix_effects = affix_effects
         self.containers = containers
         self.slot_bases = slot_bases
+        self.slot_cells = slot_cells
         self._sets = sets
         self.failed = failed
         self.files_read = files_read
@@ -892,11 +895,12 @@ class GameData:
         effect_order: list[DatNode] = []
         affix_effects: dict[str, set[str]] = {}
         containers: dict[int, str] = {}
-        # The two halves of one fact, which live in two files: what slot file
-        # each container is made of, and what block each slot file numbers
-        # from.  Joined after the sweep, because the manifest's order is the
-        # archive's and is not an order to rely on.
-        slot_files: dict[int, str | None] = {}
+        # The two halves of one fact, which live in two files: what slot files
+        # each container is made of and how many cells each of them brings, and
+        # what block each slot file numbers from.  Joined after the sweep,
+        # because the manifest's order is the archive's and is not an order to
+        # rely on.
+        slot_files: dict[int, tuple[tuple[str, int | None], ...]] = {}
         slot_bases: dict[str, int] = {}
         sets: dict[str, DatNode] = {}
         failed: list[tuple[str, str]] = []
@@ -1096,14 +1100,24 @@ class GameData:
             if _data_path(GRAPHS_DIR + stem) in curves
         }
 
-        # Where each numbered container begins, joined across the two files
-        # that state it between them.  A container whose cells have no numbers
-        # -- a character's head, a merchant's shelves -- is simply absent.
-        numbered = {
-            cid: slot_bases[name]
-            for cid, name in slot_files.items()
-            if name in slot_bases
-        }
+        # Where each numbered container's cells are, joined across the two
+        # files that state it between them: the container names the slot files
+        # it is made of and how many cells each contributes, and a slot file
+        # says what number its own cells start at.  A container whose cells
+        # have no numbers -- a character's head, a merchant's shelves -- is
+        # simply absent, and so is a part whose slot file never turned up.
+        numbered: dict[int, int] = {}
+        cells: dict[int, tuple[tuple[int, int], ...]] = {}
+        for cid, parts in slot_files.items():
+            blocks = tuple(
+                (slot_bases[name], count if count else 1)
+                for name, count in parts
+                if name in slot_bases
+            )
+            if not blocks:
+                continue
+            numbered[cid] = blocks[0][0]
+            cells[cid] = blocks
 
         return cls(
             install,
@@ -1114,6 +1128,7 @@ class GameData:
             affix_effects,
             containers,
             numbered,
+            cells,
             sets,
             failed,
             read,
@@ -1752,13 +1767,35 @@ class GameData:
         """
         return self.slot_bases.get(container_id)
 
+    def container_cells(self, container_id: int) -> tuple[tuple[int, int], ...]:
+        """The blocks of cells a container is made of, as ``(first, count)``.
+
+        A container is a list of slot files and each contributes a run of
+        consecutively numbered cells, so this is that list with each part's own
+        block worked out: the shared stash's first tab is ``((3322, 40),)``,
+        forty cells from 3322 to 3361, and a character's body is thirteen
+        blocks of one.
+
+        The two facts are one list because they come from one ``SLOTS`` list
+        and are read together: :meth:`slot_base` is the first block's start,
+        and the end -- what tells a caller the tab has no room left -- is the
+        last block's start plus its count.  A method rather than a second
+        dictionary so that a container with no cells at all answers with the
+        empty tuple rather than with ``None``, which is the same thing
+        :meth:`slot_base` says and reads better at a call site that is asking
+        how much room there is.
+        """
+        return self.slot_cells.get(container_id, ())
+
     def stash_tab(self, container_id: int) -> int | None:
         """Which tab of the shared stash this is, counting from 1.
 
-        The player sees three tabs.  Their internal names --
-        ``SHARED_STASH_BAG_ARMS`` and so on -- describe what each bag was
-        originally built for, but any item goes in any tab, so the name is not
-        what the player is looking at.  The position is.
+        The player sees three tabs, and each takes one kind of thing: the first
+        everything that is neither consumed nor cast, the second the
+        consumables, the third the spells.  The internal names --
+        ``SHARED_STASH_BAG_ARMS`` and so on -- say the same thing in the game's
+        own words, and :func:`tl2stash.taxonomy.stash_tab_for` is the rule
+        written down where an item's kind can be held against it.
         """
         tabs = self.stash_tabs
         try:
@@ -1891,27 +1928,38 @@ def _seconds(effect: DatNode) -> float:
     return effect.number(VAR_DURATION) or 0.0
 
 
-def _container_entry(data: DatFile) -> tuple[int, str, str | None] | None:
-    """``(container id, name, slot file)`` for one ``CONTAINERS`` file.
+def _container_entry(
+    data: DatFile,
+) -> tuple[int, str, tuple[tuple[str, int | None], ...]] | None:
+    """``(container id, name, parts)`` for one ``CONTAINERS`` file.
 
     Unlike the files beside it, these declare the container id itself -- the
     save file's container 24 is the file that calls itself 24 -- so no
     arithmetic is needed to tie the two together.
 
-    The slot file is the first one the container's ``SLOTS`` list names, which
-    is where its cells begin -- the same file :data:`VAR_SLOT_BASE` is
-    declared on.  Every inventory slot in the game has a number of its own,
-    a belt's being 1161 and a head's 645, so a container is an ordered list of
-    numbered cells however many of them it has.  ``None`` for a file that
-    names no slot at all.
+    Each *part* is the slot file that part of the container is made of, beside
+    how many cells it contributes.  A part is where the container's own
+    ``SLOTS`` list names a file (``SHARED_STASH_BAG_ARMS`` names
+    ``BAG_ARMS_SLOT``) under a ``COUNT``, and the two together are what makes
+    the container's cells countable: 40 of them, from the number the slot file
+    declares.  The count is kept even though most containers do not need it,
+    because the one that does is the shared stash: 40 is what says the tab is
+    full, and there is nothing else in the game's data that says so.
+
+    ``None`` for a file that names no container at all; an empty tuple of parts
+    for one that names no slot -- a container with no cells of its own.
     """
     root = data.root
     name = root.text(VAR_NAME)
     cid = root.number(VAR_SLOT_BASE)
     if not name or cid is None:
         return None
-    slots = [slot for node in root.walk() for slot in node.texts(VAR_SLOT_NAME)]
-    return int(cid), name, (slots[0] if slots else None)
+    parts = tuple(
+        (slot, node.number(VAR_COUNT))
+        for node in root.walk()
+        for slot in node.texts(VAR_SLOT_NAME)
+    )
+    return int(cid), name, parts
 
 
 def _percent(value: float | None) -> float:

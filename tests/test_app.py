@@ -953,6 +953,110 @@ def test_the_transfer_all_button_sends_every_copy_at_once(
         win.close()
 
 
+def test_a_full_tab_keeps_the_item_in_the_tool_and_says_so(stocked):
+    """The user's own rule, end to end: no room, no write, and a sentence.
+
+    The three items the fixture absorbed came from the first tab, which the
+    game's files say is 40 cells from 3322 -- so the transfer has somewhere to
+    put them until the player fills the tab with new loot while they wait in
+    the tool.  Then it has nowhere, and what must not happen is the write the
+    tool used to make: one cell past the end of the container, which is a slot
+    the game has no cell for, so the item would leave the collection and never
+    turn up in the stash.
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    assert win.service.last_slot(24) == 3361, "the tab the fixture's items came from"
+
+    # The player's new loot, filling every one of the tab's 40 cells.
+    write_stash_of(
+        win.service.source,
+        [parse_item(synthetic_item(name=f"Loot {n}", slot=3322 + n)[0]) for n in range(40)],
+    )
+
+    rows = win.grid.rows()
+    win.grid.tile(rows.index(next(r for r in rows if r.name == "Alpha"))).findChild(
+        QPushButton, "transfer"
+    ).click()
+
+    message = win.status.currentMessage()
+    assert "1 stayed here" in message, message
+    assert "Tab 1 is full" in message, message
+    assert win.stash_model.rowCount() == 40, "the refusal wrote anyway"
+    assert "Alpha" not in {
+        win.stash_model.item(n, 0).text() for n in range(win.stash_model.rowCount())
+    }
+    assert win.grid.count() == 3, "the item left the collection it is still in"
+    assert print_ in win.service.registry.absorbed_fingerprints(), (
+        "a refused item must stay ours: marked returned, it would be in no pane"
+    )
+
+
+def test_putting_back_one_copy_says_the_tab_is_full(stocked):
+    """The comparison's button, which has one line to say it in."""
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Beta"][0][
+        "fingerprint"
+    ]
+    write_stash_of(
+        win.service.source,
+        [parse_item(synthetic_item(name=f"Loot {n}", slot=3322 + n)[0]) for n in range(40)],
+    )
+
+    win._put_back_one(print_)
+
+    message = win.status.currentMessage()
+    assert "it stayed here" in message and "Tab 1 is full" in message, message
+    assert print_ in win.service.registry.absorbed_fingerprints()
+
+
+def test_an_item_with_no_placement_of_its_own_is_routed_by_its_kind(
+    qapp, tmp_path, game_install, monkeypatch
+):
+    """The whole rule, from a file the game reads to a container the save holds.
+
+    Three items the tool has never seen in a stash have no placement to be put
+    back to, so where they go is decided by what they *are*: the game's file
+    for the item says ``SWORD``, ``POTION`` or ``SPELL``, that canonicalises to
+    a kind, the kind names one of the three typed tabs, and the tab is a
+    container id.  Every step of that is somewhere else's test; this is the one
+    that says they are joined up, and it is the user's own rule -- potions in
+    the second tab, spells in the third, everything else in the first.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    write_stash_of(
+        stash,
+        [
+            parse_item(synthetic_item(name="Test Plain", guid=0x7001)[0]),
+            parse_item(synthetic_item(name="Test Potion", guid=0x7009)[0]),
+            parse_item(synthetic_item(name="Test Spell", guid=0x700A)[0]),
+        ],
+    )
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+        assert win._game_data().stash_tabs == [24, 25, 26]
+
+        routed = {
+            row["name"]: win._container_for(row["fingerprint"])
+            for row in win.service.registry.rows()
+        }
+        assert routed == {"Test Plain": 24, "Test Potion": 25, "Test Spell": 26}
+    finally:
+        win.close()
+
+
 def test_a_click_on_a_set_name_shows_every_piece_of_that_set(
     qapp, tmp_path, game_install, monkeypatch
 ):
