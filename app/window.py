@@ -100,21 +100,27 @@ def send_warning(parent: QWidget | None, count: int) -> QMessageBox:
     """The box shown before items are sent while the game is running.
 
     The words are the user's own, and so is the layout: the question is the
-    box's *main* text -- the one line here that asks rather than advises, and
-    the one line set bold -- and the two paragraphs under it are each a single
-    unbroken string.  That last part is the whole of the layout: Qt wraps the
+    box's *main* text -- the one line here that asks rather than advises -- the
+    bold is on it and on the main-menu line under it, and the two paragraphs
+    are each a single unbroken string.  That last part is the whole of the layout: Qt wraps the
     label to the width the box gives it, so lines come out full, and a break
     typed into the middle of a paragraph is a line that stops halfway across a
     box with room for more.  The first version of this text had those breaks in
     it and read as a poem.
 
-    The bold is ``<b>`` around that one line rather than a stylesheet on the
-    box, which is not a style preference: a widget stylesheet re-polishes the
-    box's own icon when the box is shown, and this PySide6 build segfaults
+    The two bold lines are ``<b>`` around the line rather than a stylesheet on
+    the box, which is not a style preference: a widget stylesheet re-polishes
+    the box's own icon when the box is shown, and this PySide6 build segfaults
     doing it -- measured, with the icon on.  A stylesheet on the *application*
     would have been the other way to say it, and would have emboldened the
     main text of every dialog in the tool, which is more than was asked for.
     Setting the label's font is a third way and does not survive the polish.
+
+    A ``<b>`` in the paragraphs under the question makes *that* label rich
+    text, and a rich label does not keep a typed newline the way a plain one
+    does: the blank line between the two paragraphs is written ``<br><br>``,
+    because with a plain ``\\n\\n`` under the tags the two run together into
+    one paragraph.  Measured, both ways.
 
     The count is the one thing not copied from the user, because a card can
     stand for several copies and one click on ``Transfer all (3)`` would
@@ -131,9 +137,9 @@ def send_warning(parent: QWidget | None, count: int) -> QMessageBox:
     what = "this item" if count == 1 else f"these {count} items"
     box.setText(f"<b>Send {what} to the shared stash while the game is running?</b>")
     box.setInformativeText(
-        "Please make sure to send items to the stash only when you are in "
-        "the main-menu!!\n"
-        "\n"
+        "<b>Please make sure to send items to the stash only when you are in "
+        "the main-menu!!</b>"
+        "<br><br>"
         "Sending an item to the shared stash while in-game can lead to the "
         "loss of item. Although a lost item can later be recovered in the "
         'tool using "Show Stranded Items" button.'

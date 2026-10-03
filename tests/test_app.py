@@ -1160,18 +1160,21 @@ def test_sending_while_the_game_runs_asks_first_and_can_be_refused(
     assert win.status.currentMessage() == "nothing was sent"
 
     # And the box wears the words the user asked for, in the shape they asked
-    # for: the question set bold, and the two paragraphs under it each an
-    # unbroken string so that Qt wraps them to the width of the box.  A break
-    # typed into a paragraph is a line that stops halfway across a box with
-    # room for more, which is what the first version of this text did.
+    # for: the question and the main-menu line under it set bold, and the two
+    # paragraphs each an unbroken string so that Qt wraps them to the width of
+    # the box.  A break typed into a paragraph is a line that stops halfway
+    # across a box with room for more, which is what the first version of this
+    # text did.  The break *between* the paragraphs is markup for the same
+    # reason: the ``<b>`` makes this label rich text, and a rich label reads a
+    # typed ``\n\n`` as one space and joins the two into one paragraph.
     box = asked[0]
     assert box.text() == (
         "<b>Send this item to the shared stash while the game is running?</b>"
     )
     assert box.informativeText() == (
-        "Please make sure to send items to the stash only when you are in "
-        "the main-menu!!\n"
-        "\n"
+        "<b>Please make sure to send items to the stash only when you are in "
+        "the main-menu!!</b>"
+        "<br><br>"
         "Sending an item to the shared stash while in-game can lead to the "
         "loss of item. Although a lost item can later be recovered in the "
         'tool using "Show Stranded Items" button.'
