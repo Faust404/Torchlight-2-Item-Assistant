@@ -36,6 +36,7 @@ import app.window as window_module  # noqa: E402
 from app.card import LinkLabel  # noqa: E402
 from app.filters import INSET  # noqa: E402
 from app.models import LEVEL_MAX, NUMBER_MAX  # noqa: E402
+from app.theme import Dropdown  # noqa: E402
 from app.tiles import TileRow  # noqa: E402
 from app.window import GAME_DATA_MISSING, MainWindow, import_report  # noqa: E402
 
@@ -245,6 +246,19 @@ def test_the_two_panels_describe_different_places(window):
     assert window.collection_model.rowCount() == 0
     assert "3" in window.stash_group.title()
     assert "0" in window.collection_group.title()
+
+
+def test_both_drop_downs_open_downwards(window):
+    """The window's two lists are the class that puts them under their box.
+
+    The claim is about the window rather than about the widget -- the widget's
+    own tests are in :mod:`tests.test_app_theme` -- because what could go
+    quietly wrong out here is the *wiring*: a plain ``QComboBox`` looks and
+    behaves identically until a list is opened, so a box changed back would
+    take the bug with it and nothing else in the suite would notice.
+    """
+    assert isinstance(window.source_box, Dropdown)
+    assert isinstance(window.filters.sort, Dropdown)
 
 
 def test_the_filters_stand_over_the_pane_they_narrow(window):

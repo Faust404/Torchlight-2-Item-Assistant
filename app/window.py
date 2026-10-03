@@ -23,7 +23,6 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -78,6 +77,7 @@ from .models import (
 from . import paths
 from .settings import Settings
 from .sidebar import SidePanel
+from .theme import Dropdown
 from .tiles import TileGrid, TileRow
 from .version import __version__
 
@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
 
         bar.addWidget(QLabel("Save:"))
-        self.source_box = QComboBox()
+        self.source_box = Dropdown()
         self.source_box.setMinimumWidth(280)
         self.source_box.currentIndexChanged.connect(self._source_changed)
         bar.addWidget(self.source_box)

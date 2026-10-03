@@ -28,8 +28,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtGui import QColor, QFont, QPalette  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton, QStyleFactory  # noqa: E402
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QPushButton,
+    QStyleFactory,
+    QWidget,
+)
 
 from app.card import BODY, GROUND, HEAD, LABEL, PANEL, TABULAR, _serif  # noqa: E402
 from app.theme import (  # noqa: E402
@@ -46,6 +52,7 @@ from app.theme import (  # noqa: E402
     SHELL,
     STRIPE,
     WALL,
+    Dropdown,
     _load_fonts,
     apply_theme,
 )
@@ -444,3 +451,76 @@ def test_the_serif_face_the_card_asks_for_is_the_one_that_was_loaded():
     (asked,) = _serif().families()[:1]
 
     assert asked in _load_fonts()
+
+
+def test_a_drop_down_opens_below_its_box_whatever_entry_is_showing(themed):
+    """The list's place is the box's, and not the current entry's.
+
+    The sheet puts ``QStyleSheetStyle`` in front of Fusion for every box it
+    touches, and that style answers ``SH_ComboBox_Popup`` with *yes* -- Qt's
+    menu-like mode, which places the popup so that the entry that is showing
+    sits exactly over the box and the entries above it hang above the box.  At
+    the first entry that cannot be seen, so the box looks right; at any other
+    the list opens upwards, which is what the user reported on the save box,
+    whose second entry is the other save.  Measured with the sheet applied and
+    five entries: the list's top lands 23 pixels above the box at the second
+    entry and 46 above it at the third -- one row per entry.
+
+    Two claims, and the first is the bug: the list does not move as the entry
+    does.  The second is which way it opens at all -- a pixel's slack for the
+    styles that place the list a hairline under the frame rather than at it.
+    """
+    window = QWidget()
+    window.resize(400, 300)
+    box = Dropdown(window)
+    box.addItems([f"entry {i}" for i in range(5)])
+    box.move(20, 20)
+    window.show()
+
+    tops = []
+    for index in range(box.count()):
+        box.setCurrentIndex(index)
+        box.showPopup()
+        popup = box.view().window()
+        tops.append(popup.mapToGlobal(QPoint(0, 0)).y())
+        box.hidePopup()
+
+    below = box.mapToGlobal(QPoint(0, box.height())).y()
+    window.close()
+
+    assert len(set(tops)) == 1, f"the list follows the entry: {tops}"
+    assert tops[0] >= below - 1, (
+        f"the list opens {below - tops[0]} pixels above the box's bottom edge"
+    )
+
+
+def test_a_drop_down_with_no_room_below_it_is_pulled_up_to_fit(themed):
+    """By what the screen cannot hold, and no further.
+
+    A list taller than the room under the box is the one case where it does
+    stand above the box, because the alternative is rows past the edge of the
+    screen that no one can click.  The screen is asked for its own size rather
+    than assumed: the suite runs offscreen, and which screen that is is Qt's
+    to decide.
+    """
+    room = QGuiApplication.primaryScreen().availableGeometry()
+    window = QWidget()
+    window.resize(400, room.height())
+    box = Dropdown(window)
+    box.addItems([f"entry {i}" for i in range(12)])
+    box.move(20, room.height() - 60)
+    window.move(room.left(), room.top())
+    window.show()
+
+    box.showPopup()
+    popup = box.view().window()
+    top = popup.mapToGlobal(QPoint(0, 0)).y()
+    bottom = top + popup.height()
+    box_top = box.mapToGlobal(QPoint(0, 0)).y()
+    box.hidePopup()
+    window.close()
+
+    assert bottom <= room.bottom() + 1, (
+        f"the list runs {bottom - room.bottom()} pixels past the screen's edge"
+    )
+    assert top < box_top, "the list had no room below and did not move up"

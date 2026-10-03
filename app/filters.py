@@ -59,7 +59,6 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -82,7 +81,7 @@ from .models import (
     TIER_CHIPS,
     Advanced,
 )
-from .theme import CHALK
+from .theme import CHALK, Dropdown
 
 __all__ = ["FilterBar", "SpinBox", "chip_style"]
 
@@ -462,7 +461,7 @@ class FilterBar(QWidget):
         # search box, and a box that grew with the pane would be a select the
         # width of the window.
         row.addSpacing(10)
-        self.sort = QComboBox()
+        self.sort = Dropdown()
         self.sort.setObjectName("sort")
         for key in SORT_KEYS:
             self.sort.addItem(key)

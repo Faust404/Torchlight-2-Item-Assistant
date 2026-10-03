@@ -63,8 +63,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PySide6.QtWidgets import QApplication, QStyleFactory
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPalette
+from PySide6.QtWidgets import QApplication, QComboBox, QStyleFactory
 
 from .card import (
     BODY,
@@ -75,7 +76,16 @@ from .card import (
     TABULAR_ON,
 )
 
-__all__ = ["CHALK", "EDGE", "FIELD", "PALE", "SHELL", "WALL", "apply_theme"]
+__all__ = [
+    "CHALK",
+    "EDGE",
+    "FIELD",
+    "PALE",
+    "SHELL",
+    "WALL",
+    "Dropdown",
+    "apply_theme",
+]
 
 #: Where the faces that travel with the tool live.  Beside this file when the
 #: tool runs out of a checkout, and under the bundle's own root when it is a
@@ -512,3 +522,48 @@ def apply_theme(app: QApplication) -> None:
     app.setPalette(_palette())
     app.setFont(_base_font())
     app.setStyleSheet(_STYLE)
+
+
+class Dropdown(QComboBox):
+    """A combo box whose list opens *downwards*, whatever entry is showing.
+
+    The sheet above is what this is for.  A stylesheet puts
+    ``QStyleSheetStyle`` in front of Fusion for every widget it touches, and
+    that style answers ``SH_ComboBox_Popup`` with *yes* -- Qt's menu-like
+    mode, which places the popup so that the entry that is currently showing
+    sits exactly over the box and the entries above it hang above the box.  At
+    the first entry that cannot be seen; at any other the list opens upwards,
+    which is what the user reported on the save box, whose second entry is the
+    other save.  Measured with the sheet applied: the popup's top lands 23
+    pixels above the box at the second entry -- one row -- and just below it at
+    the first, so the same box opened two ways depending on which save was
+    showing.  Without the sheet every Windows style answers the hint with *no*
+    and opens below the box, which is what a combo box on this platform is
+    expected to do.
+
+    So the list is put below the box: the container Qt has just placed and
+    shown is moved down until its top edge is at the box's bottom edge, and it
+    is pulled back up only by the part of it the screen cannot hold.  Nothing
+    else about the popup is touched -- the row under the pointer, the
+    highlight, the scrolling, the closing are all still Qt's -- and the
+    position no longer depends on which entry is showing.
+
+    Only for the two boxes this window has, both a handful of rows: the
+    menu-like mode is also what gives a long list its scrollers, and a list
+    long enough to need them would be a different question.
+    """
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        popup = self.view().window()
+        if popup is self:  # pragma: no cover -- no native menu popups here
+            return
+        screen = QGuiApplication.screenAt(self.mapToGlobal(self.rect().center()))
+        if screen is None:  # pragma: no cover -- a box on no screen
+            return
+
+        below = self.mapToGlobal(QPoint(0, self.height())).y()
+        room = screen.availableGeometry()
+        top = max(min(below, room.bottom() + 1 - popup.height()), room.top())
+        popup.move(popup.mapToGlobal(QPoint(0, 0)).x(), top)
+
