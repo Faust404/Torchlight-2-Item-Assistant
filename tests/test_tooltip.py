@@ -58,7 +58,10 @@ needs_game = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def game():
-    # The game's own files and nothing else; see ``tests/test_dat.py``.
+    # The game's own files and nothing else; see ``tests/test_dat.py`` for
+    # why this skips rather than letting ``Path(None)`` raise.
+    if _INSTALL is None:
+        pytest.skip("Torchlight II is not installed on this machine")
     return GameData.load(_INSTALL, augments={}, classes={})
 
 
@@ -809,6 +812,7 @@ def test_a_socket_does_not_split_the_item_s_own_lines():
     assert _effect_lines(holder, _SocketGame()) == ["+120 Ice Armor", "+82 Health"]
 
 
+@needs_game
 def test_a_real_socket_puts_nothing_in_the_item_s_own_list(game):
     """The other half of the measurement, and the reason the split is gone.
 

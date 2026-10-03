@@ -341,6 +341,16 @@ def game():
     # class restrictions are the reference database's, which may or may not
     # be on the machine running this -- and a test whose expected lines
     # depend on that is a test that passes here and fails somewhere else.
+    #
+    # A test that uses this wears ``needs_game``, and every one of them does
+    # but two -- which was found the way it would be, on a machine with no
+    # game installed, where the fixture ran anyway and ``Path(None)`` raised
+    # a ``TypeError`` where a skip belonged.  The mark is still the
+    # convention; this is the net under it, so that the next test to forget
+    # is skipped with a reason rather than failed with a traceback about
+    # ``os.fspath``.
+    if _INSTALL is None:
+        pytest.skip("Torchlight II is not installed on this machine")
     return GameData.load(_INSTALL, augments={}, classes={})
 
 

@@ -205,6 +205,7 @@ def test_the_answer_for_an_item_is_remembered_and_not_computed_twice(qapp):
     assert catalog.entry("print", _AnItem(999)) is first
 
 
+@needs_game
 def test_a_mapping_and_an_object_for_the_same_item_agree(qapp, real_game):
     """A green item is green in both lists, which is the whole reason for this.
 
