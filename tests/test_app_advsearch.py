@@ -786,10 +786,16 @@ def test_a_property_row_can_be_added_typed_in_and_taken_away(qapp):
 
     assert overlay.draft().stats == (("to fire damage", 20, NUMBER_MAX),)
 
-    overlay.stat_rows[0].remove.click()
+    drop = overlay.stat_rows[0]
+    drop.remove.click()
 
     assert overlay.stat_rows == []
     assert overlay.draft().stats == ()
+    # And it leaves hidden *explicitly*: a widget detached implicitly hidden
+    # is one Qt's own deferred re-show may bring back as a window, which is
+    # what the white boxes in ``test/tl2ia_pop_up_error.png`` are.
+    assert drop.isHidden()
+    assert drop.testAttribute(Qt.WidgetAttribute.WA_WState_ExplicitShowHide)
 
 
 def test_a_row_nobody_wrote_a_word_into_is_not_part_of_the_search(qapp):

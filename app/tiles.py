@@ -240,8 +240,20 @@ class CardWall(QScrollArea):
         return self._columns
 
     def forget(self, card: QWidget) -> None:
-        """Take one widget off the wall for good."""
+        """Take one widget off the wall for good.
+
+        Hidden *first*, then detached, then deleted.  ``setParent(None)``
+        makes a widget parentless -- which is what a top-level window is --
+        and Qt hides it on the way out only the way a parent hides a child:
+        hidden, but not *explicitly*, which is the one state Qt's own
+        deferred re-show (``QWidgetPrivate::_q_showIfNotHidden``) is written
+        to undo.  Measured: a bare-detached tile comes back from that call as
+        a visible window at its old cell, wearing the application's name --
+        the white boxes in ``test/tl2ia_pop_up_error.png``.  Hidden first,
+        the state is explicit, and nothing shows it again.
+        """
         self._grid.removeWidget(card)
+        card.hide()
         card.setParent(None)
         card.deleteLater()
 
@@ -362,6 +374,9 @@ class CardFrame(QFrame):
             item = self._column.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # Hidden before the detach, so the state is explicit:
+                # see CardWall.forget.
+                widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
 

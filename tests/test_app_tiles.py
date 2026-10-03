@@ -26,7 +26,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6", reason="PySide6 is not installed")
 
-from PySide6.QtCore import QRect, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QMetaObject, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
@@ -325,6 +325,44 @@ def test_a_tile_whose_item_is_gone_leaves_the_wall(qapp):
     assert grid.count() == 2
     assert [grid.tile(i).row.fingerprint for i in range(2)] == ["fp0", "fp2"]
     assert grid.selected() == [], "a tile that left took its selection with it"
+
+
+def test_a_tile_that_leaves_the_wall_is_hidden_for_good(qapp):
+    """The white boxes in ``test/tl2ia_pop_up_error.png``.
+
+    Qt hides a widget handed to ``setParent(None)`` only the way a parent
+    hides a child: hidden, but not *explicitly* -- and hidden without the
+    attribute is the one state Qt's own deferred re-show is written to undo
+    (``QWidgetPrivate::_q_showIfNotHidden``: show again, unless *explicitly*
+    hidden).  A tile left in that state comes back from it as a visible
+    window at its own cell, wearing the application's name.  A tile that
+    leaves the wall must be hidden in a way nothing undoes -- and gone.
+    """
+    grid = TileGrid()
+    rows = [row(card(name=f"Item {i}"), fingerprint=f"fp{i}") for i in range(3)]
+    wall(grid, rows)
+    leaving = grid.tile(1)
+
+    grid.set_rows([rows[0], rows[2]])
+
+    assert leaving.isHidden()
+    assert leaving.testAttribute(Qt.WidgetAttribute.WA_WState_ExplicitShowHide), (
+        "the tile was left hidden only implicitly: one deferred re-show away "
+        "from being a window over the wall"
+    )
+    # The re-show itself, the way Qt makes it: queued, and by name.  If Qt
+    # ever drops the slot, fail here rather than pass for the wrong reason.
+    assert QMetaObject.invokeMethod(
+        leaving, "_q_showIfNotHidden", Qt.ConnectionType.QueuedConnection
+    ), "Qt has no _q_showIfNotHidden any more: re-check what re-shows a widget"
+    QApplication.processEvents()
+    assert not leaving.isVisible(), "the tile came back as a window"
+
+    # Hidden for good means gone too: the deferred delete takes it off the
+    # desktop at the end of the turn the tile left on.
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    with pytest.raises(RuntimeError):
+        leaving.isHidden()
 
 
 def test_the_wall_says_when_it_has_nothing_to_show(qapp):

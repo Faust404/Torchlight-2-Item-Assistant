@@ -312,15 +312,23 @@ def _set_in(widget: QWidget, left: int) -> QWidget:
 def _empty(layout) -> None:
     """Take every widget out of a layout, and take the widgets away with it.
 
-    ``setParent(None)`` rather than ``deleteLater``: a widget out of a layout
-    but still parented keeps its last geometry and stays *visible* until the
-    event loop gets round to the deferred delete, which is a grid drawing the
-    boxes it has just replaced underneath the ones that replaced them.
+    Hidden, then detached, then deleted.  Hidden because a widget out of a
+    layout but still visible keeps its last geometry and stays on screen
+    until the event loop gets round to the deferred delete, which is a grid
+    drawing the boxes it has just replaced underneath the ones that replaced
+    them.  Hidden *before* the detach because Qt hides a widget handed to
+    ``setParent(None)`` only implicitly -- hidden, but not explicitly -- and
+    that is the state Qt's own deferred re-show undoes, as a window
+    (CardWall.forget, and the picture it names).  Deleted because what comes
+    here is replaced, not pooled: detaching one used to be the last anyone
+    heard of it.
     """
     while layout.count():
         widget = layout.takeAt(0).widget()
         if widget is not None:
+            widget.hide()
             widget.setParent(None)
+            widget.deleteLater()
 
 
 class Panel(QFrame):
@@ -1419,7 +1427,12 @@ class AdvancedSearchOverlay(QWidget):
         """Take one row away -- the cross, and nothing else."""
         if row in self.stat_rows:
             self.stat_rows.remove(row)
+        # Hidden before the detach, so the state is explicit and nothing
+        # re-shows the row (CardWall.forget); the deferred delete lets the
+        # click that got here -- the row's own -- finish first.
+        row.hide()
         row.setParent(None)
+        row.deleteLater()
 
     def _offer_stats(self, rows) -> None:
         """Fill the Stats section from a search: one row each, and no more."""
