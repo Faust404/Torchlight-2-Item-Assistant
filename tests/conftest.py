@@ -15,7 +15,9 @@ player's Documents folder" from silent data loss into a loud failure.
 The settings file is the tool's other write, and it is the same kind of thing
 -- a file the player owns, in the player's folder -- so it is fenced the same
 way.  Nothing in the suite writes one today; the fence is what keeps that true
-once something does.
+once something does.  An exported collection goes wherever a save dialog was
+pointed, which is the player's own folders as often as not, so it is fenced
+with the rest.
 """
 
 from __future__ import annotations
@@ -28,10 +30,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tl2stash.archive as _archive  # noqa: E402
+import tl2stash.portable as _portable  # noqa: E402
 import tl2stash.service as _service  # noqa: E402
 from app.settings import Settings as _Settings  # noqa: E402
 
-_WRITERS = ("archive_stash", "restore_items")
+_WRITERS = ("archive_stash", "restore_items", "write_collection")
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +50,7 @@ def no_writes_outside_tmp(tmp_path, monkeypatch):
                 raise AssertionError(
                     f"{name}() was asked to write {target}, which is outside "
                     f"the test's temporary directory. A test must never "
-                    f"modify a real save file."
+                    f"write to the player's own files."
                 )
             return original(path, *args, **kwargs)
 
@@ -57,7 +60,7 @@ def no_writes_outside_tmp(tmp_path, monkeypatch):
     # Patch where each is *used*, not only where it is defined: these modules
     # did ``from .archive import ...``, so rebinding the name in archive.py
     # would leave the already-imported references pointing at the original.
-    for module in (_archive, _service):
+    for module in (_archive, _portable, _service):
         for name in _WRITERS:
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, guard(name, getattr(module, name)))

@@ -16,6 +16,7 @@ The pieces, bottom up::
     item, stash       the item format and a stash full of items
     saves             where the game keeps its stash files
     registry          what the tool remembers (SQLite)
+    portable          the collection as one file, out and back in
     archive           taking items out of a file, and putting them back
     watcher, service  the file tells us when to do it
 """
@@ -32,7 +33,15 @@ from .archive import (
 )
 from .crypto import SaveFile, descramble, scramble, read_save_file, write_save_file
 from .item import Item, parse_item
-from .registry import Registry, ScanResult
+from .portable import (
+    CollectionError,
+    ImportReport,
+    collection_text,
+    import_collection,
+    read_collection,
+    write_collection,
+)
+from .registry import Arrival, Registry, ScanResult
 from .saves import SaveLocation, find_save_locations, live_location
 from .service import ItemService
 from .stash import Stash, StashEntry, read_stash, read_stash_file
@@ -40,6 +49,9 @@ from .watcher import StashWatcher
 
 __all__ = [
     "ArchiveReport",
+    "Arrival",
+    "CollectionError",
+    "ImportReport",
     "Item",
     "ItemService",
     "Registry",
@@ -52,15 +64,19 @@ __all__ = [
     "StashEntry",
     "StashWatcher",
     "archive_stash",
+    "collection_text",
     "descramble",
     "find_save_locations",
+    "import_collection",
     "live_location",
     "parse_item",
+    "read_collection",
     "read_save_file",
     "read_stash",
     "read_stash_file",
     "restore_items",
     "scramble",
     "serialize_body",
+    "write_collection",
     "write_save_file",
 ]

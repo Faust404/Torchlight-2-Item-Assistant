@@ -25,7 +25,7 @@ from pathlib import Path
 from .item import Item
 from .stash import Stash
 
-__all__ = ["Registry", "ScanResult"]
+__all__ = ["Arrival", "Registry", "ScanResult"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -90,6 +90,32 @@ class ScanResult:
         return ", ".join(bits)
 
 
+@dataclass(frozen=True)
+class Arrival:
+    """One item the tool is taking in from outside a stash file.
+
+    A :meth:`Registry.scan` needs none of this: it reads a stash, so every
+    value below is either already in the item's own bytes or is the moment it
+    is being read.  An *imported* collection has to be told, because the rest
+    are facts about the tool the file came from rather than about the item --
+    how many byte-identical copies it held, when it first and last saw it, and
+    where the item sat.
+
+    A ``container``/``slot`` is filled in only when the file's stash is this
+    one's own; a foreign item has no place here.  That is a state the rest of
+    the tool already handles -- see
+    :meth:`~tl2stash.service.ItemService.restore`, which falls back to the
+    item's kind and the tab's first cell.
+    """
+
+    item: Item
+    copies: int = 1
+    first_seen: str | None = None
+    last_seen: str | None = None
+    container: int | None = None
+    slot: int | None = None
+
+
 class Registry:
     """SQLite-backed item store.  Use as a context manager."""
 
@@ -137,33 +163,10 @@ class Registry:
             ).fetchone()
             if existing is None:
                 added.append(item)
-                self.conn.execute(
-                    """
-                    INSERT INTO items (fingerprint, guid, name, prefix, suffix,
-                                       level, quantity, identified, num_sockets,
-                                       num_enchants, num_effects, num_stats,
-                                       copies, raw, status, first_seen, last_seen)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'in_stash', ?, ?)
-                    """,
-                    (
-                        print_,
-                        f"{item.guid:016X}",
-                        item.base_name,
-                        item.prefix.rstrip("\x00"),
-                        item.suffix.rstrip("\x00"),
-                        item.level,
-                        item.quantity,
-                        item.identified,
-                        item.num_sockets,
-                        item.num_enchants,
-                        len(item.effects) + len(item.effects2),
-                        len(item.stats),
-                        copies,
-                        item.raw,
-                        now,
-                        now,
-                    ),
-                )
+                # The literal rather than service.STATUS_IN_STASH: the status
+                # constants live in service.py, which imports this module, so
+                # reaching back for them would be a cycle.
+                self._insert(print_, item, copies, "in_stash", now, now)
             else:
                 # Same bytes, maybe a different number of them.
                 self.conn.execute(
@@ -171,18 +174,13 @@ class Registry:
                     (copies, now, print_),
                 )
 
-            self.conn.execute(
-                """
-                INSERT INTO placements (fingerprint, source, container, slot,
-                                        present, seen_at)
-                VALUES (?,?,?,?,1,?)
-                ON CONFLICT(fingerprint, source) DO UPDATE SET
-                    container = excluded.container,
-                    slot      = excluded.slot,
-                    present   = 1,
-                    seen_at   = excluded.seen_at
-                """,
-                (print_, source, item.location.container, item.location.slot_index, now),
+            self._remember(
+                print_,
+                source,
+                item.location.container,
+                item.location.slot_index,
+                now,
+                True,
             )
 
         # Anything filed under this source that we did not just see is gone.
@@ -207,6 +205,120 @@ class Registry:
             vanished=vanished,
             failed=len(stash.failed),
         )
+
+    # -- writing ---------------------------------------------------------
+    #
+    # Two ways in, and exactly one way a row gets written.  ``scan`` reads a
+    # file, so everything about an item is either in its bytes or is the
+    # moment it was read; ``add`` is handed the rest.
+
+    def _insert(
+        self,
+        print_: str,
+        item: Item,
+        copies: int,
+        status: str,
+        first_seen: str,
+        last_seen: str,
+    ) -> None:
+        """Write one item row.  The only INSERT into ``items`` there is.
+
+        The display fields are re-derived from the item's own bytes here, at
+        the one point every item passes through, rather than being passed in
+        by each caller -- so there is nowhere for a caller to get them wrong.
+        """
+        self.conn.execute(
+            """
+            INSERT INTO items (fingerprint, guid, name, prefix, suffix,
+                               level, quantity, identified, num_sockets,
+                               num_enchants, num_effects, num_stats,
+                               copies, raw, status, first_seen, last_seen)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                print_,
+                f"{item.guid:016X}",
+                item.base_name,
+                item.prefix.rstrip("\x00"),
+                item.suffix.rstrip("\x00"),
+                item.level,
+                item.quantity,
+                item.identified,
+                item.num_sockets,
+                item.num_enchants,
+                len(item.effects) + len(item.effects2),
+                len(item.stats),
+                copies,
+                item.raw,
+                status,
+                first_seen,
+                last_seen,
+            ),
+        )
+
+    def _remember(
+        self,
+        print_: str,
+        source: str,
+        container: int,
+        slot: int,
+        seen: str,
+        present: bool,
+    ) -> None:
+        """Say where an item is in ``source``, present or not."""
+        self.conn.execute(
+            """
+            INSERT INTO placements (fingerprint, source, container, slot,
+                                    present, seen_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(fingerprint, source) DO UPDATE SET
+                container = excluded.container,
+                slot      = excluded.slot,
+                present   = excluded.present,
+                seen_at   = excluded.seen_at
+            """,
+            (print_, source, container, slot, 1 if present else 0, seen),
+        )
+
+    def add(self, arrivals: list[Arrival], *, source: str, status: str) -> int:
+        """Take in items that did not come from a stash file.
+
+        Returns how many were new.  An item the registry already holds is left
+        *completely* alone -- its status, its timestamps, its copy count, and
+        its placement -- which is what makes reading the same collection in
+        twice change nothing the second time, the property a restore needs.
+        An item that is already here is here; the file is not news about it.
+
+        One transaction, committed at the end.  The checking happens before
+        this is called, so a collection that is refused is refused whole.
+
+        A placement is written only for an arrival that carries one, and then
+        with ``present = 0``: these items are precisely the ones the file does
+        *not* hold.  ``present`` is read by :meth:`scan`'s vanish check and
+        nowhere else, and an import is not a scan -- nothing should look to
+        the file for an item it never had.
+        """
+        added = 0
+        for arrival in arrivals:
+            print_ = arrival.item.fingerprint
+            if self.get(print_) is not None:
+                continue
+            seen = arrival.last_seen or _now()
+            self._insert(
+                print_,
+                arrival.item,
+                arrival.copies,
+                status,
+                arrival.first_seen or seen,
+                seen,
+            )
+            if arrival.container is not None and arrival.slot is not None:
+                self._remember(
+                    print_, source, arrival.container, arrival.slot, seen, False
+                )
+            added += 1
+        self.conn.commit()
+        return added
 
     # -- queries ---------------------------------------------------------
 
