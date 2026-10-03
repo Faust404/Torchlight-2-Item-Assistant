@@ -59,8 +59,18 @@ jobs:
       - name: the executable answers
         shell: pwsh
         run: |
-          $out = & dist/Torchlight2ItemAssistant.exe --version
-          if ($LASTEXITCODE -ne 0) { throw "the executable exited $LASTEXITCODE" }
+          # ``&`` is not usable here, however much it reads like the obvious
+          # spelling: the executable is windowed, and PowerShell does not wait
+          # for a GUI-subsystem process.  Measured against the real exe, ``&
+          # dist/... --version`` returns in 5 ms with nothing captured and
+          # ``$LASTEXITCODE`` null -- so a check written that way throws on a
+          # build that is perfectly good, and does it before the release is
+          # created.  Start-Process -Wait actually waits, and the answer
+          # arrives through a file rather than a pipe.
+          $log = [System.IO.Path]::GetTempFileName()
+          $p = Start-Process dist/Torchlight2ItemAssistant.exe -ArgumentList "--version" -Wait -PassThru -RedirectStandardOutput $log
+          $out = (Get-Content $log -Raw).Trim()
+          if ($p.ExitCode -ne 0) { throw "the executable exited $($p.ExitCode)" }
           if ($out -notmatch '^Torchlight 2 Item Assistant \d+\.\d+\.\d+$') {
             throw "unexpected answer: $out"
           }
