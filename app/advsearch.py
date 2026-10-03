@@ -134,26 +134,6 @@ LABEL_PX = 92
 #: nobody uses the arrows on; ten is a step a thumb can hold down.
 STEP_BY = 10
 
-#: What the Class section says when there is nothing to restrict by.  The
-#: restrictions are the reference database's and are in no file of the game's,
-#: so on a machine without it this section could only ever match nothing --
-#: which is a control that lies, and the one honest thing to do with it is to
-#: say so and leave it dark.
-NO_CLASSES = (
-    "The reference database's items.json was not found, and the game's own "
-    "files do not say which class an item is for — so there is nothing here "
-    "to narrow by."
-)
-
-#: The Class section's other half, when there *is* something to narrow by: the
-#: one rule of the five that reads backwards -- an item that names no class is
-#: one every class may use, so it passes whatever is ticked.
-CLASSES_HINT = (
-    "No box ticked means every class.  An item that names no class is one any "
-    "class may use, so it is shown whatever is ticked here."
-)
-
-
 #: The roll at the front of a property line: its sign, its number and its per
 #: cent sign if it has one.  It is the part that differs from item to item --
 #: ``+15% to Fire Damage`` and ``+38% to Fire Damage`` are one stat -- so it is
@@ -987,8 +967,10 @@ class AdvancedSearchOverlay(QWidget):
     ) -> None:
         """Open on this search, with the class boxes only if there are classes.
 
-        ``classes`` is the four words when the reference database was found and
-        nothing at all when it was not.  ``vocabulary`` is the collection's own
+        ``classes`` is the four words when the game's data answers the question
+        and nothing at all when it does not -- see
+        :meth:`~tl2stash.gamedata.GameData.has_classes`, which is what the
+        caller asks.  ``vocabulary`` is the collection's own
         property lines, with their rolls taken off, for the Stats section's
         suggestions -- see :meth:`app.window.MainWindow._stat_vocabulary`.
         """
@@ -1300,7 +1282,7 @@ class AdvancedSearchOverlay(QWidget):
         return section
 
     def _classes(self) -> Section:
-        """The class boxes lined up with the sections above, and the note under.
+        """The class boxes lined up with the sections above.
 
         Nothing names this row.  ``For`` was a word standing in the label
         column so that the boxes would start where every other row's controls
@@ -1310,19 +1292,29 @@ class AdvancedSearchOverlay(QWidget):
         answer to it.  So they are set back in to where the sections above
         begin their rows, the x a name in the label column starts at: the
         reference's own reading of the same four boxes, at the user's own
-        measure -- see :func:`_class_indent`.  The note follows them, since a
-        hint is read against the control it is about.
+        measure -- see :func:`_class_indent`.
+
+        Nothing is said under them.  There was a note here once, holding the
+        one rule of the five that reads backwards -- an item naming no class is
+        shown whatever is ticked -- and a line for the case where there was
+        nothing to narrow by at all; the user asked for the text gone, and the
+        rule went where the section's other removed notes went, onto the boxes
+        themselves.  The line for the empty case is simply gone: the classes
+        now come from the game's own files, so the state it described is one no
+        real install can reach.
         """
         section = Section("Class")
         self.class_boxes: dict[str, QCheckBox] = {}
         for word in CLASSES:
             box = QCheckBox(word)
-            box.setToolTip(f"Show the items only an {word} may use.")
+            article = "an" if word[:1] in "AEIO" else "a"
+            box.setToolTip(
+                f"Show the items only {article} {word} may use.  No box ticked "
+                "means every class, and an item that names no class is one any "
+                "class may use, so it is shown whatever is ticked here."
+            )
             self.class_boxes[word] = box
-        left = _class_indent()
-        section.wide(_chips(list(self.class_boxes.values())), left=left)
-        self.class_note = _note(CLASSES_HINT)
-        section.wide(self.class_note, left=left)
+        section.wide(_chips(list(self.class_boxes.values())), left=_class_indent())
         return section
 
     def _elements(self, title: str) -> tuple[Section, dict]:
@@ -1443,15 +1435,12 @@ class AdvancedSearchOverlay(QWidget):
             row.text.setCompleter(_completer(self._vocabulary, row.text))
 
     def _offer_classes(self, classes: Sequence[str]) -> None:
-        """Offer the class boxes, or say why there are none to offer."""
+        """Offer the class boxes, or leave them dark when there is nothing."""
         known = bool(classes)
         for box in self.class_boxes.values():
             box.setEnabled(known)
             if not known:
                 box.setChecked(False)
-        self.class_note.setVisible(not known)
-        if not known:
-            self.class_note.setText(NO_CLASSES)
 
     # -- the user --------------------------------------------------------
 

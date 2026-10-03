@@ -46,8 +46,6 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from app.advsearch import (  # noqa: E402
     ALL_TYPES,
-    CLASSES_HINT,
-    NO_CLASSES,
     PANEL_MAX,
     SUBGROUP_INDENT,
     AdvancedSearchOverlay,
@@ -118,7 +116,7 @@ def opened(state=None, places=PLACES, classes=None, vocabulary=(), size=(900, 60
     The host is shown, which is not decoration: a hidden widget's children are
     never laid out, so the panel's geometry is a thing a hidden window does not
     have.  ``classes`` is ``None`` for the four the game has; the other case is
-    a machine without the reference database, which is a test of its own.
+    an archive that states none, which is a test of its own.
     """
     host = QWidget()
     host.resize(*size)
@@ -534,26 +532,38 @@ def test_reset_puts_every_control_back_and_applies_nothing(qapp):
 # --------------------------------------------------------------------------
 
 
-def test_the_class_boxes_are_offered_when_the_reference_database_is_found(qapp):
+def test_the_class_boxes_are_offered_and_nothing_is_said_under_them(qapp):
+    """The user's *"remove that text from the class section"*, as what is in
+    the section: four boxes and nothing else.
+
+    There were two notes here -- the rule about an item naming no class, and a
+    line for the case where there was nothing to narrow by at all -- and both
+    are gone.  The rule is not lost: it is on each box's tooltip, where
+    ``test_what_the_removed_notes_said_is_on_the_controls_they_were_about``
+    reads it.
+    """
     _, overlay = opened()
+    section = sections(overlay)["Class"]
 
     assert list(overlay.class_boxes) == list(CLASSES)
     assert all(box.isEnabled() for box in overlay.class_boxes.values())
-    assert overlay.class_note.isHidden(), "the note is for the other case"
-    assert overlay.class_note.text() == CLASSES_HINT
-    assert "names no class" in CLASSES_HINT, "the rule the boxes read is said"
+    assert notes(section) == [], "the section says nothing under the boxes"
+    assert "names no class" in overlay.class_boxes["Embermage"].toolTip(), (
+        "the rule the boxes read left with the note"
+    )
 
 
-def test_the_class_section_says_so_when_there_is_nothing_to_narrow_by(qapp):
-    """A machine without the reference database: the restrictions are in no
-    file of the game's, so the section could only ever match nothing -- and a
-    control that can only match nothing is a control that lies."""
+def test_the_class_boxes_are_left_dark_when_the_archive_states_no_class(qapp):
+    """An archive naming no class at all -- a mod's, in principle, since the
+    game's own 6,262 item files name 768.  The boxes are dark rather than
+    offered, and they now say nothing about why: the user asked for the text
+    gone, and a state a real install cannot reach is not worth a line of it."""
     _, overlay = opened(Advanced(classes=frozenset({"Embermage"})), classes=())
+    section = sections(overlay)["Class"]
 
     assert not any(box.isEnabled() for box in overlay.class_boxes.values())
     assert not any(box.isChecked() for box in overlay.class_boxes.values())
-    assert not overlay.class_note.isHidden()
-    assert overlay.class_note.text() == NO_CLASSES
+    assert notes(section) == [], "a dark box is not explained either"
     assert overlay.draft().classes == frozenset(), "a dark box is not a tick"
 
 
@@ -613,12 +623,13 @@ def test_the_five_elements_come_out_in_the_game_s_own_order(qapp):
 def test_the_four_named_sections_are_rows_and_nothing_else(qapp):
     """The user's *"remove the extra text"*, as what is in the panel.
 
-    Under Stat Requirements, Damage, Armor and Stats there is nothing but the
-    rows now.  Two notes were asked to stay and they are checked here with the
-    same reading, because the point is what the panel's sections carry: the
-    sockets sentence, which is the one thing a row of chips cannot say on its
-    own, and the Class note, which is load-bearing -- it is what tells a player
-    why those boxes are dark when the reference database is missing.
+    Under Stat Requirements, Damage, Armor, Stats and Class there is nothing
+    but the controls now -- the Class note was the last to go, on the user's
+    own ask, and it is read off its boxes by
+    ``test_the_class_boxes_are_offered_and_nothing_is_said_under_them``.  One
+    note was asked to stay and it is checked here with the same reading,
+    because the point is what the panel's sections carry: the sockets
+    sentence, which is the one thing a row of chips cannot say on its own.
 
     Type is in the first list as well and not because it was named: the
     reference carries a note there ("nothing ticked means any type, as does
@@ -628,13 +639,12 @@ def test_the_four_named_sections_are_rows_and_nothing_else(qapp):
     _, overlay = opened()
     by_caption = sections(overlay)
 
-    for caption in ("Stat Requirements", "Damage", "Armor", "Stats", "Type"):
+    for caption in ("Stat Requirements", "Damage", "Armor", "Stats", "Type", "Class"):
         assert notes(by_caption[caption]) == [], f"{caption} has kept its note"
 
     assert notes(by_caption["General"]) == [
         "No chip ticked means any number of sockets."
     ]
-    assert notes(by_caption["Class"]) == [CLASSES_HINT]
 
 
 def test_what_the_removed_notes_said_is_on_the_controls_they_were_about(qapp):
@@ -651,6 +661,11 @@ def test_what_the_removed_notes_said_is_on_the_controls_they_were_about(qapp):
     requirements': that an item is worn either by the player level or by these
     attributes.  It is on the low box of each of those four rows now, which is
     why this test reads the tips rather than the face of the panel.
+
+    The class note's rule went the same way when the user asked for the last of
+    the section's text to go: both halves of it -- that no box ticked means
+    every class, and that an item naming none is shown whatever is ticked --
+    are on each of the four boxes.
     """
     _, overlay = opened()
     low, high = overlay.damage_spins["fire"]
@@ -674,6 +689,10 @@ def test_what_the_removed_notes_said_is_on_the_controls_they_were_about(qapp):
     assert "your collection actually shows" in row.text.toolTip(), (
         "where the words come from"
     )
+
+    class_box = overlay.class_boxes["Engineer"]
+    assert "No box ticked means every class" in class_box.toolTip()
+    assert "names no class" in class_box.toolTip(), "the rule the note carried left"
 
 
 def test_the_four_stat_requirements_stand_two_to_a_line(qapp):
@@ -752,21 +771,6 @@ def test_the_class_boxes_line_up_with_the_names_above_them(qapp):
     assert "For" not in [label.text() for label in class_section.findChildren(QLabel)]
     first = next(iter(overlay.class_boxes.values())).mapTo(class_section, QPoint(0, 0))
     assert first.x() == names_begin, "the boxes do not start where the names above start"
-
-
-def test_the_class_note_is_read_against_the_boxes_it_explains(qapp):
-    """The note is drawn on the one machine that needs it -- the one without a
-    reference database, where the boxes are dark and nothing else says why --
-    and it follows them in to the same line, since a hint is read against the
-    control it is about."""
-    _, overlay = opened(classes=())
-    section = sections(overlay)["Class"]
-
-    assert overlay.class_note.isVisible(), "nothing says why the boxes are dark"
-    first = next(iter(overlay.class_boxes.values())).mapTo(section, QPoint(0, 0))
-    assert overlay.class_note.mapTo(section, QPoint(0, 0)).x() == first.x(), (
-        "the note is not read against the boxes it explains"
-    )
 
 
 def test_a_property_row_can_be_added_typed_in_and_taken_away(qapp):
