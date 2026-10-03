@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tl2stash.card import AFFIX, DAMAGE, Rung, lines  # noqa: E402
+from tl2stash.card import AFFIX, DAMAGE, ENCHANT, Rung, enchant_heading, lines  # noqa: E402
 from tl2stash.gamedata import (  # noqa: E402
     GameData,
     SetBonus,
@@ -33,12 +33,14 @@ from tl2stash.item import (  # noqa: E402
     Effect,
     Item,
     Location,
+    as_float,
     parse_item,
 )
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.stash import read_stash_file  # noqa: E402
 from tl2stash.tooltip import (  # noqa: E402
     PERMANENT,
+    _DAMAGE_TYPES,
     _added_damage_lines,
     _as_minutes,
     _effect_lines,
@@ -80,6 +82,7 @@ def effect(
     damage_type: int = 0,
     duration: float = PERMANENT,
     index: int = -1,
+    type: int = 0x8041,
 ) -> Effect:
     """A record as the item blob holds one.
 
@@ -87,9 +90,13 @@ def effect(
     so these records are resolved by name.  That is deliberate: a test that
     says ``WC_PROC_FULLHEAL`` means that name, and a real record's index would
     point at a real effect and win.  Pass an ``index`` to test that it does.
+
+    ``type`` is the one thing that tells an enchanter's record from the item's
+    own -- see ``tl2stash.item.is_enchant`` -- and the default is the plain
+    affix type every test before the split writes.
     """
     return Effect(
-        type=0x8041,
+        type=type,
         name=name,
         file=None,
         guid=None,
@@ -569,9 +576,10 @@ def test_a_socketable_s_gate_is_written_as_an_item_level(game):
     assert number.isdigit() and int(number) > 0
 
 
-def test_flat_damage_from_a_socket_or_enchant_is_its_own_line():
+def test_flat_damage_from_a_socket_or_an_affix_is_the_item_s_own_line():
     """Recorded per element as three numbers -- how much came from an effect,
-    from a socket and from an enchantment -- and the player sees the total.
+    from a socket and from an enchantment -- and the item's own line is what an
+    affix and a socket gave it.
 
     Bonebreaker carries one of these for 13 physical on top of the 120-239 its
     data file gives it, and the game lists both.
@@ -580,14 +588,22 @@ def test_flat_damage_from_a_socket_or_enchant_is_its_own_line():
     assert _added_damage_lines(it) == ["+13 Physical Damage"]
 
 
-def test_flat_damage_sums_every_source_and_names_every_element():
+def test_flat_damage_is_split_by_who_gave_it():
+    """One record, two lines: the item's own share is written with the
+    properties and the enchanter's is its own line in the enchanter's section.
+
+    The player then sees two numbers they can add rather than one whose halves
+    they cannot tell apart -- and the record itself says which is which, so no
+    guessing is involved.
+    """
     it = item(
         added_damages=[
             AddedDamage(word(2.0), word(3.0), word(4.0), 0x02),
             AddedDamage(0, word(22.0), 0, 0x04),
         ]
     )
-    assert _added_damage_lines(it) == ["+9 Fire Damage", "+22 Electric Damage"]
+    assert _added_damage_lines(it) == ["+5 Fire Damage", "+22 Electric Damage"]
+    assert _added_damage_lines(it, enchantments=True) == ["+4 Fire Damage"]
 
 
 def test_an_element_with_no_damage_is_not_a_line():
@@ -1014,6 +1030,181 @@ def test_a_real_socketable_s_two_halves_are_named_on_the_card(game):
         "Armor/Trinket: +58 Fire Armor",
         "Weapon: +29 Fire Damage",
     ]
+
+
+# --------------------------------------------------------------------------
+# What an enchanter left, kept apart from the item's own
+# --------------------------------------------------------------------------
+
+
+def test_an_enchanter_s_record_is_not_one_of_the_item_s_own():
+    """Mosby's Ring's shape: one list, one wording, two authors.
+
+    Every record here is resolved through the same index and written the same
+    way, so nothing about a line says who wrote it -- the save file marks none
+    of them and counts them only.  So the card asks the record instead, one
+    side at a time, which is also what keeps a line from being written twice.
+    """
+    it = item()
+    it.effects = [
+        effect("", value=10.0, index=_SocketGame.OWN),
+        effect("", value=20.0, index=_SocketGame.SOCKET, type=0x8541),
+    ]
+
+    assert _effect_lines(it, _SocketGame()) == ["+10 Health"]
+    assert _effect_lines(it, _SocketGame(), enchantments=True) == ["+20 Ice Armor"]
+
+
+def test_both_effect_lists_are_cut_and_not_only_the_first():
+    """The cut is by the record's type, so which list one came out of makes no
+    difference -- and the game writes two.
+
+    Measured on this machine, every enchanter's effect record is in
+    ``effects`` and none is in ``effects2``; that is what lets the tests above
+    write one list only.  It is a fact about these items and not a rule, which
+    is why the cut reads both.
+    """
+    it = item()
+    it.effects = [effect("", value=10.0, index=_SocketGame.OWN)]
+    it.effects2 = [effect("", value=20.0, index=_SocketGame.SOCKET, type=0x8400)]
+
+    assert _effect_lines(it, _SocketGame()) == ["+10 Health"]
+    assert _effect_lines(it, _SocketGame(), enchantments=True) == ["+20 Ice Armor"]
+
+
+def test_with_no_game_data_the_enchanter_s_names_are_still_kept_apart():
+    """An item no file in the archive answers for: the names stand in for the
+    wording, and the enchanter's are still not written among the item's own.
+
+    The mask is a fact about the record, so this half of the split needs no
+    game data at all -- which matters, because the card is drawn on machines
+    with no game installed, and there an enchanter's records would otherwise
+    read as more of the item's own stats.
+    """
+    it = item()
+    it.effects = [effect("OWN ROLL"), effect("LEFT BY AN ENCHANTER", type=0x8400)]
+
+    assert render(it, None) == [
+        "Test Item",
+        "OWN ROLL",
+        "Enchantments (1)",
+        "LEFT BY AN ENCHANTER",
+    ]
+
+
+def _enchanted_items() -> list[Item]:
+    """The items this machine stores that an enchanter has been at, read only.
+
+    The vanilla registry is read first and the modded ones not at all: the
+    mask is the game's, and a mod is the one place a record could carry one of
+    its two patterns without an enchanter behind it.  Empty when nothing is
+    stored.
+    """
+    root = Path(__file__).resolve().parent.parent
+    for name in ("items-vanilla-76561198328811052.db", "items.db"):
+        path = root / "var" / name
+        if not path.is_file():
+            continue
+        found: list[Item] = []
+        with Registry(path) as registry:
+            for entry in registry.rows():
+                if not entry["raw"]:
+                    continue
+                try:
+                    it = parse_item(entry["raw"])
+                except Exception:  # noqa: BLE001 -- an unreadable blob is not this test's business
+                    continue
+                if it.num_enchants:
+                    found.append(it)
+        if found:
+            return found
+    return []
+
+
+@needs_game
+def test_a_real_enchanted_item_writes_its_enchanter_s_lines_apart(game):
+    """The reported item's shape, on every enchanted item this machine stores:
+    the enchanter's lines under their own heading, and nowhere in its own.
+
+    Mosby's Ring -- ``+49 Focus`` and ``+49 Vitality``, both of them an
+    enchanter's -- is the item this was reported on, and it lives in the
+    modded registry, which is not read here: the split does not depend on
+    which mod wrote the row.  The heading is counted from what is under it, so
+    the two cannot disagree whatever the item.
+    """
+    stored = _enchanted_items()
+    if not stored:
+        pytest.skip("no enchanted item is stored on this machine")
+
+    moved: list[str] = []
+    for it in stored:
+        card = build(it, game)
+        blocks = [block for block in card.blocks if block.kind == ENCHANT]
+        if not blocks:
+            # Nothing in the archive words one of these records, and a record
+            # nobody can word draws no line -- the block is then dropped with
+            # the rest of the empty ones rather than drawn as a bare heading.
+            continue
+        (block,) = blocks
+        flat = lines(card)
+        heading = enchant_heading(len(block.lines))
+
+        assert heading in flat, (it.name, flat)
+        at = flat.index(heading)
+        assert flat[at + 1 : at + 1 + len(block.lines)] == list(block.lines), it.name
+        # The Stats filter reads the same lines the card draws: an enchanter's
+        # stat is a stat of the item, and it is only its *drawing* that moved.
+        assert all(line in card.properties for line in block.lines), it.name
+        (own,) = [b for b in card.blocks if b.kind == AFFIX]
+        if any(line not in own.lines for line in block.lines):
+            moved.append(it.name)
+
+    # An item's own line and an enchanter's can read the same -- two '+17
+    # Strength' records on one item are both on this machine -- so what is
+    # asked here is only that the split moved something real, once.
+    assert moved, "no stored item has an enchanter's line outside its own block"
+
+
+@needs_game
+def test_a_real_damage_enchantment_is_the_enchanter_s_line_and_not_the_item_s(game):
+    """Timefork's shape: flat damage an enchanter added is a line of its own.
+
+    The save file records flat damage per element as three numbers -- from an
+    effect, from a socket, from an enchanter -- and the card now writes two
+    lines where it used to write one total.  Both are worked out here from the
+    record itself, so nothing in this test asks the card what it thinks an
+    enchanter left.
+    """
+    stored = [
+        it for it in _enchanted_items() if any(a.from_enchant for a in it.added_damages)
+    ]
+    if not stored:
+        pytest.skip("no damage-enchanted item is stored on this machine")
+
+    checked = 0
+    for it in stored:
+        card = build(it, game)
+        blocks = [block for block in card.blocks if block.kind == ENCHANT]
+        if not blocks:
+            continue
+        (block,) = blocks
+        (own,) = [b for b in card.blocks if b.kind == AFFIX]
+        checked += 1
+
+        for added in it.added_damages:
+            element = _DAMAGE_TYPES.get(added.damage_type)
+            if element is None:
+                continue
+            theirs = as_float(added.from_enchant)
+            mine = as_float(added.from_effect) + as_float(added.from_socket)
+            if theirs:
+                line = f"+{format_value(theirs, 0)} {element} Damage"
+                assert line in block.lines, (it.name, line, block.lines)
+            if mine:
+                line = f"+{format_value(mine, 0)} {element} Damage"
+                assert line in own.lines, (it.name, line, own.lines)
+
+    assert checked, "every stored damage-enchanted item had nothing to word"
 
 
 @needs_game

@@ -290,7 +290,7 @@ line.** The other 13 are all accounted for, and none of them is a wrong stat:
 | difference | seen on | what it is |
 |---|---|---|
 | `Charge  rate` (two spaces) | 12 | the reference replaced the colour codes with a space; the game's own template is `Charge\|u rate`, so one space is right |
-| flat enchant/socket damage | 2 | rolled onto the item in play, so absent from a base-item database |
+| flat enchant/socket damage | 2 | rolled onto the item in play, so absent from a base-item database; the card writes the enchanter's share as a line of its own, apart from the item's |
 | a socketed gem, indented | 1 | the reference does not model socket contents |
 | `Learn <spell>` | 3 | same — spells are not what that database lists |
 | `15% chance to Block` | 2 | a shield's own block, which it files under another field |
@@ -300,6 +300,14 @@ The counts overlap — one item can differ in two ways — and in every one of
 these the tool is showing something the game shows and the reference does not
 model, or spacing the game does not have. Nothing in the list is a stat read
 wrongly, which is what the comparison was for.
+
+The comparison was made before the enchantment section existed. An item an
+enchanter has been at now draws lines a base-item database has no counterpart
+for: the `Enchantments (n)` heading, and, where the enchanter added flat
+damage, a line of its own beside the item's share. The flat-damage row's two
+items differ from the reference either way — it holds no such line at all —
+but an item enchanted in play and otherwise matching would now differ by the
+heading alone.
 
 ## Tests
 

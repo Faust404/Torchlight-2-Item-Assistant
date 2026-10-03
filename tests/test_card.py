@@ -25,12 +25,14 @@ from tl2stash.card import (  # noqa: E402
     AFFIX,
     ARMOR,
     DAMAGE,
+    ENCHANT,
     TIER_NONE,
     Block,
     Card,
     Rung,
     carried_magic,
     display_tier,
+    enchant_heading,
     lines,
     requirements_lines,
 )
@@ -227,11 +229,13 @@ def test_a_weapon_s_own_damage_and_what_was_added_to_it_are_one_block():
     """The game draws them together, and the model keeps them together.
 
     An item's own damage is worked out from its data file; flat damage is in
-    the save file, as three numbers per element.  What a socket or an
-    enchantment added is a *property* the item has been given, so it is written
-    with the properties rather than as a line of damage the weapon has -- which
-    is what leaves the damage block as one of the two the card marks with an
-    element, and this line as an unmarked one among the affixes.
+    the save file, as three numbers per element.  What an affix or a socket
+    added is a *property* the item has been given, so it is written with the
+    properties rather than as a line of damage the weapon has -- which is what
+    leaves the damage block as one of the two the card marks with an element,
+    and this line as an unmarked one among the affixes.  The third number, the
+    enchanter's, is the same kind of line drawn apart: see
+    :func:`test_the_enchanter_s_flat_damage_is_a_block_of_its_own`.
     """
     it = item(max_damage=72, added_damages=[AddedDamage(0, word(13.0), 0, 0x00)])
     card = build(it, None)
@@ -240,6 +244,76 @@ def test_a_weapon_s_own_damage_and_what_was_added_to_it_are_one_block():
         (DAMAGE, ("Damage 72",)),
         (AFFIX, ("+13 Physical Damage",)),
     ]
+
+
+def test_the_enchanter_s_flat_damage_is_a_block_of_its_own():
+    """One element, two authors: two lines where the card used to write one.
+
+    The save file keeps the three shares apart and the card used to add them
+    up, which is true of the item and false about the player's question -- an
+    enchantment is the half of a stat an item can be stripped of.  The
+    enchanter's line is the same green serif as the item's own; only the
+    section it stands in says who wrote it.
+    """
+    it = item(added_damages=[AddedDamage(word(2.0), word(3.0), word(4.0), 0x02)])
+    card = build(it, None)
+
+    assert [(block.kind, block.lines) for block in card.blocks] == [
+        (AFFIX, ("+5 Fire Damage",)),
+        (ENCHANT, ("+4 Fire Damage",)),
+    ]
+    assert lines(card) == [
+        "Test Item",
+        "+5 Fire Damage",
+        "Enchantments (1)",
+        "+4 Fire Damage",
+    ]
+
+
+def test_the_enchanter_s_records_are_one_block_under_the_one_heading():
+    """Mosby's Ring's shape: two records an enchanter wrote, one section.
+
+    The card is built with no archive here, so a record is written under the
+    name the save file gave it -- the shape is what this asks about.  The
+    count on the heading is the number of lines under it, which is what keeps
+    the two from ever disagreeing.
+    """
+    it = item()
+    it.effects = [
+        effect("OWN ROLL"),
+        effect("FOCUS", type=0x8541),
+        effect("VITALITY", type=0x8541),
+    ]
+    card = build(it, None)
+
+    assert [(block.kind, block.lines) for block in card.blocks] == [
+        (AFFIX, ("OWN ROLL",)),
+        (ENCHANT, ("FOCUS", "VITALITY")),
+    ]
+    assert lines(card) == [
+        "Test Item",
+        "OWN ROLL",
+        "Enchantments (2)",
+        "FOCUS",
+        "VITALITY",
+    ]
+
+
+def test_the_heading_is_the_game_s_own_word_over_the_lines_it_counts():
+    """The wording is read off the game's rollover layout, which names the
+    widget ``Enchantments`` and writes its count as ``Enchantments Acquired:
+    2``; the count here is what is under the heading."""
+    assert enchant_heading(1) == "Enchantments (1)"
+    assert enchant_heading(2) == "Enchantments (2)"
+
+
+def test_an_item_no_enchanter_has_touched_has_no_such_block():
+    """Not an empty section drawn as a bare rule: the block is dropped."""
+    it = item(added_damages=[AddedDamage(word(2.0), word(3.0), 0, 0x02)])
+    card = build(it, None)
+
+    assert [block.kind for block in card.blocks] == [AFFIX]
+    assert not any("Enchantments" in line for line in lines(card))
 
 
 def test_armour_is_its_own_kind_of_block():
@@ -264,18 +338,22 @@ def test_the_parts_are_the_numbers_beside_the_lines():
     assert card.armor == (("physical", 20, 20),)
 
 
-def test_properties_are_the_items_own_lines_and_nothing_else():
-    """What the Stats filter reads: the affix block, and only the affix block.
+def test_properties_are_the_item_s_own_lines_and_its_enchantments():
+    """What the Stats filter reads: both written sections, and no more.
 
     Not the damage the item *is* -- a sword is not a stat -- and not its
     requirements, which are what it takes to use it.  What is left is the list
-    of things the item says about itself, which is what a row of the advanced
-    search is answered from.
+    of things the item says about itself, and an enchanter's stat is one of
+    them: the card draws it apart so the player can see which stats an
+    enchantment is holding, and a search for ``Focus`` has to find the ring
+    that has it either way.  So the block a line is drawn in is not what
+    decides whether the line counts.
     """
     it = item(armor=20, added_damages=[AddedDamage(0, word(13.0), 0, 0x00)])
+    it.effects = [effect("FOCUS", type=0x8541)]
     card = build(it, None)
 
-    assert card.properties == ("+13 Physical Damage",)
+    assert card.properties == ("+13 Physical Damage", "FOCUS")
     assert "Armor 20" not in card.properties
 
 

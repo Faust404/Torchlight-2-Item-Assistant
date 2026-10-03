@@ -64,11 +64,13 @@ from tl2stash.card import (
     AUGMENT_LOCKED,
     DAMAGE,
     DAMAGE_PER_SECOND,
+    ENCHANT,
     REQUIREMENTS,
     THE_ALTERNATIVE,
     Augment,
     Card,
     TIER_INK,
+    enchant_heading,
     requirements_lines,
 )
 from tl2stash.icons import ELEMENT_MARKS, IconLibrary, Placement
@@ -114,6 +116,13 @@ DIM = "#8b837b"
 GOLD = "#e3ba6b"
 #: The game's magical-item green, which is what an affix line is written in.
 MAGIC = "#7cc24a"
+#: The game's own colour for the enchantments block, off its rollover layout:
+#: ``MEDIA/UI/PIECES/EQUIPMENT_ROLLOVER.LAYOUT`` writes the widget that carries
+#: the count as ``FFF7AF09``.  It is the one section word on this card that is
+#: not the site's label brown, because it is the one section of the item's own
+#: the game both draws and colours -- see ``app.card._block``.  Measured
+#: against the card panel, 9.55:1.
+AMBER = "#F7AF09"
 #: The site's ``.fx.locked`` grey, for a stat an item has not been given yet.
 #: It is a shade off :data:`DIM` on purpose and reads as one of the card's
 #: side-notes rather than as a stat -- which is the whole of the distinction an
@@ -153,9 +162,10 @@ _NUMBER = re.compile(r"[-+]?\d+(?:[.,]\d+)?%?")
 #: The blocks the card draws as one run of lines, and the only ones whose lines
 #: are damage or armour the *item* has: its own damage and its own armour are
 #: two blocks in the model and one section on the card, because that is how the
-#: game draws them and how the site parts its sections.  What an affix, a
-#: socket or an enchantment added is not among them -- it is a property, and a
-#: property is written with the properties.
+#: game draws them and how the site parts its sections.  What an affix or a
+#: socket added is not among them -- it is a property, written with the
+#: properties -- and neither is an enchanter's line, which is a property drawn
+#: in a section of its own.
 _NUMERIC = (DAMAGE, ARMOR)
 
 
@@ -294,8 +304,9 @@ def element_of(text: str, kind: str) -> str | None:
     ``kind`` is the guard, and it is the whole of the guard: only the damage
     and armour blocks are the item's *own* numbers.  What the item has been
     *given* -- the flat ``+13 Physical Damage`` a socket or an enchantment
-    granted -- is a property, written in the properties block with the rest,
-    and a property takes no mark: the mark is for the damage the weapon *is*.
+    granted -- is a property, written in the properties block or in the
+    enchanter's section with the rest, and a property takes no mark: the mark
+    is for the damage the weapon *is*.
     The same guard is what keeps an affix that happens to begin with a colour
     -- ``Fire Damage Taken is reduced by 10%`` -- from reading as this item
     dealing fire.
@@ -917,8 +928,7 @@ class ItemCard(QFrame):
 
         for kind, found in _sections(card.blocks):
             first = self._part(column, first)
-            for text in found:
-                column.addWidget(self._stat(text, kind))
+            self._block(column, kind, found)
 
         # What is in a socket, as its own section: the ember the player put
         # there and the bonus it grants this item.  The heading is over the
@@ -1177,13 +1187,32 @@ class ItemCard(QFrame):
         column.addWidget(heading)
 
         for kind, found in _sections(gem.blocks):
-            for text in found:
-                # Indented, because what is under a gem's name is the gem's
-                # rather than the item's.
-                column.addWidget(self._stat(text, kind, indent=12))
+            # Indented, because what is under a gem's name is the gem's
+            # rather than the item's.
+            self._block(column, kind, found, indent=12)
+
+    def _block(self, column: QVBoxLayout, kind: str, found, indent: int = 0) -> None:
+        """A run of the card's lines, with a heading over it when it has one.
+
+        Only the enchanter's block has a word over it, and the word and its
+        colour are the game's own (see :data:`AMBER`): the game divides the
+        tooltip into blocks and colours *those*, which is why this heading is
+        the one section word in a colour of its own while the lines under it
+        are the same green serif every other stat is written in -- they are
+        stats the item has, and the heading is what says who gave it them.
+        Shared with :meth:`_gem` so the block is drawn the same way wherever
+        a card carries it.
+        """
+        if kind == ENCHANT:
+            heading = QLabel(_as_a_label(enchant_heading(len(found))))
+            heading.setObjectName("enchant")
+            column.addWidget(heading)
+        for text in found:
+            column.addWidget(self._stat(text, kind, indent))
 
     def _stat(self, text: str, kind: str, indent: int = 0) -> QWidget:
-        """One line of stats: an affix in the game's green, the rest plain.
+        """One line of stats: an affix or an enchantment in the game's green,
+        the rest plain.
 
         A damage or armour line leads with its element's mark when the game's
         own pictures can be read, which is a thing a number cannot say: the
@@ -1191,13 +1220,14 @@ class ItemCard(QFrame):
         ``Fire Damage 52-74`` that is already two colours of its own on the
         card.  Without the game there is no picture and the line is the line.
         """
-        affix = kind == AFFIX
+        affix = kind in (AFFIX, ENCHANT)
         label = QLabel(emphasis(text, MAGIC if affix else BODY))
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setWordWrap(True)
         if affix:
-            # The affix block is the card's serif one; the damage and armour
-            # lines keep the window's own voice.
+            # The property lines -- the item's own and the enchanter's -- are
+            # the card's serif ones; the damage and armour lines keep the
+            # window's own voice.
             label.setFont(_serif())
         label.setIndent(indent)
 
@@ -1257,6 +1287,15 @@ STYLE = f"""
 }}
 #socketed {{
     color: {LABEL};
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 1.3px;
+}}
+/* The fifth label takes the same treatment and one colour of its own: the word
+   and the colour are the game's for the block -- see ``AMBER`` -- where the
+   other four are the site's throughout. */
+#enchant {{
+    color: {AMBER};
     font-size: 10px;
     font-weight: 400;
     letter-spacing: 1.3px;

@@ -77,8 +77,11 @@ Over the collection are the filters: a search box, the **Advanced** button
 property line in your collection), a sort box, and **Clear filters**.
 
 Each card is an item, drawn with the stats the game itself would show —
-damage split by element, armour, effects, requirements. **Compare & Transfer**
-opens it beside one you already hold; **Transfer to Stash** sends it back.
+damage split by element, armour, effects, requirements. What an enchanter
+left on it is drawn in a section of its own, under **Enchantments**, so a
+stat you can lose to a disenchanter is never read as one the item rolled.
+**Compare & Transfer** opens it beside one you already hold; **Transfer to
+Stash** sends it back.
 
 The wall opens on the first fifty cards of what the filters leave; the strip
 under it, **Show All Items (550)**, says how many are still behind them. One

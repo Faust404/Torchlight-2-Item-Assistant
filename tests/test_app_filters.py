@@ -93,9 +93,11 @@ from app.models import (  # noqa: E402
 from app.sidebar import UNCLASSIFIED, SidePanel  # noqa: E402
 from tl2stash.card import AFFIX, TIER_INK, Block, Card, Rung  # noqa: E402
 from tl2stash.taxonomy import OTHER  # noqa: E402
+from tl2stash.tooltip import build  # noqa: E402
 
 from test_gamedata import _an_item_of_tier, _bashdrill  # noqa: E402
 from test_dat import needs_game, real_game  # noqa: E402
+from test_tooltip import effect, item  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -925,6 +927,29 @@ def test_a_row_with_no_range_asks_only_whether_the_item_says_it(qapp):
     proxy.set_stats((("physical damage", ELEMENT_REST[0], ELEMENT_REST[1]),))
 
     assert _listed(proxy) == ["Warder"], "the shield's own flat damage line"
+
+
+def test_a_stat_an_enchanter_left_is_a_stat_to_search_by(qapp):
+    """An enchanter's line is drawn in a section of its own and is a stat of
+    the item all the same: a search asks ``Card.properties``, which is the
+    item's own lines *and* its enchantments.
+
+    Mosby's Ring's shape, built by the tool's own card builder rather than by
+    hand, so this is the two halves meeting -- what ``build`` writes into the
+    block, and what the filter reads back out of the card.  The enchantment is
+    the only place the ring says ``Focus``: a search that stopped at the
+    item's own block would turn the one item that has it away.
+    """
+    ring = item("Mosby's Ring")
+    ring.effects = [
+        effect("+10 Vitality Attribute bonus"),
+        effect("+49 Focus Attribute bonus", type=0x8541),
+    ]
+
+    proxy = _carded({"Mosby's Ring": build(ring, None)})
+    proxy.set_stats((("focus", 0, NUMBER_MAX),))
+
+    assert _listed(proxy) == ["Mosby's Ring"]
 
 
 def test_set_bonus_lines_are_invisible_until_the_box_is_ticked(qapp):

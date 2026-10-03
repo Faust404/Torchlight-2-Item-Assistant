@@ -29,6 +29,7 @@ __all__ = [
     "Stat",
     "Triggerable",
     "as_float",
+    "is_enchant",
     "parse_item",
 ]
 
@@ -65,6 +66,19 @@ EFFECT_LINK_CONTINUES = 0x03
 
 #: Effects of this type are present in the file but never displayed.
 EFFECT_TYPE_SKIP = 0x8002
+
+#: What is left of a record's type once the record's own low byte is taken off.
+EFFECT_ENCHANT_MASK = 0xFF00
+
+#: The pair of high bytes only an enchanter writes: ``0x84__`` and ``0x85__``.
+#:
+#: One of them, ``0x8541``, is also an :data:`EFFECT_HAS_FILE` type, so an
+#: enchanter's record carries a file path like any affix record does and this
+#: pair of bytes is the only thing that tells the two apart.  The other half
+#: of an enchanter's work is not an effect at all -- it is an ``AddedDamage``
+#: record with a non-zero ``from_enchant`` -- so no second predicate exists:
+#: the field says what it is.
+EFFECT_ENCHANT_KINDS = frozenset({0x8400, 0x8500})
 
 #: Location value marking a gem sitting in a socket rather than a slot.
 IN_SOCKET = 0xFFFF
@@ -109,6 +123,28 @@ def as_float(word: int | float) -> float:
     if isinstance(word, float):
         return word
     return struct.unpack("<f", struct.pack("<I", word & 0xFFFFFFFF))[0]
+
+
+def is_enchant(effect: "Effect") -> bool:
+    """Whether this effect is one the item's enchanter wrote.
+
+    The save file keeps only a count of an item's enchantments --
+    :attr:`Item.num_enchants` -- and no flag on any line, so which records
+    they are has to be read off the record's type; see
+    :data:`EFFECT_ENCHANT_KINDS`.  The other shape an enchanter's work takes
+    is an ``AddedDamage`` record carrying ``from_enchant``, which needs no
+    help of this kind.
+
+    The rule is a measurement, not a guess: counting the records this finds
+    against ``num_enchants`` over every item in every registry on this
+    machine and in the demo stash leaves no disagreement at all, and
+    ``tests/test_format.py`` re-runs that count wherever the suite runs.
+
+    FNIStash is the precedent and a weaker rule -- its ``isEnchant`` passes
+    any nameless record that is not one of ``0x8000``/``0x8100``/``0xA000``,
+    plus ``0x8541``, which guesses from names where this reads a type.
+    """
+    return (effect.type & EFFECT_ENCHANT_MASK) in EFFECT_ENCHANT_KINDS
 
 
 @dataclass

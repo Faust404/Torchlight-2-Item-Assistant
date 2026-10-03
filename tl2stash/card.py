@@ -32,6 +32,7 @@ __all__ = [
     "Card",
     "DAMAGE",
     "DAMAGE_PER_SECOND",
+    "ENCHANT",
     "ITEM_LEVEL_TO_SOCKET",
     "PLAYER_LEVEL",
     "REQUIREMENTS",
@@ -43,6 +44,7 @@ __all__ = [
     "THE_ALTERNATIVE",
     "carried_magic",
     "display_tier",
+    "enchant_heading",
     "lines",
     "requirements_lines",
 ]
@@ -51,10 +53,18 @@ __all__ = [
 #:
 #: ``DAMAGE`` and ``ARMOR`` are the item's own, and they are spelled the same
 #: way :class:`~tl2stash.gamedata.Derived` spells them so the two vocabularies
-#: are one.  ``AFFIX`` is everything the item's effects say -- *everything*:
-#: flat damage an affix, a socket or an enchantment added is a property like
-#: any other and is written here with the rest, which is what leaves the two
-#: above as the only blocks the card marks with an element.
+#: are one.  ``AFFIX`` is what the item's own effects say: the stats it was
+#: rolled with, and the flat damage an affix or a socket gave it, which is a
+#: property like any other and is written here with the rest.  ``ENCHANT`` is
+#: what an enchanter left on the item -- the same kind of line in the same
+#: green, under a heading of its own -- because the save file records only how
+#: many enchantments an item carries and the player asked to see which of its
+#: stats they are; see :func:`~tl2stash.item.is_enchant` for how a record is
+#: known to be one.
+#:
+#: ``DAMAGE`` and ``ARMOR`` are the only blocks the card marks with an
+#: element, so a `+13 Physical Damage` among the properties is a bonus and
+#: the mark is for the damage the item *is*.
 #:
 #: Nothing else is a block.  The level an item requires is drawn beside its
 #: name rather than among its stats, so it is a field on the card and where it
@@ -62,6 +72,7 @@ __all__ = [
 DAMAGE = "damage"
 ARMOR = "armor"
 AFFIX = "affix"
+ENCHANT = "enchant"
 
 #: The tier word the player is shown, by the colour it is drawn in.
 #:
@@ -335,17 +346,20 @@ class Card:
     def properties(self) -> tuple[str, ...]:
         """What the item says about itself, in the order the card draws it.
 
-        The property block and nothing else.  The item's damage and armour are
-        lines too, and are deliberately not here: a filter asking about those
-        has the numbers above to read, and working the answer back out of the
-        sentence would be a second reading of the same data.  Nor are a gem's
-        lines here -- they are the socket's, not the item's, and they are drawn
-        as a card of the gem's own.
+        The property blocks and nothing else: the item's own lines and the
+        enchanter's, because an enchanter's line is a stat the item *has* --
+        it was given it -- and a filter asking about one must find it.  The
+        item's damage and armour are lines too, and are deliberately not here:
+        a filter asking about those has the numbers above to read, and working
+        the answer back out of the sentence would be a second reading of the
+        same data.  Nor are a gem's lines here -- they are the socket's, not
+        the item's, and they are drawn as a card of the gem's own.  Neither
+        heading is here: a heading is not a line the item says.
         """
         return tuple(
             line
             for block in self.blocks
-            if block.kind == AFFIX
+            if block.kind in (AFFIX, ENCHANT)
             for line in block.lines
         )
 
@@ -425,6 +439,26 @@ def requirements_lines(card: Card) -> list[str]:
     return out
 
 
+def enchant_heading(count: int) -> str:
+    """The heading over the lines an enchanter added, and its count.
+
+    The word is the game's own -- its rollover layout names the widget that
+    carries the count ``Enchantments``, and writes the line as ``Enchantments
+    Acquired: 2``.  The count is the number of lines *under* the heading
+    rather than :attr:`~tl2stash.item.Item.num_enchants`: the two agree on
+    every item measured, and the lines are the one the heading can be held
+    to, because a record nobody can word draws no line and a heading saying
+    ``(2)`` over one line would be the only number on the card that does not
+    answer to what is under it.  It also costs nothing -- the count is a fact
+    of the block, so nothing is threaded from the item.
+
+    Written here so the flat list and the window name the section with one
+    string; the card uppercases it, see ``app.card._as_a_label``, which is
+    why the model keeps the game's sentence case.
+    """
+    return f"Enchantments ({count})"
+
+
 def lines(card: Card) -> list[str]:
     """The card as the flat list of lines the game shows.
 
@@ -439,6 +473,12 @@ def lines(card: Card) -> list[str]:
     # for is not one of its stats but what the stats are about.
     out.extend(card.weapon_lead)
     for block in card.blocks:
+        # The enchanter's is the one section of the item's own the flat list
+        # has to name: its lines are written in the item's own green and would
+        # otherwise read as more of its stats.  The heading sits over the
+        # lines in both presentations, so it is written in both.
+        if block.kind == ENCHANT:
+            out.append(enchant_heading(len(block.lines)))
         out.extend(block.lines)
     # What is in a socket, under its own heading: the ember the player put
     # there, and the bonus it grants *this* item -- which is the item's own

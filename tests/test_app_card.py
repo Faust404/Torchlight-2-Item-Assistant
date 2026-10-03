@@ -36,6 +36,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from app.card import (  # noqa: E402
+    AMBER,
     CHIP_GAP,
     DIM,
     GOLD,
@@ -64,6 +65,7 @@ from tl2stash.card import (  # noqa: E402
     AUGMENT_LOCKED,
     DAMAGE,
     DAMAGE_PER_SECOND,
+    ENCHANT,
     Augment,
     Block,
     Card,
@@ -516,7 +518,7 @@ def test_a_task_with_nothing_left_to_grant_is_still_a_task(qapp):
 
 
 def test_a_label_is_set_the_way_the_site_sets_one(qapp):
-    """Four labels, one treatment: small, tracked, and never bolded.
+    """Five labels, one treatment: small, tracked, and never bolded.
 
     ``.rhead``, ``.fxh``, ``.cond`` and ``.ror`` are the site's four -- a
     section's heading, a socketable's slot, the note under a task, and the word
@@ -526,18 +528,29 @@ def test_a_label_is_set_the_way_the_site_sets_one(qapp):
     read past, so the thing under it is what is meant to be read; a heading in
     bold competes with the stats it introduces.
 
+    The fifth is this window's own -- the heading over an item's enchantments,
+    which the site has no rule for, because the site draws no such section --
+    and it is set to match, with a colour of its own because the game gives the
+    word one.
+
     The third part of the treatment is not in the sheet and cannot be: Qt's
     stylesheet language has no ``text-transform``, so the capitals are applied
     to the word the label is built with (``app.card._as_a_label``) and are
     asserted where those words are -- ``REQUIREMENTS`` and ``OR`` in the test
-    below, ``SOCKETED`` further down.
+    below, ``SOCKETED`` and ``ENCHANTMENTS`` further down.
     """
-    for selector in ("#rhead", "#socketed", "#auglock", "#ror"):
+    for selector in ("#rhead", "#socketed", "#auglock", "#ror", "#enchant"):
         rule = STYLE[STYLE.index(selector) :]
         rule = rule[: rule.index("}")]
 
         assert "letter-spacing" in rule, selector
         assert "font-weight: 600" not in rule, selector
+
+    # A colour and no size of its own beyond the label size: the amber is the
+    # game's, read off its own rollover layout's ``Enchantments`` widget.
+    rule = STYLE[STYLE.index("#enchant") :]
+    rule = rule[: rule.index("}")]
+    assert AMBER in rule, rule
 
 
 def test_what_the_item_asks_of_the_character_is_drawn_at_the_foot(qapp):
@@ -806,6 +819,89 @@ def test_an_item_with_nothing_in_its_sockets_draws_no_socketed_heading(qapp):
     drawn = ItemCard(card(sockets=3, blocks=(Block(AFFIX, ("+5 Strength",)),)))
 
     assert texts(drawn, "socketed") == []
+    assert drawn.findChildren(Hairline) == []
+
+
+def test_an_enchanter_s_lines_are_drawn_under_their_own_heading(qapp):
+    """The section the user asked for: the same green serif, under a word that
+    says who wrote it.
+
+    The lines take no treatment of their own -- a stat an enchanter left is a
+    stat, and the game paints blocks rather than single stats -- so what makes
+    the section readable is the heading and the rule above it: one colour of
+    its own, the game's amber off its rollover layout, and the count of what is
+    under it.  Above sits the item's own stats and below it whatever else the
+    card has, so the split is where a reader looks for it.
+    """
+    drawn = ItemCard(
+        card(
+            blocks=(
+                Block(AFFIX, ("+89 Health",)),
+                Block(ENCHANT, ("+49 Focus Attribute bonus", "+49 Vitality Attribute bonus")),
+            )
+        )
+    )
+
+    assert texts(drawn, "enchant") == ["ENCHANTMENTS (2)"]
+    body = [label.text() for label in drawn.findChildren(QLabel) if label.objectName() == ""]
+
+    # The enchanter's two lines are written the way the item's own are: green
+    # serif, with the number lifted out of each as on every other stat line.
+    assert sum("#7cc24a" in text for text in body) == 3, body
+    assert any("Focus Attribute bonus" in text for text in body), body
+    assert any("Vitality Attribute bonus" in text for text in body), body
+    # One rule between the item's own stats and the enchanter's, which is what
+    # any other section gets.
+    assert len(drawn.findChildren(Hairline)) == 1
+
+
+def test_an_enchanter_s_section_stands_above_the_sockets(qapp):
+    """The order the card is read in: what the item is, what an enchanter left
+    on it, what is in it.  The heading follows the item's last stat and the
+    gem's section follows the enchanter's lines."""
+    gem = card(
+        name="Ice Ember",
+        tier="magic",
+        tier_word="Magic",
+        type_name="Socketable",
+        level=50,
+        sockets=0,
+        blocks=(Block(AFFIX, ("+58 Ice Armor",)),),
+    )
+    drawn = ItemCard(
+        card(
+            sockets=1,
+            gems=(gem,),
+            blocks=(
+                Block(AFFIX, ("+89 Health",)),
+                Block(ENCHANT, ("+49 Focus Attribute bonus",)),
+            ),
+        )
+    )
+
+    order = [
+        label.text()
+        for label in drawn.findChildren(QLabel)
+        if label.objectName() in ("", "enchant", "socketed", "gem")
+    ]
+
+    # A line's number is lifted out of it, so a line is found by the words
+    # around its number rather than by the text it was built from.
+    def at(needle: str) -> int:
+        return next(index for index, text in enumerate(order) if needle in text)
+
+    assert at("Health") < at("ENCHANTMENTS (1)")
+    assert at("ENCHANTMENTS (1)") < at("Focus Attribute bonus")
+    assert at("Focus Attribute bonus") < at("SOCKETED")
+    assert at("SOCKETED") < at("Ice Ember")
+
+
+def test_an_item_no_enchanter_has_touched_draws_no_heading(qapp):
+    """No records and no empty section: nothing is drawn for an item whose
+    stats are all its own."""
+    drawn = ItemCard(card(blocks=(Block(AFFIX, ("+5 Strength",)),)))
+
+    assert texts(drawn, "enchant") == []
     assert drawn.findChildren(Hairline) == []
 
 

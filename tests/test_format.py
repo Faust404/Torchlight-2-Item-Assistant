@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 import struct
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,12 @@ from tl2stash import (  # noqa: E402
 )
 from tl2stash.binary import ParseError, Reader  # noqa: E402
 from tl2stash.crypto import SaveFile, checksum  # noqa: E402
-from tl2stash.item import _read_item, as_float, strip_markup  # noqa: E402
+from tl2stash.item import (  # noqa: E402
+    _read_item,
+    as_float,
+    is_enchant,
+    strip_markup,
+)
 from tl2stash.registry import Registry  # noqa: E402
 from tl2stash.saves import find_save_locations  # noqa: E402
 
@@ -479,6 +485,28 @@ def test_the_two_extra_bytes_are_read_before_the_value_list():
     assert as_float(parsed.value) == 18748.0
 
 
+def test_which_records_an_enchanter_wrote_is_read_off_the_type():
+    """The rule, on the type values: ``0x84__`` and ``0x85__``, an enchanter's.
+
+    The save file marks no record as an enchantment and says only how many an
+    item has, so the count is the ground the rule was measured on -- the test
+    below re-runs that measurement on everything this machine stores.  The
+    record's *shape* is a real one, parsed out of a blob, and only its type is
+    varied here: ``0x8541`` is also a type that carries a file path, which is
+    why the low byte cannot be read as part of the question, and ``0x8002`` is
+    a type the file holds and the card never draws.
+    """
+    blob, _ = synthetic_item(
+        tail=synthetic_tail(effects=(synthetic_effect(kind=0x8041),))
+    )
+    [record] = parse_item(blob).effects
+
+    kinds = (0x8400, 0x8441, 0x8500, 0x8541, 0x8041, 0x8141, 0xA041, 0x8058, 0x8002)
+    assert [is_enchant(replace(record, type=kind)) for kind in kinds] == [
+        True, True, True, True, False, False, False, False, False,
+    ]
+
+
 def _stored_blobs() -> list[bytes]:
     """Every item blob this machine has: the demo stash and the registries.
 
@@ -527,6 +555,62 @@ def test_every_stored_item_consumes_its_own_blob():
     # across everything this machine stores, at the last count.  A regression
     # that put ordinary equipment on the slack would sail past that.
     assert leftovers.get(16, 0) <= 16, leftovers
+
+
+def _vanilla_blobs() -> list[bytes]:
+    """Every item blob the vanilla save holds, the modded registries left out.
+
+    The mask is the game's, so the measurement is taken on the game's own
+    files: a mod is the one place a record could carry one of its two patterns
+    with no enchanter behind it.  Read only, and by URI, so a test can never
+    write to one of them.
+    """
+    root = Path(__file__).resolve().parent.parent
+    blobs: list[bytes] = []
+    demo = root / "var" / "demo" / "sharedstash_v2.bin"
+    if demo.is_file():
+        blobs.extend(entry.blob for entry in read_stash_file(demo).entries)
+    for db in sorted((root / "var").glob("items*.db")):
+        if "-modded-" in db.name:
+            continue
+        connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            if connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='items'"
+            ).fetchone():
+                blobs.extend(row[0] for row in connection.execute("SELECT raw FROM items"))
+        finally:
+            connection.close()
+    return blobs
+
+
+def test_every_stored_enchantment_is_one_the_mask_finds():
+    """The measurement the rule was built from, as a test.
+
+    ``num_enchants`` says how many enchantments an item has and never says
+    which records they are, so the count is the only ground there is: on every
+    item this machine stores, the effects the mask catches plus the damage
+    records carrying ``from_enchant`` add up to it.  Zero mismatches is what
+    makes the rule a reading of the format rather than a guess -- FNIStash's
+    ``isEnchant`` is a weaker one, and it is precedent here, not the rule.
+    """
+    blobs = _vanilla_blobs()
+    if not blobs:
+        pytest.skip("nothing stored on this machine to re-read")
+
+    enchanted = 0
+    for blob in blobs:
+        try:
+            item = parse_item(blob)
+        except Exception:  # noqa: BLE001 -- an unreadable blob is not this test's business
+            continue
+        found = sum(is_enchant(effect) for effect in item.effects + item.effects2)
+        found += sum(1 for added in item.added_damages if added.from_enchant)
+        assert found == item.num_enchants, (item.name, found, item.num_enchants)
+        enchanted += bool(item.num_enchants)
+
+    if not enchanted:
+        pytest.skip("no enchanted item is stored on this machine")
 
 
 def test_relocation_changes_only_the_location_bytes():

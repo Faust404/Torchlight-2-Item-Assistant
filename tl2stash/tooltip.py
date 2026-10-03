@@ -45,6 +45,7 @@ from .card import (
     AFFIX,
     ARMOR,
     DAMAGE,
+    ENCHANT,
     TIER_KEYS,
     TIER_NONE,
     Augment,
@@ -56,7 +57,7 @@ from .card import (
 )
 from .dat import VAR_FLAVOR
 from .gamedata import DAMAGE_TYPES, Requirements
-from .item import as_float, strip_markup
+from .item import as_float, is_enchant, strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
     from .gamedata import GameData, SetBonus
@@ -313,14 +314,23 @@ def _substitute(
 
 
 def _effect_lines(
-    item: "Item", data: "GameData", appearance=None, socketed_into: str | None = None
+    item: "Item",
+    data: "GameData",
+    appearance=None,
+    socketed_into: str | None = None,
+    enchantments: bool = False,
 ) -> list[str]:
     """The item's own effects, one line each, in file order.
 
-    Both effect lists are read.  ``effects`` is what the item was rolled with;
-    ``effects2`` is what its enchantments and its set bonuses added.  Reading
-    only the first is why a socketed item used to show fewer lines than the
-    game does.
+    Both effect lists are read, and the cut through them is not the list: the
+    enchanter's records sit in the same two lists as the item's own -- measured
+    on this machine, every enchanter's effect record is in ``effects`` among
+    the item's own and none is in ``effects2`` -- so which side a record
+    belongs to is read off the record, by
+    :func:`~tl2stash.item.is_enchant`.  ``enchantments`` says which side to
+    write: the item's own by default, which is every call before the card
+    learned to draw the two apart, and the enchanter's when it is true.  Order
+    within a side is file order, as it always was.
 
     What is *not* read out of them is anything a socket put there, because
     nothing a socket put there is in them.  The tool used to split the list by
@@ -370,6 +380,10 @@ def _effect_lines(
     hosts: list[int] = []
     socketable = appearance is not None and appearance.type_name == "Socketable"
     for effect in list(item.effects) + list(item.effects2):
+        # Which side of the card this record is written on -- the question the
+        # one flag answers, and the only thing it decides.
+        if is_enchant(effect) != enchantments:
+            continue
         # The record's index is a position in EFFECTSLIST.DAT, and that is
         # what says which effect is meant.  The name beside it is an affix
         # name -- and an affix name is not unique, so it is only a fallback
@@ -522,23 +536,29 @@ def _bonus_line(bonus: "SetBonus", data: "GameData") -> str:
     return line.rstrip()
 
 
-def _added_damage_lines(item: "Item") -> list[str]:
+def _added_damage_lines(item: "Item", enchantments: bool = False) -> list[str]:
     """Flat damage the item carries, one line per element.
 
     Separate from the weapon's own damage above: this is what a socket or an
     enchantment adds on top, and the save file records it per element as three
     numbers -- how much of it came from an effect, from a socket and from an
-    enchantment.  The player sees the total, so that is what is shown.
+    enchantment.  ``enchantments`` says which of the two lines to write: the
+    item's own by default, which is what an affix and a socket gave it, and
+    the enchanter's share when it is true.  The player then sees two numbers
+    they can add rather than one whose halves they cannot tell apart, and the
+    total is still what the Damage per Second lead counts.
 
     Bashdrill's own damage is worked out from its data file; its
     ``+13 Physical Damage`` is here instead.
     """
     lines = []
     for added in item.added_damages:
-        total = sum(
-            _as_float(part)
-            for part in (added.from_effect, added.from_socket, added.from_enchant)
+        parts = (
+            (added.from_enchant,)
+            if enchantments
+            else (added.from_effect, added.from_socket)
         )
+        total = sum(_as_float(part) for part in parts)
         if not total:
             continue
         element = _DAMAGE_TYPES.get(added.damage_type)
@@ -675,23 +695,41 @@ def build(item: "Item", data: "GameData | None" = None, host: str | None = None)
     # item's own numbers, and they are the only ones the card marks with an
     # element: a `+13 Physical Damage` in among the properties is a bonus, and
     # the mark is for the damage the weapon *is*.
+    #
+    # The enchanter's share is written *apart*, in its own block under the
+    # properties: it is the same kind of line, but the player asked to see
+    # which of an item's stats an enchanter left, and the save file says only
+    # how many there are.  An empty block is dropped with the rest, below.
     added = _added_damage_lines(item)
 
     if data is not None:
         own = _effect_lines(item, data, appearance, socketed_into=host)
         properties = added + own
-        blocks.append((AFFIX, properties))
+        written = _effect_lines(
+            item, data, appearance, socketed_into=host, enchantments=True
+        )
     else:
         # With no data there is no index to resolve, so there is no wording
         # and no socketable's host to name: every effect is shown under the
-        # name the save file gave it.
-        properties = added + [e.name for e in item.effects + item.effects2 if e.name]
-        blocks.append((AFFIX, properties))
+        # name the save file gave it.  The enchanter's records are cut out the
+        # same way -- the mask is a fact of the record, so it needs no data.
+        named = [e for e in item.effects + item.effects2 if e.name]
+        written = [e.name for e in named if is_enchant(e)]
+        properties = added + [e.name for e in named if not is_enchant(e)]
+
+    blocks.append((AFFIX, properties))
+    enchanted = _added_damage_lines(item, enchantments=True) + written
+    blocks.append((ENCHANT, enchanted))
 
     # What the item will *become*, which is the one thing on the card no file
     # in the archive holds: the unlock is a triggerable resolved at runtime and
-    # nothing points at it.  See :mod:`tl2stash.augments`.
-    augments = _augment_blocks(item, data, properties) if data is not None else ()
+    # nothing points at it.  See :mod:`tl2stash.augments`.  Both halves of the
+    # properties are handed over, because the question is whether the item
+    # already says every line a task grants -- and an enchanter's line is a
+    # line the item says.
+    augments = (
+        _augment_blocks(item, data, properties + enchanted) if data is not None else ()
+    )
 
     flavor = None
     if data is not None and host is None:

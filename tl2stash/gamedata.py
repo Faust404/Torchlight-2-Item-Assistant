@@ -2119,17 +2119,22 @@ def _damage_per_second(derived: Derived | None, seconds: float, flat: int) -> in
 def _flat_damage(item) -> int:
     """The damage the item has been *given*, summed over its elements.
 
-    One line per element on the card -- ``+13 Physical Damage`` -- and the same
+    A line per element on the card -- ``+13 Physical Damage`` -- and the same
     number counted into the Damage per Second, because every one of these is
     damage added to each hit.  It is not the weapon's own damage: the two
     independent references both miss it, and the save file is the only place it
     is written down.
 
-    A record's three parts are an effect, a socket and an enchantment, which
-    are three sources of one number; the player sees the total, so the total is
-    what is counted.  It is written as the whole number the card's line shows,
-    which is the ceiling -- ``format_value`` rounds a positive value up -- so
-    that the lead and the lines under it add up.
+    A record's three parts are an effect, a socket and an enchantment, and the
+    card now writes them as two lines rather than one -- the item's own share,
+    then the enchanter's, in the section of its own.  Here they are still one
+    number: the lead is the total damage the weapon does, and what the card
+    splits is where the number came from, not how much of it there is.  So it
+    is counted whole, part by part, and the split does not reach this.
+
+    It is written as the whole number the card's lines show, which is the
+    ceiling -- ``format_value`` rounds a positive value up -- so that the lead
+    and the lines under it add up.
     """
     total = 0
     for added in item.added_damages:
