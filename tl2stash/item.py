@@ -252,6 +252,17 @@ class Item:
         return strip_markup(self.name)
 
     @property
+    def quantity_offset(self) -> int:
+        """Where the stack count sits in :attr:`raw`.
+
+        ``location_offset`` plus the fixed run :func:`_read_item` walks between
+        the two: the 2-byte slot and 2-byte container, then 6, the identified
+        byte, 8, four 20-byte fields, and the level -- 103 bytes -- with the
+        count a u32 right after.
+        """
+        return self.location_offset + 103
+
+    @property
     def fingerprint(self) -> str:
         """Stable identity, independent of where the item currently sits.
 
@@ -276,6 +287,22 @@ class Item:
             self.raw[:off]
             + slot_index.to_bytes(2, "little")
             + container.to_bytes(2, "little")
+            + self.raw[off + 4 :]
+        )
+
+    def requantified(self, quantity: int) -> bytes:
+        """Return ``raw`` with only the stack count changed.
+
+        Same-length, in place, like :meth:`relocated` -- and unlike a location,
+        the count is *inside* :attr:`fingerprint`, so a re-counted stack is a
+        new row to the registry while being the same pile of fish to the
+        player.  Every write that splits a stack has to re-key because of
+        this; see :mod:`tl2stash.pile`.
+        """
+        off = self.quantity_offset
+        return (
+            self.raw[:off]
+            + quantity.to_bytes(4, "little")
             + self.raw[off + 4 :]
         )
 

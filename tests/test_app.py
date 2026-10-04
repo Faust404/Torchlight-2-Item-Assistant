@@ -1169,6 +1169,203 @@ def test_the_transfer_all_button_sends_every_copy_at_once(
         win.close()
 
 
+# --------------------------------------------------------------------------
+# The fish
+# --------------------------------------------------------------------------
+
+
+def _a_pile(stash, stocks, *, name="Test Fish", guid=0x700E, container=25):
+    """Write stacks of one fish into the file, one slot each.
+
+    The consumables tab, because that is where the game keeps fish -- the
+    kind routes there and the tool writes a restore back to where the item
+    came from.  ``guid`` names a file of the fixture's install, which is what
+    types the item a ``FISH``; the default guid is one no file has, which is
+    the ordinary item whose kind the tool cannot know.
+    """
+    write_stash_of(
+        stash,
+        [
+            parse_item(
+                synthetic_item(
+                    name=name,
+                    guid=guid,
+                    quantity=quantity,
+                    container=container,
+                    slot=4322 + index,
+                )[0]
+            )
+            for index, quantity in enumerate(stocks)
+        ],
+    )
+
+
+def _pills(tile) -> list[str]:
+    """The card's corner, top to bottom -- ``['×4', 'Level 5']`` and so on."""
+    return [label.text() for label in tile.findChildren(QLabel, "pill")]
+
+
+def test_a_kind_of_fish_is_one_row_in_the_game_s_list(qapp, tmp_path, game_install):
+    """The user's merge, on the left pane: two stacks, one row, four fish.
+
+    The game holds five fish to a slot, so a kind of fish the player has been
+    netting arrives as several stacks -- and a row each was the pane counting
+    stacks while the card beside it counted fish.  The Qty cell is the sum,
+    because that is what goes back when the row goes back, and the tooltip
+    names every cell the fish were in, because that is the question a row
+    with two of them raises.
+    """
+    stash = tmp_path / "sharedstash_v2.bin"
+    _a_pile(stash, [3, 1])
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        assert win.stash_model.rowCount() == 1, "the two stacks were two rows"
+        cell = win.stash_model.item(0, 0)
+        assert cell.text() == "Test Fish"
+        assert win.stash_model.item(0, 2).text() == "4"
+        assert cell.toolTip() == (
+            "Tab 2 · slots 4322, 4323\nSHARED_STASH_BAG_CONSUMABLES"
+        )
+        # And the box counts what the pane draws rather than what the file
+        # holds: one row saying four, under a title saying four.
+        assert win.stash_group.title() == "In the game (4)"
+    finally:
+        win.close()
+
+
+def test_a_kind_the_game_does_not_cap_is_a_row_a_stack(qapp, tmp_path, game_install):
+    """The merge is the cap's, not "the same item twice".
+
+    Two stacks of one potion are two rows with their own quantities, because
+    the game holds a potion in stacks of any size and neither the game nor the
+    tool has a number to gather them by.  Without this the fish merge could be
+    widened to everything that repeats and nothing here would say so.
+    """
+    stash = tmp_path / "sharedstash_v2.bin"
+    _a_pile(stash, [3, 1], name="Test Potion", guid=0x7009)
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        assert win.stash_model.rowCount() == 2
+        assert [
+            win.stash_model.item(row, 2).text()
+            for row in range(win.stash_model.rowCount())
+        ] == ["3", ""]
+    finally:
+        win.close()
+
+
+def test_a_pile_is_one_card_counted_in_fish(qapp, tmp_path, game_install, monkeypatch):
+    """The wall's half of it: the tool's two stacks are one card reading ×4.
+
+    The card is built from the first stack's bytes, so its own quantity is
+    that stack's three; the pill is the one thing that has to move, and what
+    it moves to is every fish the card stands for.  The footer is the pile's
+    -- the way into the copies is not drawn at all, because a pile has no
+    copies to tell apart, and the two buttons across from the group say the
+    two sizes a press can send.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    _a_pile(stash, [3, 1])
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+
+        assert win.grid.count() == 1, "the two stacks were two cards"
+        row = win.grid.rows()[0]
+        assert sorted(row.stacks) == [1, 3]
+        assert row.units == 4
+        assert row.stack_limit == 5
+
+        tile = win.grid.tile(0)
+        assert _pills(tile)[0] == "×4", "the pill still reads the first stack"
+        assert tile.findChild(QPushButton, "compare") is None
+        assert (
+            tile.findChild(QPushButton, "transferall").text() == "Transfer all (4)"
+        )
+        assert (
+            tile.findChild(QPushButton, "transferstack").text()
+            == "Transfer a Stack (3)"
+        )
+        assert tile.findChild(QPushButton, "transferone").text() == "Transfer 1"
+    finally:
+        win.close()
+
+
+def test_transfer_one_puts_a_single_fish_back(qapp, tmp_path, game_install, monkeypatch):
+    """The button the user asked for, end to end: one fish, one press.
+
+    The tool holds a 3-stack and a 1-stack, so the single fish it can hand
+    over whole is the 1-stack -- and that is the share
+    :func:`tl2stash.pile.shares` picks.  What is left is the three, still one
+    card, and the status line counts fish rather than the slot they went into.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    _a_pile(stash, [3, 1])
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+
+        win.grid.tile(0).findChild(QPushButton, "transferone").click()
+
+        assert [item.quantity for item in win.service.stash_items()] == [1], (
+            "the file does not hold exactly one fish"
+        )
+        assert win.grid.count() == 1
+        assert win.grid.rows()[0].units == 3, "the card did not lose the fish"
+        assert "put back 1" in win.status.currentMessage()
+    finally:
+        win.close()
+
+
+def test_transfer_all_counts_the_fish_rather_than_the_stacks(
+    qapp, tmp_path, game_install, monkeypatch
+):
+    """A pile goes back whole, and the sentence says how many fish that was.
+
+    Two stacks is two *copies* to everything else in the window, and the
+    status line here is the one place the difference is read out loud: the
+    player pressed one button on one card and four fish went back.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+    stash = tmp_path / "sharedstash_v2.bin"
+    _a_pile(stash, [3, 1])
+
+    win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
+    try:
+        win.auto_absorb.setChecked(False)
+        win._absorb_all()
+
+        win.grid.tile(0).findChild(QPushButton, "transferall").click()
+
+        assert sorted(
+            item.quantity for item in win.service.stash_items()
+        ) == [1, 3], "the pile did not go back whole"
+        assert win.grid.count() == 0
+        assert "put back 4" in win.status.currentMessage()
+    finally:
+        win.close()
+
+
 def test_a_full_tab_keeps_the_item_in_the_tool_and_says_so(stocked):
     """The user's own rule, end to end: no room, no write, and a sentence.
 

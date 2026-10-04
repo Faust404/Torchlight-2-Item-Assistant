@@ -34,6 +34,7 @@ from tl2stash.taxonomy import (  # noqa: E402
     TYPE_GROUPS,
     canonical_kind,
     group_of,
+    stack_limit_for,
     stash_tab_for,
 )
 
@@ -564,3 +565,25 @@ def test_every_kind_the_game_writes_lands_in_the_tab_the_player_said(real_game):
     # consumable ones are the second's.
     assert sum(n for k, n in kinds.items() if tabs[k] == SPELLS_TAB) == 194
     assert sum(n for k, n in kinds.items() if tabs[k] == CONSUMABLES_TAB) == 195
+
+
+# --------------------------------------------------------------------------
+# How many of a kind fits in one slot
+# --------------------------------------------------------------------------
+
+
+def test_five_fish_to_a_slot_and_no_cap_anywhere_else():
+    """The one stack cap the tool carries itself, and why it is carried.
+
+    No item file and nothing else in the archive states how many of a thing
+    one slot holds -- measured over every file -- so the knowledge is the
+    tool's: the game holds five fish to a slot, and every fish stack the
+    vanilla registry has ever held reads 1, 2 or 5.  Every other kind comes
+    back ``None``, which is "no cap this tool knows" and not "no cap": it is
+    what tells a caller the item goes back whole.
+    """
+    assert stack_limit_for("Fish") == 5
+    assert stack_limit_for("Sword") is None
+    assert stack_limit_for("Potion") is None, "the fish-typed potions stay potions"
+    assert stack_limit_for("Blood Ember") is None
+    assert stack_limit_for("") is None, "an item whose kind the archive never said"

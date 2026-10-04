@@ -92,7 +92,8 @@ _STYLE = STYLE + f"""
    a button on one is the tool's.  Word and outline are the same light, and the
    hover is the one step above it, because the resting state is already light
    and a hover that dimmed would read as the button switching itself off. */
-#compare, #transfer, #transferall, #recover, #remove {{
+#compare, #transfer, #transferall, #transferstack, #transferone, #recover,
+#remove {{
     color: {PALE};
     background: transparent;
     border: 1px solid {PALE};
@@ -100,8 +101,8 @@ _STYLE = STYLE + f"""
     padding: 2px 8px;
     font-size: 11px;
 }}
-#compare:hover, #transfer:hover, #transferall:hover, #recover:hover,
-#remove:hover {{
+#compare:hover, #transfer:hover, #transferall:hover, #transferstack:hover,
+#transferone:hover, #recover:hover, #remove:hover {{
     color: {CHALK};
     border-color: {CHALK};
 }}
@@ -135,6 +136,16 @@ class TileRow:
     back, and the game's own save erased the write, so no file holds it -- see
     :meth:`tl2stash.service.ItemService.stranded_rows`.  It changes what the
     footer offers, which is why it is a field here and not a flag on the wall.
+
+    ``stacks`` and ``stack_limit`` are the *pile*'s, and they are what makes a
+    tile a pile rather than a handful of copies: the game holds five fish in a
+    slot and no more, so a card reading ``x4`` stands for four fish the player
+    wants to count in fish and send in slot-sized pieces.  ``stacks`` is the
+    sizes of the stacks the tool holds, one entry per stack -- a 3-stack and a
+    1-stack are ``(3, 1)``, and the card draws the sum -- and ``stack_limit``
+    is the game's cap.  Both are defaulted, and both are empty for everything
+    the game does not cap, so every other tile in the window is exactly what
+    it was.
     """
 
     fingerprint: str
@@ -142,11 +153,44 @@ class TileRow:
     members: tuple[str, ...]
     card: "Card | str"
     stranded: bool = False
+    stacks: tuple[int, ...] = ()
+    stack_limit: int | None = None
 
     @property
     def copies(self) -> int:
         """How many of the tool's items this one tile is."""
         return len(self.members)
+
+    @property
+    def units(self) -> int:
+        """How many *fish* the tile stands for, when it is a pile.
+
+        The count the card draws and the buttons act on, and a different
+        number from :attr:`copies`: the tool's copies of one fish are its
+        stacks of it, and the player who has a 3-stack and a 1-stack has four
+        fish, not two.
+        """
+        return sum(self.stacks)
+
+    @property
+    def is_a_pile(self) -> bool:
+        """Whether the footer is the pile's rather than the copies'.
+
+        More than one fish, and a kind the game caps: one fish is one button's
+        worth of decision however the tool came by it, and a kind the game
+        does not cap has no slots to divide it into.
+        """
+        return self.stack_limit is not None and self.units > 1
+
+    @property
+    def stack_size(self) -> int:
+        """The size of the one stack ``Transfer a Stack`` would send.
+
+        The largest stack the tool holds, or the game's cap off it when that
+        is bigger -- a 20-stack from a modded game goes back five at a time.
+        """
+        assert self.stack_limit is not None
+        return min(self.stack_limit, max(self.stacks))
 
 
 class CardWall(QScrollArea):
@@ -395,6 +439,13 @@ class ItemTile(CardFrame):
     #: buttons mean the same thing and differ only in what they say they are
     #: sending: one copy, or every copy the card stands for.
     transfer = Signal(object)
+    #: ``Transfer a Stack``, with the row it stands for.  A pile's own button:
+    #: one game slot's worth of fish, which is one press and one slot whatever
+    #: the pile is made of.
+    transfer_stack = Signal(object)
+    #: ``Transfer 1``, with the row it stands for.  A pile's answer to the
+    #: player who wants one fish out of the pile and not a stack of them.
+    transfer_one = Signal(object)
     #: The recover button, with the row it stands for.  Only a stranded card
     #: has one; what recovering means is the window's to decide.
     recover = Signal(object)
@@ -466,6 +517,16 @@ class ItemTile(CardFrame):
         tool's copy, or drop it for good.  Keeping it stands on the left,
         where that ending begins; the drop is the card's far end, across the
         stretch from the button a click meant for one is not a click on.
+
+        A *pile* is the other exception, and it is the counts that make it
+        one.  The tool's copies of a fish are its stacks of it, and a stack is
+        not a thing the player can be handed whole: the game holds five to a
+        slot.  So the group's button counts fish rather than copies -- which
+        is true however many slots they take up -- and the two buttons across
+        from it are the two ways to send less than all of them: one slot's
+        worth, or one fish.  ``Compare & Transfer`` is not drawn at all,
+        because a pile has no copies to tell apart -- what it is made of is
+        sizes, and the buttons say the sizes.
         """
         foot = QWidget()
         row = QHBoxLayout(foot)
@@ -476,6 +537,18 @@ class ItemTile(CardFrame):
             row.addWidget(self._recover_button())
             row.addStretch(1)
             row.addWidget(self._remove_button())
+            return foot
+
+        if self.row.is_a_pile:
+            row.addWidget(self._transfer_all_button())
+            row.addStretch(1)
+            # Nothing between the two answers to the same question: a lone
+            # stack's "Transfer a Stack" would send exactly what "Transfer
+            # all" sends, and two buttons that do one thing are a worse
+            # sentence than one.
+            if self.row.stack_size < self.row.units:
+                row.addWidget(self._stack_button())
+            row.addWidget(self._one_button())
             return foot
 
         if self.row.copies > 1:
@@ -525,16 +598,59 @@ class ItemTile(CardFrame):
 
         The number is the whole point of the button: the card looks like one
         item and is two or more of them, so putting it back is putting back
-        that many things.
+        that many things.  It counts fish for a pile -- the copies are stacks
+        there, and a stack is not a unit the player has -- and copies
+        otherwise.
         """
-        button = QPushButton(f"Transfer all ({self.row.copies})")
+        count = self.row.units if self.row.is_a_pile else self.row.copies
+        noun = "fish" if self.row.is_a_pile else "copies"
+        button = QPushButton(f"Transfer all ({count})")
         button.setObjectName("transferall")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setToolTip(
-            f"Return all {self.row.copies} copies to the shared stash, where\n"
-            "the game will pick them up on its next load."
+            f"Return all {count} {noun} to the shared stash, where the game\n"
+            "will pick them up on its next load."
         )
         button.clicked.connect(lambda: self.transfer.emit(self.row))
+        return button
+
+    def _stack_button(self) -> QPushButton:
+        """One game slot's worth: the largest stack, or the game's cap off it.
+
+        A pile is more fish than a slot holds, or it is several stacks of
+        them, and this is the button for the player who wants one slot filled
+        and not the whole pile: five fish out of a twenty, or the 3-stack out
+        of ``{3, 1}`` and not both of them.  The number is what the press
+        actually sends, which is why it is worked out from the tool's own
+        stacks rather than promised as the game's cap.
+        """
+        size = self.row.stack_size
+        button = QPushButton(f"Transfer a Stack ({size})")
+        button.setObjectName("transferstack")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(
+            f"Return one stack of {size} -- as much as the game holds in one\n"
+            "slot -- to the shared stash, where the game will pick it up on\n"
+            "its next load."
+        )
+        button.clicked.connect(lambda: self.transfer_stack.emit(self.row))
+        return button
+
+    def _one_button(self) -> QPushButton:
+        """One fish out of the pile, however many stacks it is spread over.
+
+        The smallest thing that can be asked for, and not the same as a card
+        with one copy on it: a 4-stack is one copy and four fish, and this
+        sends one of them.
+        """
+        button = QPushButton("Transfer 1")
+        button.setObjectName("transferone")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(
+            "Return one of them to the shared stash, where the game will pick\n"
+            "it up on its next load."
+        )
+        button.clicked.connect(lambda: self.transfer_one.emit(self.row))
         return button
 
     def _recover_button(self) -> QPushButton:
@@ -623,6 +739,11 @@ class TileGrid(CardWall):
     #: A tile's transfer button, passed on with the tile's row -- one copy or
     #: all of them, the button says which and the row says what they are.
     transfer = Signal(object)
+    #: A tile's ``Transfer a Stack``, passed on with the tile's row.  A pile's
+    #: button; the row's ``stacks`` say how much one stack is.
+    transfer_stack = Signal(object)
+    #: A tile's ``Transfer 1``, passed on with the tile's row.
+    transfer_one = Signal(object)
     #: A tile's recover button, passed on with the tile's row.  Only a stranded
     #: card has one; what recovering means is the window's to decide.
     recover = Signal(object)
@@ -676,6 +797,8 @@ class TileGrid(CardWall):
                 )
                 tile.compare.connect(self.compare)
                 tile.transfer.connect(self.transfer)
+                tile.transfer_stack.connect(self.transfer_stack)
+                tile.transfer_one.connect(self.transfer_one)
                 tile.recover.connect(self.recover)
                 tile.remove.connect(self.remove)
                 tile.set_chosen.connect(self.set_chosen)

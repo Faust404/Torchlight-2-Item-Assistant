@@ -6,15 +6,22 @@ Two tables, with a deliberate split:
                 bytes.  Two byte-identical items (a stack of identical potions,
                 say) collapse to one row with ``copies`` counted, so nothing is
                 silently lost the way a naive "unique fingerprint" would lose it.
+                The exception is a re-counted fish stack whose leftover lands on
+                bytes the file also holds: the tool's copy takes a key of its own
+                so the bare fingerprint keeps meaning *the file's* -- see
+                :func:`held_key`.
 ``placements``  where that item currently sits, scoped to the save file it was
                 seen in.  A player with both a vanilla and a modded stash has
                 genuinely separate stashes, so presence has to be per-file.
 
 Items are almost never deleted.  An item that stops appearing in a stash keeps
 its row and its bytes -- "it left the stash" is information, not garbage.  The
-one exception is :meth:`Registry.forget`, which nothing calls on its own: it is
-the player deciding, by hand, that a stranded item the tool is holding was
-never theirs to keep -- see :meth:`~tl2stash.service.ItemService.remove`.
+one exception is :meth:`Registry.forget`, which is never called on its own: it
+is the player deciding, by hand, that a stranded item the tool is holding was
+never theirs to keep -- see :meth:`~tl2stash.service.ItemService.remove` -- or
+the last of a stack's fish having gone back to the game, where the row
+describes nothing any more; see :meth:`Registry.recount` and the restore path
+in :mod:`tl2stash.service`.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ from pathlib import Path
 from .item import Item
 from .stash import Stash
 
-__all__ = ["Arrival", "Registry", "ScanResult"]
+__all__ = ["Arrival", "HELD_SUFFIX", "Registry", "ScanResult", "held_key", "is_held"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -117,6 +124,47 @@ class Arrival:
     last_seen: str | None = None
     container: int | None = None
     slot: int | None = None
+
+
+#: Marks a registry row as standing for fish the tool holds which are
+#: byte-identical to fish the file also holds -- see :func:`held_key`.
+HELD_SUFFIX = ":held"
+
+
+def held_key(fingerprint: str) -> str:
+    """The registry key for a copy the tool holds of bytes the file also has.
+
+    A row keyed by an item's own fingerprint answers one question -- *where are
+    these bytes* -- and its ``copies`` count says how many of them the answer
+    covers.  Both answers are the same answer, which holds for everything
+    except the one thing the tool re-counts.  A fish stack's count is *inside*
+    its fingerprint, so a split stack is a new row, and the leftover of a split
+    can land on bytes the file already holds: five fish sent out of ten leave
+    five, and the five the game was just handed are those exact bytes.  One row
+    cannot say both -- ``copies = 2`` would have the tool claiming the game's
+    stack, and ``copies = 1`` would have it forget its own.
+
+    So the tool's copy gets a key of its own, this one, and the bare
+    fingerprint keeps meaning *the file's*.  Nothing else has to know: every
+    other reading of a fingerprint -- the vacuum, :meth:`enforce
+    <tl2stash.service.ItemService.enforce>`, the stranded list, the archive's
+    own skip -- compares whole fingerprints against ones read out of a file, so
+    a held key can never be mistaken for one of them.  A held row is never in
+    the file and is never expected to be; the scan finds it under no placement
+    and leaves it exactly as it is.
+
+    Downstream the key stays opaque.  A card gathers its members by guid and
+    name rather than by fingerprint (``app.models._gathered``), so a held row
+    sits on the same card as the rest of its pile, and a fingerprint is only
+    ever a lookup key -- which is what lets this be a suffix rather than a new
+    column.
+    """
+    return fingerprint + HELD_SUFFIX
+
+
+def is_held(key: str) -> bool:
+    """Whether ``key`` is a :func:`held_key` rather than an item's own print."""
+    return key.endswith(HELD_SUFFIX)
 
 
 class Registry:
@@ -323,6 +371,83 @@ class Registry:
         self.conn.commit()
         return added
 
+    def recount(
+        self,
+        old: str,
+        item: Item,
+        *,
+        copies: int,
+        status: str,
+        source: str,
+        key: str | None = None,
+        first_seen: str | None = None,
+        container: int | None = None,
+        slot: int | None = None,
+    ) -> None:
+        """Move a stack's row onto the bytes it has now that its count changed.
+
+        A stack count is inside the fingerprint, so a stack that goes back to
+        the game a few fish at a time is a *new* row for what the player sees
+        as the same pile -- and the old row is not stale information, it is a
+        row describing fish that are no longer there.  So this is a move and
+        not an edit: the old row goes, placements and all, and the new bytes
+        take its place.
+
+        They may not be *new*, though.  The registry holds byte-identical
+        items as one row with a copy count, and a re-counted stack can land
+        exactly on bytes already held -- the leftover of a split that happens
+        to equal a *tool-side* stack from somewhere else, say.  The row that
+        already exists is then the right row and this one joins it: copy
+        counts add up, and ``returned`` wins the status.
+
+        Returned rather than absorbed, because one row cannot say "two of
+        these bytes are in the file and one is in the tool", and of the two
+        answers only that one is safe.  ``returned`` means *the file has these
+        and keeps them*, so the tool merely under-counts the copies it still
+        holds -- visible, and recovered the moment the player absorbs, since
+        the row's copy count is still the whole truth and no write is ever
+        made off it.  ``absorbed`` would have the vacuum take the game's
+        copies back out of a stash the player had just put them in, and the
+        row would then be counting fish the tool no longer holds.
+
+        ``key`` is the row to write when it must *not* be the item's own
+        fingerprint -- see :func:`held_key`, which is the one caller and the
+        whole reason the parameter exists.  Everything else about the row is
+        the item's: its name, its kind, its quantity, and the placement.
+
+        ``first_seen`` is carried over by the caller when the new row is the
+        old stack continuing, and left out when it is not; ``container`` and
+        ``slot`` -- the placement -- are written with ``present = 0`` for the
+        same reason :meth:`add` does it: the bytes are not in the file, and
+        the position is only a memory of where they were.
+
+        The deletion is unconditional, so a row already gone is not an error;
+        a caller that has several shares of one stack to settle can call this
+        more than once without minding.
+        """
+        now = _now()
+        self.conn.execute("DELETE FROM placements WHERE fingerprint = ?", (old,))
+        self.conn.execute("DELETE FROM items WHERE fingerprint = ?", (old,))
+
+        print_ = key or item.fingerprint
+        existing = self.get(print_)
+        if existing is None:
+            self._insert(print_, item, copies, status, first_seen or now, now)
+        else:
+            merged = (
+                "returned"
+                if "returned" in (existing["status"], status)
+                else status
+            )
+            self.conn.execute(
+                "UPDATE items SET copies = ?, status = ?, last_seen = ? "
+                "WHERE fingerprint = ?",
+                (existing["copies"] + copies, merged, now, print_),
+            )
+        if container is not None and slot is not None:
+            self._remember(print_, source, container, slot, now, False)
+        self.conn.commit()
+
     def forget(self, fingerprints: set[str]) -> int:
         """Delete items outright: their rows, their bytes, and where they were.
 
@@ -339,9 +464,12 @@ class Registry:
         placement still points at it is not a lingering row but a failed
         delete.
 
-        Nothing here guards *which* items may go: that is
-        :meth:`~tl2stash.service.ItemService.remove`'s job, and it is the
-        only caller.  Returns how many item rows went.
+        Nothing here guards *which* items may go.  A stranded duplicate is
+        :meth:`~tl2stash.service.ItemService.remove`'s to offer; a stack
+        whose last fish went back to the game is
+        :meth:`~tl2stash.service.ItemService.restore_pile`'s and its
+        siblings' to settle -- there is no remainder for it to describe, and
+        the bytes it had are gone.  Returns how many item rows went.
         """
         if not fingerprints:
             return 0

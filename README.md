@@ -83,6 +83,15 @@ stat you can lose to a disenchanter is never read as one the item rolled.
 **Compare & Transfer** opens it beside one you already hold; **Transfer to
 Stash** sends it back.
 
+Fish are read in fish, and go back a stack at a time. The game holds five
+fish to a slot, so a hundred of one kind is one card reading **×100** rather
+than twenty cards, and the list on the left gathers the same kind the same
+way — one row, the quantity adding up every slot the game is holding. That
+card sends back with **Transfer all (100)**; **Transfer a Stack (5)** puts
+one slot's worth back, and **Transfer 1** puts one fish back. Splitting a
+stack this way is a write the game reads as ordinary fish in ordinary slots,
+so the next load finds five to a slot and no more.
+
 The wall opens on the first fifty cards of what the filters leave; the strip
 under it, **Show All Items (550)**, says how many are still behind them. One
 click draws the lot and takes the strip away, and it stays away while you

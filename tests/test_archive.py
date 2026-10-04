@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -574,6 +575,87 @@ def test_restore_skips_an_item_that_never_left(tmp_path):
     assert not report.changed
     # In particular it did not become two copies of itself.
     assert len(read_stash_file(path).items) == 2
+
+
+def test_restore_writes_two_identical_shares_when_the_caller_says_so(tmp_path):
+    """The skip is a rule about *the file*, and a split asks a different one.
+
+    Two five-fish shares taken off one 20-stack are byte for byte the same
+    record, and both are new fish the player is owed -- so the rule that stops
+    an item that never left from being cloned has to be told which of the two
+    it is looking at.  ``may_repeat`` is that: the caller saying these bytes
+    are a share of a pile, not an item already sitting in the file.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(path, ["Alpha"])
+
+    stack = parse_item(synthetic_item(name="Neverending Fish", quantity=5)[0])
+    request = RestoreRequest(
+        raw=stack.raw, container=24, slot=3400, last_slot=3401, label="Fish",
+        may_repeat=True,
+    )
+
+    report = restore_items(path, [request, replace(request)])
+
+    # The first takes the cell it asked for.  The second asked for that same
+    # cell, which is now taken, so it gets the tab's lowest hole -- where a
+    # share goes is the caller's to steer, and the service steers its own
+    # shares side by side; what is being pinned here is only that it was
+    # *written* rather than skipped.
+    assert [slot for _, _, _, slot in report.restored] == [3400, 3323]
+    assert report.skipped == []
+    after = read_stash_file(path)
+    assert after.save.checksum_ok
+    assert sorted((i.location.slot_index, i.quantity) for i in after.items) == [
+        (3322, 1),
+        (3323, 5),
+        (3400, 5),
+    ]
+
+
+def test_without_the_flag_the_second_share_is_still_skipped(tmp_path):
+    """The same two requests, and the ordinary rule still standing.
+
+    This is what ``may_repeat`` buys and what it costs: a caller that leaves
+    it off gets today's behaviour exactly -- the second copy of an item the
+    file already holds is not written -- which is what keeps "this item never
+    left" from becoming a duplication.
+    """
+    path = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(path, ["Alpha"])
+
+    stack = parse_item(synthetic_item(name="Neverending Fish", quantity=5)[0])
+    request = RestoreRequest(raw=stack.raw, container=24, slot=3400, last_slot=3401)
+
+    report = restore_items(path, [request, replace(request)])
+
+    assert [slot for _, _, _, slot in report.restored] == [3400]
+    assert len(report.skipped) == 1
+    assert len(read_stash_file(path).items) == 2
+
+
+def test_a_flag_on_one_request_does_not_excuse_another(tmp_path):
+    """The permission is per request, because the fact is: one of these is a
+    share of a pile and the other is an item that never left, and the caller
+    is the only one that can tell them apart."""
+    path = tmp_path / "sharedstash_v2.bin"
+    write_synthetic_stash(path, ["Alpha", "Beta"])
+    alpha, beta = read_stash_file(path).items
+
+    report = restore_items(
+        path,
+        [
+            RestoreRequest(raw=alpha.raw, container=24, slot=3322, may_repeat=True),
+            RestoreRequest(raw=beta.raw, container=24, slot=3323),
+        ],
+    )
+
+    assert len(report.restored) == 1
+    assert len(report.skipped) == 1
+    # Both Alphas are there and Beta is still itself: the flag excused the
+    # item it was set on and nothing else.  File order is the second Alpha
+    # appended, which is where every restore lands.
+    assert [i.base_name for i in read_stash_file(path).items] == ["Alpha", "Beta", "Alpha"]
 
 
 def test_restore_moves_over_when_the_slot_it_wants_is_taken(tmp_path):

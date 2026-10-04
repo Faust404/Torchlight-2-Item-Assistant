@@ -25,6 +25,7 @@ never has to be faster than the game, only more patient than it.
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,14 +38,16 @@ from .archive import (
     restore_items,
 )
 from .crypto import read_save_file
-from .item import Item
-from .registry import Registry, ScanResult
+from .item import Item, parse_item
+from .pile import shares
+from .registry import Arrival, Registry, ScanResult, held_key, is_held
 from .saves import SaveLocation
 from .stash import Stash, read_stash
 
 __all__ = [
     "AbsorbResult",
     "ItemService",
+    "PileResult",
     "STATUS_ABSORBED",
     "STATUS_IN_STASH",
     "STATUS_RETURNED",
@@ -109,6 +112,30 @@ class AbsorbResult:
         if self.unreadable:
             bits.append(f"{self.unreadable} left that could not be read")
         return ", ".join(bits) or "nothing to absorb"
+
+
+@dataclass
+class PileResult:
+    """What one transfer from a pile did, counted in *fish*.
+
+    A pile's buttons send fish, not slots: "Transfer 1" means one fish however
+    many game slots the pile is spread over, and "Transfer all" means all of
+    them however many slots that takes.  So what the player hears afterwards
+    has to be counted the same way -- ``report.restored`` counts *requests*
+    (which is the right number for a card that stands for one stack) and would
+    read "put back 4" for four slots of five fish apiece.
+
+    ``report`` is the write underneath, for the tab a refusal was about.  The
+    three numbers are fish that went, fish the tab had no room for, and fish
+    the file already held -- the last being a whole stack that never left,
+    which is the ordinary skip :func:`~tl2stash.archive.restore_items` makes
+    and not a failure.
+    """
+
+    report: RestoreReport
+    restored: int = 0
+    refused: int = 0
+    skipped: int = 0
 
 
 class ItemService:
@@ -284,6 +311,14 @@ class ItemService:
         """
         self.refresh()
         requests = []
+        # A held row -- a copy of the tool's whose bytes the file also has, see
+        # :func:`~tl2stash.registry.held_key` -- needs two things the ordinary
+        # path does not: the skip that refuses bytes the file already holds
+        # must not refuse the copy the player is asking to put back, and a copy
+        # that lands takes the tool's row with it, since the bare fingerprint
+        # now answers for the file's.  ``handed`` is the second half of that,
+        # keyed by the bytes so the report can be read against it.
+        handed: dict[str, str] = {}
         for print_ in sorted(fingerprints):
             row = self.registry.get(print_)
             if row is None:
@@ -293,6 +328,8 @@ class ItemService:
             slot = place["slot"] if place else None
             if slot is None or not self.slot_is_a_cell(container, slot):
                 slot = self.first_slot(container)
+            if is_held(print_):
+                handed[parse_item(row["raw"]).fingerprint] = print_
             requests.append(
                 RestoreRequest(
                     raw=row["raw"],
@@ -300,16 +337,383 @@ class ItemService:
                     slot=slot,
                     label=row["name"],
                     last_slot=self.last_slot(container),
+                    may_repeat=is_held(print_),
                 )
             )
 
         report = restore_items(self.source, requests, dry_run=dry_run)
         if not dry_run and report.restored:
-            self.registry.set_status(
-                {print_ for print_, _, _, _ in report.restored}, STATUS_RETURNED
-            )
+            landed = {print_ for print_, _, _, _ in report.restored}
+            self.registry.set_status(landed, STATUS_RETURNED)
+            self.registry.forget({handed[p] for p in landed if p in handed})
         self.refresh()
         return report
+
+    # -- putting a pile back ---------------------------------------------
+    #
+    # Fish are the case.  The game holds five to a slot and no more, so a pile
+    # -- a 3-stack and a 1-stack of the same fish, or a 20-stack a modded game
+    # allowed -- cannot go back the way :meth:`restore` sends an item, which is
+    # whole.  It has to be divided, and dividing is the one thing in the tool
+    # that changes an item's bytes: the stack count sits inside the
+    # fingerprint, so every share the game is handed is a *new* row in the
+    # registry and the stack it came from stops describing anything.  What
+    # follows is that division and the bookkeeping that pays for it.
+    #
+    # The rule that keeps it honest is in :mod:`tl2stash.pile`: a share
+    # re-counts a stack down and never up, so the tool gives away fish it holds
+    # and never conjures one.  What is added here is the other half -- after
+    # the write, every fish that went is off the source's books and every fish
+    # that did not is still on them.
+
+    def restore_pile(
+        self, fingerprints: set[str], *, stack_limit: int, dry_run: bool = False
+    ) -> PileResult:
+        """Put a whole pile back: every fish the tool holds of it.
+
+        A stack that fits a game slot goes back as it is, and one that does not
+        is cut into slot-sized shares -- 20 becomes 5, 5, 5, 5 and 12 becomes
+        5, 5, 2.  Whole stacks first, so a stack that exactly fills a slot is a
+        slot freed rather than a slot shrunk.
+        """
+        return self._restore_split(
+            fingerprints, stack_limit=stack_limit, dry_run=dry_run
+        )
+
+    def restore_a_stack(
+        self, fingerprints: set[str], *, stack_limit: int, dry_run: bool = False
+    ) -> PileResult:
+        """Put one game slot's worth back: the largest stack the tool holds.
+
+        One press, one slot -- a pile of ``{3, 1}`` gives 3 and not 4, and a
+        stack bigger than the limit gives one ``limit``-sized share off its
+        top.  It is the same act as :meth:`restore_pile` for a pile that is
+        already all one stack, which is why the card leaves the button off
+        when the two would do the same thing.
+        """
+        return self._restore_split(
+            fingerprints, stack_limit=stack_limit, one_stack=True, dry_run=dry_run
+        )
+
+    def restore_units(
+        self,
+        fingerprints: set[str],
+        units: int,
+        *,
+        stack_limit: int,
+        dry_run: bool = False,
+    ) -> PileResult:
+        """Put exactly ``units`` fish back, out of whatever the tool holds.
+
+        The count is asked for in fish rather than in stacks because that is
+        the only question a pile can answer in general: the tool may hold a
+        5-stack and a 1-stack, and "six" is a thing the player can want that
+        "one stack" is not.  A whole stack goes back if one of exactly that
+        size is held, and otherwise the fish are split off the smallest stack
+        that can spare them.
+        """
+        return self._restore_split(
+            fingerprints, stack_limit=stack_limit, take=units, dry_run=dry_run
+        )
+
+    def _restore_split(
+        self,
+        fingerprints: set[str],
+        *,
+        stack_limit: int,
+        take: int | None = None,
+        one_stack: bool = False,
+        dry_run: bool = False,
+    ) -> PileResult:
+        """Plan a division of the pile, write it, and settle the registry.
+
+        The three public methods differ only in what they ask
+        :func:`tl2stash.pile.shares` for, so they share everything after that:
+        one call per share into :func:`~tl2stash.archive.restore_items`, and
+        then the part that is genuinely fiddly -- working out, from what the
+        write actually did, which of the tool's stacks still exist and in what
+        size.
+
+        The write comes *first*, which is the opposite of the order
+        :meth:`absorb_all` uses and deliberately so.  An absorb is re-applied
+        by :meth:`enforce` until it takes, so recording it before the file
+        agrees costs nothing; a restore is not re-applied by anything, so
+        writing the registry ahead of the file would put fish in the tool's
+        books that the file never got -- and the next transfer would send them
+        again, for real.  Every mark below is made from
+        :attr:`~tl2stash.archive.RestoreReport.restored`, which is what the
+        file has.
+        """
+        self.refresh()
+
+        rows: dict[str, sqlite3.Row] = {}
+        items: dict[str, Item] = {}
+        held: list[tuple[str, int]] = []
+        for print_ in sorted(fingerprints):
+            row = self.registry.get(print_)
+            if row is None or row["quantity"] <= 0:
+                continue
+            # Only what the tool holds, which is what a pile is.  A ``returned``
+            # row is the file's account of an item rather than the tool's -- the
+            # collection is drawn from the absorbed rows for the same reason --
+            # and a share of it would be a share of the game's own stack.  A
+            # caller that names one is asking for something the tool has not
+            # got, and leaving it out is the answer rather than a guess.
+            if row["status"] != STATUS_ABSORBED:
+                continue
+            rows[print_] = row
+            items[print_] = parse_item(row["raw"])
+            # A row's copies are byte-identical stacks of the same item, and a
+            # pile is all of them: two rows of the same fish *and* a row
+            # holding two of it are the same twenty fish to the player.
+            for _ in range(max(1, row["copies"])):
+                held.append((print_, row["quantity"]))
+
+        result = PileResult(report=RestoreReport(path=self.source))
+        plan = shares(held, take=take, one_stack=one_stack, limit=stack_limit)
+        if not plan:
+            return result
+
+        # Where each source stack would go: its own last cell when the tool
+        # remembers one, and otherwise its kind's tab and that tab's first
+        # cell -- :meth:`restore`'s rule, asked once per stack rather than
+        # once per share, so the shares of one stack come out adjacent.
+        where: dict[str, tuple[int, int | None]] = {}
+        for print_, row in rows.items():
+            place = self.registry.last_placement(print_, self.source_key)
+            container = place["container"] if place else self.tab_for(print_)
+            slot = place["slot"] if place else None
+            if slot is None or not self.slot_is_a_cell(container, slot):
+                slot = self.first_slot(container)
+            where[print_] = (container, slot)
+
+        requests: list[RestoreRequest] = []
+        raw_by_print: dict[str, bytes] = {}
+        prints: list[str] = []
+        # How many shares of each stack have been asked for already, so the
+        # second share of a 20 can ask for the cell after the first's rather
+        # than for the first's again -- :func:`~tl2stash.archive.next_free_slot`
+        # would then fill the lowest hole in the tab instead, and four stacks
+        # cut from one would come out scattered across it.  A cell that is
+        # taken after all falls back to the hole-filling walk on its own.
+        taken_before: dict[str, int] = {}
+        for share in plan:
+            row = rows[share.source]
+            container, base = where[share.source]
+            step = taken_before.get(share.source, 0)
+            taken_before[share.source] = step + 1
+            slot = None if base is None else base + step
+            # ``print_`` is the *bytes'* fingerprint rather than the source
+            # row's key.  The two differ for a held row, and the file, the
+            # archive and every mark below are about bytes.
+            if share.whole:
+                raw = row["raw"]
+                print_ = items[share.source].fingerprint
+            else:
+                raw = items[share.source].requantified(share.size)
+                print_ = parse_item(raw).fingerprint
+            raw_by_print.setdefault(print_, raw)
+            prints.append(print_)
+            requests.append(
+                RestoreRequest(
+                    raw=raw,
+                    container=container,
+                    slot=slot,
+                    label=row["name"],
+                    last_slot=self.last_slot(container),
+                )
+            )
+
+        # A share may legitimately repeat bytes the file already has, both
+        # because the shares of one stack are identical to each other ("the
+        # second five taken from the same twenty fish") and because the file
+        # may hold the same bytes from an earlier transfer.  The skip
+        # :func:`~tl2stash.archive.restore_items` makes by default answers a
+        # different question -- "this item never left" -- and it is the right
+        # answer for a stack that goes back whole and the wrong one for shares
+        # that only look alike, so only the bytes that repeat *within the plan*
+        # may repeat in the file.
+        #
+        # A held row is the other exception, and not a guess: its bytes are in
+        # the file by construction -- that is the whole reason it is keyed
+        # apart -- so the skip would refuse to write the tool's copy back and
+        # those fish would be stuck here for good.
+        #
+        # What repeats is counted over the tool's own rows only.  A ``returned``
+        # row is the file's account of an item rather than the tool's -- the
+        # collection is drawn from the absorbed ones for exactly that reason --
+        # and a caller that names one anyway is asking for bytes the file
+        # already has, which is the skip's own case and not a share.  Counting
+        # it here would hand it the permission a share gets and write the game
+        # a second copy of its own stack.
+        mine = Counter(
+            print_
+            for print_, share in zip(prints, plan)
+            if rows[share.source]["status"] == STATUS_ABSORBED
+        )
+        for request, print_, share in zip(requests, prints, plan):
+            request.may_repeat = is_held(share.source) or mine[print_] > 1
+
+        report = restore_items(self.source, requests, dry_run=dry_run)
+        # Kept for the caller: the window reads the refusals out of it to name
+        # the tab that had no room, and a refusal is the one outcome of a send
+        # the player has to do something about.
+        result.report = report
+        landed = Counter(print_ for print_, _, _, _ in report.restored)
+        refused = Counter(print_ for print_, _, _ in report.refused)
+
+        # Which shares the file took, in plan order.  Shares that are
+        # byte-identical are interchangeable, so a count per fingerprint is
+        # exact even though it cannot say *which* of them landed -- and it does
+        # not need to, since they are the same fish either way.
+        tally: dict[str, list[int]] = {print_: [0, 0] for print_ in rows}
+        taken: list[tuple[str, int]] = []
+        for share, print_ in zip(plan, prints):
+            if landed[print_]:
+                landed[print_] -= 1
+                tally[share.source][0 if share.whole else 1] += (
+                    1 if share.whole else share.size
+                )
+                if not share.whole:
+                    taken.append((print_, share.size))
+                result.restored += share.size
+            elif refused[print_]:
+                refused[print_] -= 1
+                result.refused += share.size
+            else:
+                # Written down nowhere: a stack the file already holds.  Its
+                # fish stay the tool's, which the settle below leaves alone.
+                result.skipped += share.size
+
+        if not dry_run:
+            if taken:
+                # The shares the file took are rows now, and theirs is the
+                # file: a stale ``absorbed`` on any of these bytes would have
+                # the vacuum take the fish straight back out of the stash the
+                # player just put them in.
+                counts = Counter(print_ for print_, _ in taken)
+                self.registry.add(
+                    [
+                        Arrival(item=parse_item(raw_by_print[print_]), copies=n)
+                        for print_, n in counts.items()
+                    ],
+                    source=self.source_key,
+                    status=STATUS_RETURNED,
+                )
+                self.registry.set_status(set(counts), STATUS_RETURNED)
+            # Every fingerprint the file holds now: what it already had -- the
+            # stash read above is the one from before the write -- plus
+            # everything this call put there.  A share the file refused is in
+            # neither, which is right: it is not there.
+            in_file = {item.fingerprint for item in self.stash_items()} | set(landed)
+            for print_, (whole, sent) in tally.items():
+                self._settle_stack(
+                    print_,
+                    row=rows[print_],
+                    item=items[print_],
+                    whole=whole,
+                    sent=sent,
+                    where=where[print_],
+                    in_file=in_file,
+                )
+            self.refresh()
+
+        return result
+
+    def _settle_stack(
+        self,
+        print_: str,
+        *,
+        row: sqlite3.Row,
+        item: Item,
+        whole: int,
+        sent: int,
+        where: tuple[int, int | None],
+        in_file: set[str],
+    ) -> None:
+        """Say what is left of one of the tool's stacks after a transfer.
+
+        ``whole`` is how many copies of it went back exactly as they were (they
+        keep the stack's identity) and ``sent`` is how many fish went as
+        re-counted shares (which do not).  Everything else about the stack --
+        how many copies it had, how many fish each held -- is read off ``row``,
+        the registry's own account of it from *before* the write rather than
+        after: a stack that has already been re-counted is a different row, and
+        settling one stack's books from another's would count the same fish
+        twice.
+
+        Three outcomes, and the first is the one worth naming: a stack no share
+        of which landed is left *exactly* as it was.  That is not a special
+        case bolted on at the end but the reason the write comes first -- a
+        refusal, a full tab, a file that already had the bytes, and the whole
+        transaction is a no-op for that stack.
+
+        ``in_file`` is every fingerprint the file holds now, and it decides one
+        thing: whether the fish that stayed keep their own key or get one apart
+        from the file's.  See :func:`~tl2stash.registry.held_key` -- the short
+        of it is that a leftover can be the very bytes the game was just
+        handed, and one row cannot answer for both sides.
+        """
+        copies = max(1, row["copies"])
+        quantity = row["quantity"]
+        remaining = copies * quantity - whole * quantity - sent
+        # The plan never takes more fish from a stack than it holds, so this
+        # cannot go negative; if it ever does, the tool would be about to write
+        # a count that is not a count, and that is worth stopping for.
+        assert remaining >= 0, f"{row['name']}: {remaining} fish left of a stack"
+
+        if whole == 0 and sent == 0:
+            return
+
+        if remaining == 0:
+            # Nothing of this stack is the tool's any more, so the row that
+            # described the tool's fish goes.  A row keyed by the bytes
+            # themselves is the file's account as much as the tool's, though,
+            # and the copies that went whole are still those bytes -- so it
+            # stays, and the marks below settle it as the file's.  A held row
+            # is only ever the tool's, and it goes either way.
+            if not (whole and print_ == item.fingerprint):
+                self.registry.forget({print_})
+        else:
+            container, slot = where
+            leftover = parse_item(item.requantified(remaining))
+            # One stack, whatever the row held before: the fish that stayed
+            # are one pile again, and a pile is what the next transfer plans
+            # from.  The key is the leftover's own unless those bytes are the
+            # file's too -- five sent out of ten leaves the bytes the game was
+            # just handed -- in which case the tool's copy is keyed apart so
+            # the bare fingerprint keeps meaning *the file's*, and neither
+            # side's count is spent on the other.
+            self.registry.recount(
+                print_,
+                leftover,
+                copies=1,
+                status=STATUS_ABSORBED,
+                source=self.source_key,
+                key=(
+                    held_key(leftover.fingerprint)
+                    if leftover.fingerprint in in_file
+                    else None
+                ),
+                first_seen=row["first_seen"],
+                container=container,
+                slot=slot,
+            )
+
+        if whole:
+            # Copies that went back untouched are still these bytes and the
+            # file has them now: record them, and say the file keeps them --
+            # ``returned`` rather than a fresh ``in_stash``, because the player
+            # put them there and the automatic pass spares what the player put
+            # back.  ``add`` leaves a row it already holds alone, so the status
+            # is set as well; the file holding them is the fact, however they
+            # got there.
+            self.registry.add(
+                [Arrival(item=item, copies=whole)],
+                source=self.source_key,
+                status=STATUS_RETURNED,
+            )
+            self.registry.set_status({item.fingerprint}, STATUS_RETURNED)
 
     # -- stranded items --------------------------------------------------
 

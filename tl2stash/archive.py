@@ -251,6 +251,15 @@ class RestoreRequest:
     #: :func:`next_free_slot`.  ``None`` for a container with no known end,
     #: which is what a machine without the game has to say.
     last_slot: int | None = None
+    #: Write this even when the file already holds bytes that fingerprint the
+    #: same.  The skip below is the right answer for an item that never left
+    #: the stash -- writing it again would clone it -- but a *share* of a
+    #: larger stack is a new group of items that happens to serialize to bytes
+    #: the file already has: a second five taken from the same twenty-fish
+    #: stack is byte-identical to the first, and both are two real slots' worth
+    #: of fish.  Only :meth:`tl2stash.service.ItemService.restore_pile` and its
+    #: siblings set this, and only on the shares that were re-counted down.
+    may_repeat: bool = False
 
 
 @dataclass
@@ -331,6 +340,9 @@ def restore_items(
 
     An item already present in the stash is skipped rather than duplicated --
     restoring something that never left would otherwise silently clone it.
+    A request whose bytes repeat legitimately says so with
+    :attr:`RestoreRequest.may_repeat` and is written regardless, which is what
+    lets two shares of one fish stack land in the same call.
 
     An item whose container has no room left is *refused*: nothing is written
     for it and it is named in :attr:`RestoreReport.refused`.  The one thing
@@ -354,7 +366,7 @@ def restore_items(
     blobs = [entry.blob for entry in stash.entries]
     for request in requests:
         item = parse_item(request.raw)
-        if item.fingerprint in present:
+        if item.fingerprint in present and not request.may_repeat:
             report.skipped.append(request.label or item.display_name)
             continue
 

@@ -66,6 +66,8 @@ from .models import (
     FINGERPRINT_ROLE,
     MEMBERS_ROLE,
     PLACE_ROLE,
+    STACKS_ROLE,
+    STACK_ROLE,
     STASH_COLUMNS,
     TIER_ROLE,
     Advanced,
@@ -521,6 +523,8 @@ class MainWindow(QMainWindow):
         self.grid = TileGrid(self._icons())
         self.grid.compare.connect(self._compare_copies)
         self.grid.transfer.connect(self._transfer_row)
+        self.grid.transfer_stack.connect(self._transfer_a_stack)
+        self.grid.transfer_one.connect(self._transfer_one)
         self.grid.recover.connect(self._recover_row)
         self.grid.remove.connect(self._remove_row)
         self.grid.set_chosen.connect(self._show_set)
@@ -1103,7 +1107,15 @@ class MainWindow(QMainWindow):
         collection readable -- so this is the one place the copies are told
         apart.  Each is built from its own bytes, which is where its own
         numbers and its own fingerprint come from.
+
+        A pile has no copies to tell apart -- it is stacks of fish, and the
+        card's own buttons already say the sizes -- so the card does not draw
+        the button for one.  This is the guard behind that: whatever asks, an
+        overlay of a 3-stack and a 1-stack would be two cards saying "3" and
+        "1", which is exactly the sighting this whole change is about.
         """
+        if row.is_a_pile:
+            return
         prints = row.members or (row.fingerprint,)
         self.compare.open_for(
             [
@@ -1159,11 +1171,19 @@ class MainWindow(QMainWindow):
         comparison overlay is where they come apart -- there a card *is* one
         copy -- and this is the collection's own way through, for a player who
         already knows they want the lot gone.
+
+        A *pile* is not sent this way.  Its fish go back a game slot at a
+        time, which means dividing the tool's stacks and re-keying them, and
+        that is :meth:`_send_pile`'s path -- so a card of fish takes it even
+        from the button they have in common.
         """
         if self.service is None:
             return
         prints = set(row.members or (row.fingerprint,))
         if not prints:
+            return
+        if row.is_a_pile:
+            self._send_pile(row, "all")
             return
         if not self._confirm_send(len(prints)):
             self._set_status("nothing was sent")
@@ -1190,6 +1210,82 @@ class MainWindow(QMainWindow):
             self._set_status(f"{note} · {tail} to the game on its next load")
         elif report.skipped:
             self._set_status(f"{len(report.skipped)} were already in the stash")
+
+    # -- the fish pile ---------------------------------------------------
+
+    def _transfer_a_stack(self, row: TileRow) -> None:
+        """Send one game slot's worth of a pile, from the card's own button.
+
+        A pile is more fish than a slot holds or more stacks than one, and
+        this is the one press that fills a slot and stops.  What a slot's
+        worth *is* has already been worked out on the card -- the button says
+        the number -- so nothing here decides anything but the ask: one stack,
+        out of the pile the card stands for.
+        """
+        self._send_pile(row, "stack")
+
+    def _transfer_one(self, row: TileRow) -> None:
+        """Send a single fish out of a pile, from the card's own button.
+
+        The smallest ask there is, and not the same as a card with one copy:
+        the tool may hold four of these fish in one stack, and this sends one
+        of them.  Where the other three are left is
+        :mod:`tl2stash.pile`'s answer -- a whole 1-stack if the tool has one,
+        and otherwise one fish off the smallest stack -- and the registry is
+        re-keyed around the answer.
+        """
+        self._send_pile(row, "one")
+
+    def _send_pile(self, row: TileRow, mode: str) -> None:
+        """The shared body of the two pile buttons, and of ``Transfer all``.
+
+        The three of them ask :meth:`tl2stash.service.ItemService.restore_pile`
+        for a different amount of the same thing, and everything after the ask
+        is one story: the write either put fish in the tab or it did not, and
+        the status line counts fish rather than the slots they went into --
+        which is the difference between this and the card that stands for one
+        stack.  ``row.stack_limit`` is the game's own cap, and it is what makes
+        the division possible at all; the card only draws these buttons for a
+        kind that has one.
+        """
+        if self.service is None:
+            return
+        limit = row.stack_limit
+        if limit is None:
+            return
+        prints = set(row.members or (row.fingerprint,))
+        if not prints:
+            return
+        if not self._confirm_send(row.units):
+            self._set_status("nothing was sent")
+            return
+
+        if mode == "stack":
+            result = self.service.restore_a_stack(prints, stack_limit=limit)
+        elif mode == "one":
+            result = self.service.restore_units(prints, 1, stack_limit=limit)
+        else:
+            result = self.service.restore_pile(prints, stack_limit=limit)
+        self.watcher.accept()
+        self._refresh_views()
+
+        report = result.report
+        if result.refused:
+            # Refusals lead, as they do on the single-stack path: they are the
+            # only outcome the player has to do something about, and the
+            # sentence has to end on the thing to do.
+            stayed = f"{result.refused} stayed here — {self._full_tab(report.refused)}"
+            if result.restored:
+                self._set_status(f"put back {result.restored} · {stayed}")
+            else:
+                self._set_status(stayed)
+        elif result.restored:
+            tail = "it returns" if result.restored == 1 else "they return"
+            self._set_status(
+                f"put back {result.restored} · {tail} to the game on its next load"
+            )
+        elif result.skipped:
+            self._set_status(f"{result.skipped} were already in the stash")
 
     def _put_back_one(self, print_: str) -> None:
         """Return exactly one copy to the game, from the comparison.
@@ -1244,7 +1340,7 @@ class MainWindow(QMainWindow):
 
         data = self._game_data()
         catalog = self._catalog_for(data)
-        fill_stash(self.stash_model, items, data, catalog)
+        in_the_game = fill_stash(self.stash_model, items, data, catalog)
 
         # Only what the tool holds.  An item that is in the game -- one that
         # never left, or one the player has just put back -- is in the left
@@ -1285,7 +1381,10 @@ class MainWindow(QMainWindow):
         self._filters_changed()
 
         self._note_game()
-        self.stash_group.setTitle(f"In the game ({len(items)})")
+        # The count the pane itself drew, not the file's stack count: three
+        # slots of five fish are one row saying fifteen, and a title reading
+        # "(3)" over it would be the box disagreeing with its own list.
+        self.stash_group.setTitle(f"In the game ({in_the_game})")
         # The box is named for what is on the wall under it.  In the stranded
         # view that is not the collection, and a title still counting the
         # collection over a wall of eight other cards would be the one thing
@@ -1353,12 +1452,25 @@ class MainWindow(QMainWindow):
         for row in range(limit):
             index = self.collection_proxy.index(row, 0)
             fingerprint = index.data(FINGERPRINT_ROLE)
+            stacks = tuple(index.data(STACKS_ROLE) or ())
+            limit_ = index.data(STACK_ROLE)
+            card = self._card_for(fingerprint)
+            if stacks and isinstance(card, Card):
+                # A pile's card counts in the game's own units rather than in
+                # stacks: the tool holds four of these fish as a 3-stack and a
+                # 1-stack, and what the player sees -- and what the buttons
+                # send -- is four.  The card under it is the first stack's, so
+                # the pill is the one thing that has to move, and the memo's
+                # card is left alone for whatever asks for it next.
+                card = replace(card, quantity=sum(stacks))
             rows.append(
                 TileRow(
                     fingerprint=fingerprint,
                     name=index.data(Qt.ItemDataRole.DisplayRole),
                     members=tuple(index.data(MEMBERS_ROLE) or (fingerprint,)),
-                    card=self._card_for(fingerprint),
+                    card=card,
+                    stacks=stacks,
+                    stack_limit=limit_ if stacks else None,
                 )
             )
         self.grid.set_rows(rows, empty=self._empty_text())

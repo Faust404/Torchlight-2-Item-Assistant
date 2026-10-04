@@ -18,7 +18,7 @@ from PySide6.QtGui import QBrush, QColor, QStandardItem, QStandardItemModel
 from tl2stash.card import TIER_INK
 from tl2stash.gamedata import DAMAGE_TYPES
 from tl2stash.item import Item
-from tl2stash.taxonomy import Place
+from tl2stash.taxonomy import Place, stack_limit_for
 
 from .catalog import Catalog, Entry
 
@@ -45,6 +45,8 @@ __all__ = [
     "SET_ROLE",
     "SOCKETS_ROLE",
     "SOCKET_COUNTS",
+    "STACKS_ROLE",
+    "STACK_ROLE",
     "STASH_COLUMNS",
     "TIER_ROLE",
     "Advanced",
@@ -310,6 +312,17 @@ class Advanced:
 #: it or the empty string for the many that restrict nothing.  None of the
 #: three is drawn: they are on the row because a facet has to read something,
 #: and they are read off the entry rather than worked out here.
+#:
+#: The last two are the *pile*'s, and neither is drawn either.  A stack the
+#: game caps has to be counted in the things it holds rather than in cards or
+#: stacks, and a tile is neither: a 3-stack and a 1-stack of one fish are one
+#: card reading ``x4``, which is four fish, in stacks the card then has to say
+#: the sizes of -- "Transfer a Stack" sends the biggest of them and nothing
+#: else.  ``STACKS_ROLE`` is those sizes, one entry per stack the tool holds
+#: (a registry row holding two byte-identical stacks contributes its size
+#: twice), and ``STACK_ROLE`` is the game's own cap for the kind.  Both are
+#: empty and ``None`` for everything the game does not cap, which is everything
+#: but fish -- see :data:`tl2stash.taxonomy.STACK_LIMITS`.
 FINGERPRINT_ROLE = Qt.ItemDataRole.UserRole
 TIER_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 1)
 PLACE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 2)
@@ -320,6 +333,8 @@ GATE_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 6)
 REQS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 7)
 SOCKETS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 8)
 CLASS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 9)
+STACKS_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 10)
+STACK_ROLE = Qt.ItemDataRole(Qt.ItemDataRole.UserRole + 11)
 
 
 def container_label(container: int, data: "GameData | None" = None) -> str:
@@ -389,8 +404,8 @@ def fill_stash(
     items: list[Item],
     data: "GameData | None" = None,
     catalog: Catalog | None = None,
-) -> None:
-    """Show what is in the save file right now.
+) -> int:
+    """Show what is in the save file right now, and say how many things that is.
 
     Four columns and no more: the item, the level it asks for, how many are in
     the stack and how many sockets it has.  Which tab and which slot it came
@@ -405,42 +420,119 @@ def fill_stash(
     a column of noughts and ones is a column nobody can read at a glance, which
     is the only reason to have one.
 
+    One row is one *thing*, which for everything the game caps is more than one
+    stack: a fish arrives five to a slot, and the file may be holding three
+    slots of it, so the row's quantity is every fish of that kind in the file
+    and its tooltip names every slot.  Without ``catalog`` there is no kind to
+    read and so no cap to know, and the rows are one stack each -- which is
+    also what every uncapped item is, so nothing else about this changes.
+
     ``data`` names the tabs; without it they fall back to the container id.
     ``catalog`` supplies the tier, the kind and the picture, and without it the
     rows are the plain names they were before there was one.
+
+    The count that comes back is what the pane is showing, counted the way its
+    quantity column counts: a stack of twenty potions is twenty and a pile of
+    fish is every fish in it.  It is the window's ``In the game (N)``, and the
+    number has to be that one rather than the number of rows for the same
+    reason the merge exists -- a title counting three stacks over a row that
+    says fifteen is the pane contradicting itself.
     """
     model.removeRows(0, model.rowCount())
-    for item in sorted(items, key=lambda i: (i.location.container, i.location.slot_index)):
-        name = _cell(item.display_name)
-        name.setData(item.fingerprint, FINGERPRINT_ROLE)
+    drawn = 0
+    for group in _file_stacks(
+        sorted(items, key=lambda i: (i.location.container, i.location.slot_index)),
+        catalog,
+    ):
+        first = group[0]
+        name = _cell(first.display_name)
+        name.setData(first.fingerprint, FINGERPRINT_ROLE)
         if catalog is not None:
-            _describe(name, catalog.entry(item.fingerprint, item), item.level)
-        name.setToolTip(_where_it_sat(item, data))
+            _describe(name, catalog.entry(first.fingerprint, first), first.level)
+        name.setToolTip(_where_they_sat(group, data))
 
         # A stack of one is not a stack, and the numbers are the save file's
         # own: the quantity is how many the item *is*, not how many of them the
-        # tool has seen.
-        quantity = _cell(str(item.quantity if item.quantity > 1 else ""))
-        sockets = _cell(str(item.num_sockets or ""))
-        model.appendRow([name, _cell(str(item.level)), quantity, sockets])
+        # tool has seen -- and for a pile of one kind it is every fish of that
+        # kind the file holds, in however many slots.
+        quantity = sum(item.quantity for item in group)
+        sockets = _cell(str(first.num_sockets or ""))
+        drawn += quantity
+        model.appendRow(
+            [
+                name,
+                _cell(str(first.level)),
+                _cell(str(quantity if quantity > 1 else "")),
+                sockets,
+            ]
+        )
+    return drawn
 
 
-def _where_it_sat(item: Item, data: "GameData | None") -> str:
-    """The name cell's tooltip: the tab, the slot, and the bag's own name.
+def _file_stacks(items: list[Item], catalog: "Catalog | None") -> list[list[Item]]:
+    """The file's items, gathered into one entry per thing the left pane draws.
 
-    The internal name is the second line because it is the second question --
-    ``SHARED_STASH_BAG_ARMS`` says what the bag was built for, which is not
-    what the player is looking at but is what a save file or a bug report
-    talks about.  How many sockets the item has is not here: it is a column of
-    the same row.
+    A fish is the case, and the reason this exists: the game holds five to a
+    slot, so one kind of fish the player has been netting arrives as several
+    stacks, and a row each meant the left pane counted stacks while the card
+    beside it counted fish.  The stacks of one such kind are one row, and by
+    the key the tool's own side of the window already gathers by
+    (:func:`_gathered`): the same base item, wearing the same two affixes,
+    under the same name.
+
+    Which kinds is :func:`tl2stash.taxonomy.stack_limit_for`'s answer and not
+    a list kept here.  Anything it does not know -- every potion, every sword
+    -- is a group of one, keyed by its place in the list rather than by
+    anything about the item, so that two identical items are still two rows
+    and nothing moves out of file order.
     """
-    lines = [
-        f"{container_label(item.location.container, data)} · slot {item.location.slot_index}"
-    ]
-    if data is not None:
-        internal = data.container_name(item.location.container)
-        if internal:
-            lines.append(internal)
+    if catalog is None:
+        return [[item] for item in items]
+    groups: dict[tuple, list[Item]] = {}
+    for index, item in enumerate(items):
+        entry = catalog.entry(item.fingerprint, item)
+        if stack_limit_for(entry.kind) is None:
+            groups[("one", index)] = [item]
+            continue
+        key = (
+            "pile",
+            item.guid,
+            item.prefix.rstrip("\x00"),
+            item.suffix.rstrip("\x00"),
+            item.base_name,
+        )
+        groups.setdefault(key, []).append(item)
+    return list(groups.values())
+
+
+def _where_they_sat(items: list[Item], data: "GameData | None") -> str:
+    """The name cell's tooltip: every tab and slot the row's stacks sat in.
+
+    One line per tab, naming every cell in it -- ``Tab 2 · slots 3, 7`` -- and
+    then the container's internal name, which is the second question the
+    one-stack tooltip answers.  The internal name is the second line because
+    it is the second question: ``SHARED_STASH_BAG_ARMS`` says what the bag was
+    built for, which is not what the player is looking at but is what a save
+    file or a bug report talks about.  How many sockets the item has is not
+    here: it is a column of the same row.
+
+    The slots are in the order the file holds them, which is the order the
+    list is drawn in -- the player reading a line is looking at their stash,
+    and sorting the numbers under them would be a second arrangement of the
+    same thing.
+    """
+    lines: list[str] = []
+    slots: dict[int, list[int]] = {}
+    for item in items:
+        slots.setdefault(item.location.container, []).append(item.location.slot_index)
+    for container, cells in slots.items():
+        word = "slot" if len(cells) == 1 else "slots"
+        where = ", ".join(str(cell) for cell in cells)
+        lines.append(f"{container_label(container, data)} · {word} {where}")
+        if data is not None:
+            internal = data.container_name(container)
+            if internal:
+                lines.append(internal)
     return "\n".join(lines)
 
 
@@ -511,7 +603,24 @@ def fill_collection(
         name.setData(first["fingerprint"], FINGERPRINT_ROLE)
         name.setData(tuple(row["fingerprint"] for row in group), MEMBERS_ROLE)
         if catalog is not None:
-            _describe(name, catalog.entry(first["fingerprint"], first), first["level"])
+            entry = catalog.entry(first["fingerprint"], first)
+            _describe(name, entry, first["level"])
+            limit = stack_limit_for(entry.kind)
+            if limit is not None:
+                # The card this row becomes counts in the things the game caps
+                # rather than in stacks, so the sizes have to come with it:
+                # ``STACKS_ROLE`` is one entry per stack the tool holds, which
+                # is why a row carrying two byte-identical ones says its size
+                # twice.
+                name.setData(
+                    tuple(
+                        row["quantity"]
+                        for row in group
+                        for _ in range(max(1, row["copies"]))
+                    ),
+                    STACKS_ROLE,
+                )
+                name.setData(limit, STACK_ROLE)
         model.appendRow([name])
 
 

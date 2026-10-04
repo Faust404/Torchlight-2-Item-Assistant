@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash import StashWatcher, parse_item, read_stash_file  # noqa: E402
-from tl2stash.registry import Registry  # noqa: E402
+from tl2stash.registry import Arrival, Registry  # noqa: E402
 from tl2stash.saves import SaveLocation  # noqa: E402
 from tl2stash.service import (  # noqa: E402
     DEFAULT_CONTAINER,
@@ -388,6 +388,247 @@ def test_search_narrows_with_every_term(service):
     assert {r["name"] for r in service.registry.search("Alpha")} == {"Alpha"}
     assert service.registry.search("Alpha Beta") == [], "no item matches both"
     assert service.registry.search("lph") != [], "matches inside a word"
+
+
+# --------------------------------------------------------------------------
+# A pile goes back a game slot at a time
+# --------------------------------------------------------------------------
+#
+# The game holds five of a fish in a slot and no more, so a pile cannot go back
+# the way an ordinary item does -- it has to be divided, and dividing is the one
+# thing in the tool that changes an item's bytes.  The stack count is inside the
+# fingerprint, so every share written is a *new* row in the registry and the
+# stack it came from stops describing anything; these tests are about the books
+# balancing afterwards, which is the part that is easy to get quietly wrong.
+#
+# Every one of them counts in *fish*, because that is what the player is
+# counting: a 20-stack is twenty fish whether it goes back as one row of five
+# copies or as four rows.
+
+
+def _fish(stash_path) -> list[int]:
+    """What the file holds, as stack sizes in slot order."""
+    return [
+        item.quantity
+        for item in sorted(
+            read_stash_file(stash_path).items, key=lambda i: i.location.slot_index
+        )
+    ]
+
+
+def _books(service) -> list[tuple[str, int, int]]:
+    """The registry's account of one item, as (status, quantity, copies)."""
+    return sorted(
+        (row["status"], row["quantity"], row["copies"])
+        for row in service.registry.rows()
+    )
+
+
+@pytest.fixture
+def pile(stash_path, db_path):
+    """A service holding one 20-fish stack, absorbed, and nothing else."""
+
+    def build(quantity: int, copies: int = 1, name: str = "Neverending Fish"):
+        items = [
+            parse_item(
+                synthetic_item(name=name, quantity=quantity, slot=3322 + i)[0]
+            )
+            for i in range(copies)
+        ]
+        write_stash_of(stash_path, items)
+        service = ItemService(db_path, SaveLocation.at(stash_path))
+        service.absorb_all()
+        return service
+
+    return build
+
+
+def test_a_twenty_stack_goes_back_as_four_slots_of_five(pile, stash_path):
+    """The case the cap exists for, and the one the player sees.
+
+    Twenty fish are four slots wherever they came from, and each is written
+    beside the last rather than into whatever hole the tab has lowest -- four
+    stacks cut from one ought to read as one block in the stash.
+    """
+    service = pile(20)
+    with service:
+        (row,) = service.registry.rows()
+        result = service.restore_pile({row["fingerprint"]}, stack_limit=5)
+
+        assert result.restored == 20, "counted in fish, not in slots"
+        assert _fish(stash_path) == [5, 5, 5, 5]
+        assert [
+            item.location.slot_index
+            for item in read_stash_file(stash_path).items
+        ] == [3322, 3323, 3324, 3325]
+
+        # The four are byte for byte the same record, so they are one row with
+        # a copy count -- and the 20-stack's row is gone, because nothing in
+        # the file or the tool holds those bytes any more.
+        assert _books(service) == [(STATUS_RETURNED, 5, 4)]
+        assert service.registry.get(row["fingerprint"]) is None
+
+
+def test_twelve_fish_go_back_as_five_five_and_two(pile, stash_path):
+    """The remainder is a slot of its own, not four fish dropped on the floor.
+
+    A share may re-count a stack down and never up, so a pile that does not
+    divide evenly ends in a stack smaller than the cap -- which is a slot the
+    player sees half full, and the only honest shape for the last few.
+    """
+    service = pile(12)
+    with service:
+        (row,) = service.registry.rows()
+        assert service.restore_pile({row["fingerprint"]}, stack_limit=5).restored == 12
+        assert _fish(stash_path) == [5, 5, 2]
+
+
+def test_transfer_a_stack_fills_one_slot_and_stops(pile, stash_path):
+    """One press, one slot -- the fish left over stay the tool's.
+
+    A 12-stack asked for one slot's worth gives five and keeps seven, and the
+    row it keeps is a 7-stack: it is the tool's account of fish, not a record
+    the game will ever be handed whole, so it is free to be a size no slot
+    holds.  The next press divides it again.
+    """
+    service = pile(12)
+    with service:
+        (row,) = service.registry.rows()
+        result = service.restore_a_stack({row["fingerprint"]}, stack_limit=5)
+
+        assert result.restored == 5
+        assert _fish(stash_path) == [5]
+        assert _books(service) == [
+            (STATUS_ABSORBED, 7, 1),
+            (STATUS_RETURNED, 5, 1),
+        ]
+
+
+def test_transfer_one_comes_off_the_smallest_stack(pile, stash_path):
+    """One fish, and the stack it costs least to re-count.
+
+    A split stack is a new row and a stack the player now holds two counts of,
+    so the smallest is the one to spend: a 3-stack and a 1-stack give the 1
+    whole and leave the 3 alone.
+    """
+    service = pile(3, copies=1)
+    with service:
+        service.registry.add(
+            [
+                Arrival(
+                    item=parse_item(
+                        synthetic_item(name="Neverending Fish", quantity=1, slot=3323)[0]
+                    )
+                )
+            ],
+            source=service.source_key,
+            status=STATUS_ABSORBED,
+        )
+        prints = {row["fingerprint"] for row in service.registry.rows()}
+        result = service.restore_units(prints, 1, stack_limit=5)
+
+        assert result.restored == 1
+        assert _fish(stash_path) == [1]
+        assert _books(service) == [(STATUS_ABSORBED, 3, 1), (STATUS_RETURNED, 1, 1)]
+
+
+def test_the_fish_left_behind_are_the_tools_own_row(pile, stash_path):
+    """Five out of ten leaves the bytes the game was just handed.
+
+    A stack's count is inside its fingerprint, so a 10-stack sent five at a
+    time leaves a 5-stack -- the *same record* the game now holds in its slot.
+    One row cannot say both "the file has five of these" and "the tool has five
+    more", so the tool's half is keyed apart from the file's and neither side's
+    count is spent on the other.  Without that the tool's five fish are simply
+    written off: the file's row says five, and the tool believes it.
+    """
+    service = pile(10)
+    with service:
+        (row,) = service.registry.rows()
+        assert service.restore_a_stack({row["fingerprint"]}, stack_limit=5).restored == 5
+
+        assert _fish(stash_path) == [5]
+        assert _books(service) == [
+            (STATUS_ABSORBED, 5, 1),
+            (STATUS_RETURNED, 5, 1),
+        ], "the tool's five fish are missing from its own books"
+
+        # And the ten fish are still ten, whichever half they are on.
+        assert sum(q * c for _, q, c in _books(service)) == 10
+
+
+def test_the_copy_left_behind_can_still_be_sent(pile, stash_path):
+    """The other half of the same mistake, and the one that strands fish.
+
+    Two byte-identical 5-stacks, one sent: the tool keeps the other, as a row
+    of its own.  Sending that one must actually write -- the archive's skip
+    answers "this item never left", which is true of the file's copy and false
+    of the tool's, and believing it here leaves five fish the player can see
+    and can never send.
+    """
+    service = pile(5, copies=2)
+    with service:
+        (row,) = service.registry.rows()
+        assert row["copies"] == 2
+        assert service.restore_a_stack({row["fingerprint"]}, stack_limit=5).restored == 5
+        assert _fish(stash_path) == [5]
+
+        prints = {r["fingerprint"] for r in service.registry.rows()}
+        result = service.restore_pile(prints, stack_limit=5)
+
+        assert result.restored == 5, "the copy the tool kept was not sent"
+        assert result.skipped == 0, (
+            "the file's own copy was named as a share and written again"
+        )
+        assert _fish(stash_path) == [5, 5]
+        assert _books(service) == [(STATUS_RETURNED, 5, 2)], (
+            "the tool sent fish it did not hold, or kept fish it no longer has"
+        )
+
+
+def test_the_vacuum_spares_the_fish_the_player_put_back(pile, stash_path):
+    """A pile is an item like any other, and ``returned`` means the same.
+
+    The automatic pass runs on every save, so shares marked ``absorbed`` would
+    be vacuumed straight back out of the stash the player had just filled --
+    the same trap a single restored item has, with four times the fish in it.
+    """
+    service = pile(20)
+    with service:
+        (row,) = service.registry.rows()
+        service.restore_pile({row["fingerprint"]}, stack_limit=5)
+
+        assert service.absorb_all(include_returned=False).taken == []
+        assert _fish(stash_path) == [5, 5, 5, 5]
+
+
+def test_a_full_tab_refuses_and_every_fish_is_still_accounted_for(stash_path, db_path):
+    """Nothing is lost when the write cannot happen.
+
+    The books are settled from what the file took, so a refusal leaves the
+    source stack exactly as it was -- a full tab, a save mid-write, anything
+    the game does, and the fish the tool holds are still the fish it holds.
+    """
+    stack = parse_item(synthetic_item(name="Neverending Fish", quantity=20)[0])
+    write_stash_of(stash_path, [stack])
+
+    # A tab of one cell: the first share fits and nothing else can.
+    def container_cells(container: int) -> tuple[tuple[int, int], ...]:
+        return ((3322, 1),) if container == 24 else ()
+
+    with ItemService(
+        db_path, SaveLocation.at(stash_path), container_cells=container_cells
+    ) as service:
+        service.absorb_all()
+        (row,) = service.registry.rows()
+        result = service.restore_pile({row["fingerprint"]}, stack_limit=5)
+
+        assert result.restored + result.refused + result.skipped == 20, (
+            "fish went missing from the count"
+        )
+        assert result.refused == 15
+        assert _fish(stash_path) == [5]
+        assert sum(q * c for _, q, c in _books(service)) == 20
 
 
 # --------------------------------------------------------------------------

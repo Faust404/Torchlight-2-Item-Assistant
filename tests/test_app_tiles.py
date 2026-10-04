@@ -282,6 +282,97 @@ def test_a_card_that_becomes_stranded_exchanges_its_footer(qapp):
 
 
 # --------------------------------------------------------------------------
+# The pile's footer
+# --------------------------------------------------------------------------
+
+
+def pile(*stacks: int, limit: int = 5, **kwargs) -> TileRow:
+    """A tile standing for a pile of fish, in the sizes the tool holds them."""
+    return replace(row(card(), **kwargs), stacks=stacks, stack_limit=limit)
+
+
+def test_a_pile_counts_fish_and_offers_the_two_smaller_asks(qapp):
+    """A 3-stack and a 1-stack are four fish and two of the tool's items.
+
+    The card is one card, so the count has to be in the thing the player is
+    counting -- fish -- and the two buttons across from it are the two ways to
+    send less than all of them: one slot's worth (the largest stack, three
+    here) and one fish.  There is no ``Compare & Transfer``, and that is the
+    point of the footer rather than an omission: the overlay is where the two
+    stacks are told apart, and it is exactly the sight of "one with 3 and one
+    with 1" that this footer exists to stop drawing.
+    """
+    held = pile(3, 1)
+    tile = ItemTile(held)
+
+    assert held.units == 4
+    assert held.is_a_pile
+    assert button_label(tile, "transferall") == "Transfer all (4)"
+    assert button_label(tile, "transferstack") == "Transfer a Stack (3)"
+    assert button_label(tile, "transferone") == "Transfer 1"
+    assert button_label(tile, "compare") is None, "a pile offered the overlay"
+    assert button_label(tile, "transfer") is None
+
+
+def test_a_pile_of_one_size_drops_the_button_that_would_repeat_itself(qapp):
+    """A lone 4-stack: ``Transfer a Stack`` would send exactly what ``Transfer
+    all`` sends, and two buttons that do one thing are a worse sentence than
+    one -- so the stack button is left out and the other two stay."""
+    tile = ItemTile(pile(4))
+
+    assert button_label(tile, "transferall") == "Transfer all (4)"
+    assert button_label(tile, "transferstack") is None
+    assert button_label(tile, "transferone") == "Transfer 1"
+
+
+def test_a_pile_of_one_fish_is_a_card_with_one_button(qapp):
+    """One fish is one thing to do with it, and the game's cap does not change
+    that: the pile's footer is for a *pile*, so a single fish keeps the single
+    copy's card -- which is what the tool would draw for it anyway."""
+    held = pile(1)
+
+    assert not held.is_a_pile
+    tile = ItemTile(held)
+    assert button_label(tile, "transfer") == "Transfer to Stash"
+    assert button_label(tile, "transferall") is None
+    assert button_label(tile, "transferone") is None
+
+
+def test_a_kind_the_game_does_not_cap_keeps_its_copies_footer(qapp):
+    """Everything that is not a pile is exactly what it was.
+
+    A potion stacks to no limit the tool knows, so a card of four of them is
+    four *copies* and its footer is the copies': the count, the overlay, and
+    nothing that would divide them into slots.
+    """
+    four = row(card(), members=("fp-1", "fp-2", "fp-3", "fp-4"))
+    tile = ItemTile(four)
+
+    assert button_label(tile, "transferall") == "Transfer all (4)"
+    assert button_label(tile, "compare") == "Compare & Transfer"
+    assert button_label(tile, "transferstack") is None
+    assert button_label(tile, "transferone") is None
+
+
+def test_the_pile_buttons_hand_the_tile_s_row_up(qapp):
+    """Which of the three was pressed is the tile's to say; what a slot's
+    worth *is* has already been worked out, and the window reads it off the
+    row it is handed."""
+    held = pile(3, 1)
+    tile = ItemTile(held)
+    asked = []
+    tile.transfer_stack.connect(asked.append)
+    tile.transfer_one.connect(asked.append)
+    tile.transfer.connect(asked.append)
+
+    tile.findChild(QPushButton, "transferstack").click()
+    tile.findChild(QPushButton, "transferone").click()
+    tile.findChild(QPushButton, "transferall").click()
+
+    assert [r.stacks for r in asked] == [(3, 1)] * 3
+
+
+# --------------------------------------------------------------------------
 # The grid
 # --------------------------------------------------------------------------
 

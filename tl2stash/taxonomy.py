@@ -57,12 +57,14 @@ type and one ``Scroll``, and its own records say so: ``Health Potion`` and
 the item's *name* -- ``Mana Potion``, ``Grand Health Potion`` -- which is where
 a player reads it anyway.
 
-One more thing lives here, because it is a fact about kinds rather than about
-any one view: which of the shared stash's three tabs a kind belongs in.  Those
-tabs are typed -- the game will not take a potion in the arms tab, nor a sword
-in the spells tab -- so :func:`stash_tab_for` decides where an item goes when
-the tool has no placement of its own to go by, and being wrong means the item
-lands where the game will not draw it.
+Two more things live here, because they are facts about kinds rather than about
+any one view.  The first is which of the shared stash's three tabs a kind
+belongs in: those tabs are typed -- the game will not take a potion in the arms
+tab, nor a sword in the spells tab -- so :func:`stash_tab_for` decides where an
+item goes when the tool has no placement of its own to go by, and being wrong
+means the item lands where the game will not draw it.  The second is how many
+of a kind the game holds in one stack, which is a fact about exactly one kind
+and is stated where :data:`STACK_LIMITS` is.
 
 Qt-free, like the rest of ``tl2stash``: this says how the game's kinds group,
 and ``app.sidebar`` says what that looks like.
@@ -79,10 +81,12 @@ __all__ = [
     "OTHER",
     "SPELL_KINDS",
     "SPELLS_TAB",
+    "STACK_LIMITS",
     "TYPE_GROUPS",
     "Place",
     "canonical_kind",
     "group_of",
+    "stack_limit_for",
     "stash_tab_for",
 ]
 
@@ -420,3 +424,34 @@ def stash_tab_for(kind: str) -> int:
     if canonical in CONSUMABLE_KINDS:
         return CONSUMABLES_TAB
     return ARMS_TAB
+
+
+#: How many of a kind the game holds in one stack, for the kinds where that is
+#: a fact this tool knows.
+#:
+#: Fish are the case, and the measurement is the registry's own: every fish
+#: stack the vanilla save has ever held reads 1, 2 or 5 and never more.  It is
+#: *not* a field the tool can read -- no item file, and nothing else in the
+#: game's data, states a stack cap, measured over the whole archive -- so the
+#: number lives here, where the tests that hold the taxonomy together can hold
+#: it too.
+#:
+#: A mod may stack fish higher, and the modded registry does, 8 to 28.  That is
+#: the mod's business: the tool writes back under the game's rule, because the
+#: save it writes into is the game's, and a mod that changed the cap would
+#: rather have five-fish slots than a stack the game splits anyway.
+#:
+#: Keyed by the canonical kind, like everything else that reads a kind, so a
+#: caller may pass what the game wrote.
+STACK_LIMITS: dict[str, int] = {"Fish": 5}
+
+
+def stack_limit_for(kind: str) -> int | None:
+    """How many of ``kind`` the game holds in one stack, or ``None``.
+
+    ``None`` is "no limit this tool knows", which is every kind but fish -- and
+    it is deliberately the answer rather than a number, because it is what
+    tells a caller that this is an ordinary item whose stack is written back
+    whole.  Only the kinds in :data:`STACK_LIMITS` are ever split.
+    """
+    return STACK_LIMITS.get(canonical_kind(kind))

@@ -296,6 +296,10 @@ def install(tmp_path: Path) -> Path:
     # the kind it canonicalises to, to the container a restore writes into.
     item_file("POTIONS/TEST_POTION.DAT", "Test Potion", "POTION", 10, 0x7009)
     item_file("SPELLS/TEST_SPELL.DAT", "Test Spell", "SPELL", 10, 0x700A)
+    # The one kind the game caps in a stack, as the game spells it: the word
+    # is the file's and the cap is the tool's, so an item here is what says
+    # the two find each other -- see ``tl2stash.taxonomy.STACK_LIMITS``.
+    item_file("FISH/TEST_FISH.DAT", "Test Fish", "FISH", 10, 0x700E)
 
     # The class restriction, in the shape the game's own files state it: not a
     # field of the item at all, but a *child* of its node with no name of its
@@ -681,9 +685,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Forty-eight parse; the forty-ninth is a DAT that will not, and the
-    fiftieth is not a DAT at all."""
-    assert game.files_read == 48
+    """Forty-nine parse; the fiftieth is a DAT that will not, and the
+    fifty-first is not a DAT at all."""
+    assert game.files_read == 49
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 

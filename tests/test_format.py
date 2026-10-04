@@ -626,6 +626,44 @@ def test_relocation_changes_only_the_location_bytes():
     assert parse_item(moved).location.container == 26
 
 
+def test_requantifying_changes_only_the_count_bytes():
+    """Re-counting a stack, which is the one edit a pile ever needs.
+
+    The count is a field of the record like any other, at a fixed offset past
+    the location -- the same arithmetic the parse already relies on -- so the
+    edit is four bytes in place and nothing else moves: not the location, not
+    the sockets, not the effects.
+    """
+    blob, offset = synthetic_item(quantity=20, sockets=2)
+    item = parse_item(blob)
+    fewer = item.requantified(5)
+
+    count = item.quantity_offset
+    assert count == offset + 103, "the count moved relative to the location"
+    assert len(fewer) == len(blob)
+    assert fewer[:count] == blob[:count]
+    assert fewer[count + 4 :] == blob[count + 4 :]
+
+    reread = parse_item(fewer)
+    assert reread.quantity == 5
+    assert reread.name == item.name
+    assert reread.location.slot_index == item.location.slot_index
+    assert reread.num_sockets == item.num_sockets
+
+
+def test_the_count_is_inside_the_fingerprint():
+    """Which is what makes a split a re-key and not an edit.
+
+    Identity is the bytes with only the *location* zeroed, so two counts of
+    one pile are two items to the registry and one pile to the player.  Every
+    caller that splits a stack therefore has to re-key the row -- see
+    :meth:`tl2stash.registry.Registry.recount`.
+    """
+    item = parse_item(synthetic_item(quantity=20)[0])
+    assert item.fingerprint != parse_item(item.requantified(5)).fingerprint
+    assert item.fingerprint == parse_item(item.requantified(20)).fingerprint
+
+
 def test_fingerprint_survives_a_move():
     """Identity must not depend on where the item sits.
 
