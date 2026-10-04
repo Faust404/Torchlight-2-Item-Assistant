@@ -18,4 +18,4 @@ __all__ = ["__version__"]
 
 #: Major.minor.patch, and the tag is ``v`` in front of it.  The first two
 #: move when the player can tell the difference; the third, for a fix.
-__version__ = "0.1.7"
+__version__ = "0.1.8"
