@@ -673,7 +673,10 @@ class _SocketGame:
     #: host to name is about.
     _HOSTS = {"TRINKET_ICEDEFENSE": "TRINKET"}
 
-    def socket_target(self, name):
+    def socket_target(self, name, item=None):
+        # ``item`` is where the real one reads the item's own affixes first --
+        # see ``tests/test_gamedata.py``.  Nothing here has an item behind it,
+        # so the archive-wide answer is the whole of the answer.
         return self._HOSTS.get(name)
 
     def display_precision(self, node):
@@ -732,6 +735,36 @@ def test_a_socketable_s_line_names_the_host_it_is_granted_to():
 
     assert _effect_lines(gem, _SocketGame(), _Kind("Socketable")) == [
         "Armor/Trinket: +120 Ice Armor"
+    ]
+
+
+class _ItemOnlyGame(_SocketGame):
+    """A game whose one answer comes only from the item's own affixes.
+
+    The Skull of Yanfeer's shape: the effect is claimed for both hosts in the
+    archive, so the wide map is silent, and the item's own file is what names
+    the host.  Nothing in this stub reads the item it is handed -- what the
+    test pins is that the card *hands one over*, since a call that dropped it
+    would get the same silence the archive gives.
+    """
+
+    def socket_target(self, name, item=None):
+        return "TRINKET" if item is not None else None
+
+
+def test_a_line_is_named_for_the_host_the_item_s_own_affixes_give():
+    """The user's report at the card: ``Armor/Trinket: +82 Health``.
+
+    The Skull of Yanfeer's ``+10% to All Damage`` was the line with no host on
+    it because two hosts claim the effect archive-wide.  The item's own affix
+    list is what settles that -- it is the narrower claim, and the card is
+    what asks the narrower question.
+    """
+    gem = item("Skull of Yanfeer", level=52)
+    gem.effects = [effect("", value=82.0, index=_SocketGame.OWN)]
+
+    assert _effect_lines(gem, _ItemOnlyGame(), _Kind("Socketable")) == [
+        "Armor/Trinket: +82 Health"
     ]
 
 

@@ -301,6 +301,29 @@ def install(tmp_path: Path) -> Path:
     # the two find each other -- see ``tl2stash.taxonomy.STACK_LIMITS``.
     item_file("FISH/TEST_FISH.DAT", "Test Fish", "FISH", 10, 0x700E)
 
+    # A socketable wearing an affix of its own, which is the shape every
+    # Skull, Eye and Claptrap part has: the affix is named by a *child* of the
+    # item's node -- the parents of this one are written by ``item_file`` and
+    # cannot carry children -- and ``UNIQUE_TEST_CLASH_ARMOR`` is one of the
+    # two affixes claiming ``MELEEDAMAGEBONUS``, so this item is what tells the
+    # per-item reading from the archive-wide one.
+    files["MEDIA/UNITS/ITEMS/SOCKETABLES/TEST_TIED.DAT"] = write_dat(
+        strings,
+        [
+            {
+                "vars": {
+                    VAR_NAME: (TEXT, string("Test Tied")),
+                    VAR_UNITTYPE: (TEXT, string("UNIQUE SOCKETABLE")),
+                    VAR_LEVEL: (INT, 20),
+                    VAR_UNIT_GUID: (TEXT, string(str(0x700F))),
+                },
+                "kids": [
+                    {"vars": {VAR_AFFIX: (TEXT, string("UNIQUE_TEST_CLASH_ARMOR"))}}
+                ],
+            }
+        ],
+    )
+
     # The class restriction, in the shape the game's own files state it: not a
     # field of the item at all, but a *child* of its node with no name of its
     # own and one variable -- UNITTYPE, holding one of the four words the game
@@ -685,9 +708,9 @@ def test_a_bad_environment_variable_does_not_fall_through(tmp_path, monkeypatch)
 
 
 def test_the_wanted_files_are_read_and_the_rest_are_left(game):
-    """Forty-nine parse; the fiftieth is a DAT that will not, and the
-    fifty-first is not a DAT at all."""
-    assert game.files_read == 49
+    """Fifty parse; the fifty-first is a DAT that will not, and the
+    fifty-second is not a DAT at all."""
+    assert game.files_read == 50
     assert [name for name, _ in game.failed] == ["MEDIA/UNITS/ITEMS/BROKEN.DAT"]
 
 
@@ -1012,6 +1035,47 @@ def test_an_item_affix_does_not_break_a_tie_the_gems_left(game):
     would be wrong for the other.
     """
     assert game.socket_target("PERCENT LIFE STOLEN") is None
+
+
+def test_an_item_s_own_affix_settles_a_tie_the_archive_left(game):
+    """The Skull of Yanfeer's shape, in the fixture's own data.
+
+    ``MELEEDAMAGEBONUS`` is claimed for both hosts by two item affixes, so the
+    archive-wide answer is silence and a line naming either host would be
+    wrong for the other.  The item *wearing* one of those two affixes is the
+    narrower claim and knows: its own file names the affix, and the affix's
+    applicability list is where the host is.  That is the whole of the per-item
+    reading -- an item is asked about its own affixes first and hears the
+    archive only where they are silent.
+
+    An item whose file says nothing -- the fixture's plain sword, and every
+    item that is not a socketable -- gets exactly what it got before, which is
+    the archive's answer, and that answer is ``None`` here.
+    """
+    assert game.socket_target("MELEEDAMAGEBONUS") is None
+    assert game.socket_target("MELEEDAMAGEBONUS", item(guid=0x700F)) == "TRINKET"
+    assert game.socket_target("MELEEDAMAGEBONUS", item(guid=0x7001)) is None
+    # An item the archive has never heard of is asked the same question and
+    # answers the same way: no file, no affixes, no host.
+    assert game.socket_target("MELEEDAMAGEBONUS", item(guid=0xDEAD)) is None
+
+
+@needs_game
+def test_the_skull_of_yanfeer_names_the_host_of_its_own_bonus(real_game):
+    """The user's report, on the item that raised it.
+
+    ``+10% to All Damage`` is ``PERCENT DAMAGE BONUS``, and the archive cannot
+    place it: one socketable's affix grants it to a weapon and another's to
+    Armor/Trinket, so the wide map has two answers and keeps neither -- which
+    is why the Skull's line was the one line on its card with no host on it.
+    ``TL2_SKULL049.DAT`` is the Skull of Yanfeer, its own file wears
+    ``UNIQUE_DAMAGE_BONUS_4_ARMOR5``, and that affix's list is ``ARMOR`` --
+    the host the card writes as Armor/Trinket.
+    """
+    skull = item("Skull of Yanfeer", guid=0x8416F84B3ECED7B3)
+
+    assert real_game.socket_target("PERCENT DAMAGE BONUS") is None
+    assert real_game.socket_target("PERCENT DAMAGE BONUS", skull) == "TRINKET"
 
 
 # --------------------------------------------------------------------------

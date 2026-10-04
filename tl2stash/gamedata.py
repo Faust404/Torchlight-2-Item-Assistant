@@ -624,7 +624,7 @@ def _gem_hosts(stem: str, data: DatFile) -> tuple[set[str], set[str], bool]:
 _SOCKET_HOST_WORDS = {"WEAPON": "WEAPON", "TRINKET": "TRINKET", "ARMOR": "TRINKET"}
 
 
-def _applicability_hosts(data: DatFile) -> tuple[set[str], set[str]]:
+def _applicability_hosts(root: DatNode) -> tuple[set[str], set[str]]:
     """An item affix's hosts and what it grants, read off its own children.
 
     A gem's affixes are filed by host in their *names*, and on the newer embers
@@ -650,10 +650,15 @@ def _applicability_hosts(data: DatFile) -> tuple[set[str], set[str]]:
     ambiguous case fall out of :meth:`GameData.socket_target` on its own: an
     affix for either host grants its bonus to both, and there is no one of them
     to name.
+
+    ``root`` is the affix *node* rather than the file it was read out of, so
+    that the same reading serves both callers: the sweep at load time has the
+    file it just parsed, and the per-item lookup has the node the item's own
+    affix list named, which arrives out of a file that is not the item's.
     """
     hosts: set[str] = set()
     granted: set[str] = set()
-    for node in data.root.children:
+    for node in root.children:
         if node.node_id == VAR_UNITTYPES:
             # Both spellings, as the gems' lists use both, and every entry of
             # them: see :meth:`DatNode.texts`.
@@ -828,8 +833,10 @@ class GameData:
         "_effects",
         "_effect_curves",
         "_effect_order",
+        "_item_affix_hosts",
         "_item_files",
         "_item_guids",
+        "_own_targets",
         "_require_curves",
         "_sets",
         "_socket_targets",
@@ -857,6 +864,7 @@ class GameData:
         armor_curve: dict[int, float],
         effect_curves: dict[str, dict[int, float]],
         socket_targets: dict[str, str],
+        item_affix_hosts: dict[str, tuple[frozenset[str], frozenset[str]]],
         require_curves: dict[str, dict[int, float]] | None = None,
         augments: dict[str, tuple[Augment, ...]] | None = None,
         classes: dict[int, str] | None = None,
@@ -879,6 +887,12 @@ class GameData:
         self._weapon_curve = weapon_curve
         self._armor_curve = armor_curve
         self._socket_targets = socket_targets
+        self._item_affix_hosts = item_affix_hosts
+        # What each item's *own* affixes say, built the first time that item is
+        # asked about and kept, because a card asks once per effect line and
+        # the answer is the same every time.  Keyed by guid, which is the key
+        # every other per-item question here uses.
+        self._own_targets: dict[int, dict[str, str]] = {}
         self._require_curves = require_curves or {}
         self._augments = augments or {}
         self._classes = classes or {}
@@ -946,6 +960,12 @@ class GameData:
         socket_hosts: dict[str, set[str]] = {}
         socket_named: dict[str, set[str]] = {}
         socket_items: dict[str, set[str]] = {}
+        # What each item affix states on its own, kept per affix rather than
+        # melted into ``socket_items``, because the two callers ask different
+        # questions of it: the archive-wide map wants the effect, and the
+        # per-item lookup (:meth:`GameData.socket_target`) has an item that
+        # names two or three affixes and wants to hear only those.
+        item_affix_hosts: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
         read = 0
 
         with PakFile(pak_path, index) as pak:
@@ -1025,10 +1045,19 @@ class GameData:
                     # list -- and filed apart from the gems': what a gem affix
                     # says is the answer for an effect, and an item affix is
                     # only heard where no gem has one.
-                    hosts, granted = _applicability_hosts(data)
+                    hosts, granted = _applicability_hosts(data.root)
                     if hosts:
                         for effect in granted:
                             socket_items.setdefault(effect, set()).update(hosts)
+                    if data.root.name:
+                        # Kept whether or not a host came out of it: an affix
+                        # that states none is an affix that says nothing about
+                        # a host, and the lookup has to be able to tell that
+                        # apart from an affix it has never heard of.
+                        item_affix_hosts[data.root.name.upper()] = (
+                            frozenset(hosts),
+                            frozenset(granted),
+                        )
 
                 if path.startswith(SETS_DIR):
                     # A set's file, kept whole: the root *is* the set, and its
@@ -1186,6 +1215,7 @@ class GameData:
             curves.get(GRAPH_ARMOR, {}),
             effect_curves,
             socket_targets,
+            item_affix_hosts,
             require_curves,
             _augments.load(install) if augments is None else augments,
             stated_classes if classes is None else classes,
@@ -1278,7 +1308,7 @@ class GameData:
     def effect_count(self) -> int:
         return len(self._effect_order)
 
-    def socket_target(self, node_name: str) -> str | None:
+    def socket_target(self, node_name: str, item=None) -> str | None:
         """Which host a socketable's effect is granted to, or ``None``.
 
         ``'WEAPON'`` and ``'TRINKET'`` are the game's own words, as its affix
@@ -1290,6 +1320,27 @@ class GameData:
         host is the applicability list.  A gem's answer is the one that stands
         where the two have one between them.
 
+        ``item`` makes the question narrower and answers it where the archive
+        cannot.  An effect granted to one host by a gem and to the other by an
+        item affix is a tie in the archive-wide map -- the map is one answer
+        per effect and there are two -- and the Skull of Yanfeer is that tie:
+        ``PERCENT DAMAGE BONUS`` is granted to a weapon by some socketable's
+        affix and to Armor/Trinket by ``TL2_SKULL049``'s, so the map stays
+        silent and the Skull's ``+10% to All Damage`` was the one line on the
+        card with no host to name.  The item's own file is the narrower claim
+        and settles it: its affix list names the affixes it wears, and each of
+        those states its own applicability list.  Measured over the archive,
+        that is 15 lines on 12 socketables gaining a host -- the Skull, the
+        Eyes, the Claptrap parts -- and no line anywhere losing one or being
+        given the other.
+
+        A gem is unaffected by the narrower reading, and deliberately: gems
+        are read by the marker in their own affix *names* because their
+        children are the ones measured wrong (see :func:`_gem_hosts`), so
+        :attr:`_item_affix_hosts` holds item affixes and only those, and an
+        item file naming a gem affix -- the three fish gems do -- finds
+        nothing there to prefer.
+
         ``None`` covers the cases that have one answer here: an effect no
         socketable's affix describes at all -- every effect on every other kind
         of item -- one claimed for two hosts at once, and one two affixes claim
@@ -1299,7 +1350,56 @@ class GameData:
         """
         if not node_name:
             return None
-        return self._socket_targets.get(node_name.upper())
+        key = node_name.upper()
+        if item is not None:
+            target = self._own_affixes(item).get(key)
+            if target is not None:
+                return target
+        return self._socket_targets.get(key)
+
+    def _own_affixes(self, item) -> dict[str, str]:
+        """What this item's *own* affixes grant, and to which host.
+
+        One reading per affix in the item's file: the affix is named by a
+        child of the item's root, the name reaches the affix node itself in
+        the archive, and the node's applicability list says the host.  Only
+        effects the item's affixes agree on come back -- an item wearing one
+        affix for each host states the tie rather than settling it, and the
+        caller falls through to the archive-wide map, which is what it does
+        for an item that names no affix at all.
+
+        Kept per guid, because the reading is identical for every copy of an
+        item and every line of its card asks again.
+        """
+        key = item.guid & 0xFFFFFFFFFFFFFFFF
+        known = self._own_targets.get(key)
+        if known is not None:
+            return known
+
+        claims: dict[str, set[str]] = {}
+        data = self._item_guids.get(key)
+        if data is not None:
+            for child in data.root.children:
+                name = child.text(VAR_AFFIX)
+                if not name:
+                    continue
+                found = self._item_affix_hosts.get(name.upper())
+                if found is None:
+                    continue
+                hosts, granted = found
+                if len(hosts) != 1:
+                    continue
+                host = next(iter(hosts))
+                for effect in granted:
+                    claims.setdefault(effect, set()).add(host)
+
+        targets = {
+            effect: next(iter(hosts))
+            for effect, hosts in claims.items()
+            if len(hosts) == 1
+        }
+        self._own_targets[key] = targets
+        return targets
 
     def effect_template(self, node: DatNode, description_type: int) -> str | None:
         """The sentence this effect is written with, or ``None``.

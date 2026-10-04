@@ -444,7 +444,7 @@ def _effect_lines(
         # two that do name one.
         rank = 0
         if socketable:
-            target = data.socket_target(node.name)
+            target = data.socket_target(node.name, item)
             if socketed_into is not None and target is not None and target != socketed_into:
                 # Granted to the other host: the item this sits in never gets
                 # it, so it is not a line here at all.
