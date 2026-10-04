@@ -24,10 +24,11 @@ player puts an executable in is often one an ordinary process may not write
 to at all -- Program Files.
 
 The path is *derived* from ``tl2stash.saves.SAVE_ROOT`` rather than spelled
-out again here, so the tool's folder follows the saves it belongs with: one
-``USERPROFILE`` decides both, and a machine whose saves are found somewhere
-else -- Documents redirected to OneDrive, another account, a stick -- finds
-the database beside them.
+out again here, so the tool's folder follows the saves it belongs with: the
+Documents folder Windows names -- or the one ``TL2IA_SAVES`` names -- decides
+both, so a Documents folder redirected to OneDrive, saves on another account,
+or saves on a stick all keep the database beside them instead of leaving it
+behind in a profile folder the game no longer uses.
 
 The folder may not exist yet, and making it is the writers' business rather
 than this function's: :class:`tl2stash.registry.Registry` creates it on open
@@ -40,7 +41,10 @@ game would have put its own.
 
 ``TL2IA_DATA`` moves the folder, for a player who keeps the tool on a stick
 and wants the data beside it, and for a test that wants a folder of its own
-without going through a window.
+without going through a window.  It overrides even ``TL2IA_SAVES``, which
+moves this folder by moving the saves it follows: pointing the tool at saves
+somewhere is a statement about the saves, and whoever also says where the
+data goes has said the more specific thing.
 """
 
 from __future__ import annotations

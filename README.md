@@ -264,8 +264,11 @@ timing affects is sending items *back* — see
 
 Windows, and the game's saves in the usual place
 (`Documents\My Games\Runic Games\Torchlight 2`), which is where both the Steam
-and the GOG versions put them. The executable needs nothing else. From source
-it is Python 3.10+ with `PySide6`.
+and the GOG versions put them. "Documents" is asked of Windows rather than
+assumed, so a Documents folder moved by OneDrive is followed to wherever it
+went; if the saves are somewhere even that will not find, set `TL2IA_SAVES` to
+the folder holding `save` and `modsave`. The executable needs nothing else.
+From source it is Python 3.10+ with `PySide6`.
 
 ## Building it yourself
 

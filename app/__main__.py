@@ -62,7 +62,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"\n"
                 f"  -V, --version  print the version and exit\n"
                 f"\n"
-                f"  TL2IA_DATA=PATH  move the tool's own folder, default above"
+                f"  TL2IA_SAVES=PATH  where the game's saves are, when not where\n"
+                f"                    Windows says they are; the tool's own\n"
+                f"                    folder follows them\n"
+                f"  TL2IA_DATA=PATH   move the tool's own folder, default above"
             )
             return 0
         else:

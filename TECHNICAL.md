@@ -71,7 +71,8 @@ patient than it.
       stash.py     stash container
       archive.py   rebuilding a stash body, writing it back safely
       registry.py  SQLite item registry
-      saves.py     locating save files on disk
+      saves.py     locating save files on disk, under the Documents folder
+                   Windows names -- and TL2IA_SAVES when that is not it
       watcher.py   noticing the game's saves
       service.py   absorb / restore, and the convergence between them
       portable.py  the collection as one file, out and back in
@@ -134,7 +135,10 @@ patient than it.
 A checkout keeps its databases in `var/` rather than in the game's folder —
 deliberately, so that a developer running the parser is not reading the
 collection they actually play with. `TL2IA_DATA` moves that folder, and the
-same variable moves the executable's.
+same variable moves the executable's. `TL2IA_SAVES` names the folder holding
+the game's saves, for a machine where that is not where Windows says Documents
+is; the tool's own folder follows it, so a checkout can be pointed at a copied
+stash without touching the one being played.
 
 ## Building the executable
 

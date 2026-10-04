@@ -18,12 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tl2stash import descramble, read_save_file, read_stash_file, scramble  # noqa: E402
+from tl2stash.saves import SAVE_ROOT, STASH_FILENAME  # noqa: E402
 
-DEFAULT = (
-    Path.home()
-    / "Documents/My Games/Runic Games/Torchlight 2/save"
-    / "76561198328811052/sharedstash_v2.bin"
-)
+#: The author's own vanilla Steam save -- the one this probe defaulted to
+#: before it was a tool -- under whichever Documents the tool found, which is
+#: what makes it work on a machine whose Documents folder has moved.
+DEFAULT = SAVE_ROOT / "save" / "76561198328811052" / STASH_FILENAME
 
 
 def main(argv: list[str]) -> int:
