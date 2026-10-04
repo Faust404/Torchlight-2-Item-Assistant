@@ -10,8 +10,11 @@ Two tables, with a deliberate split:
                 seen in.  A player with both a vanilla and a modded stash has
                 genuinely separate stashes, so presence has to be per-file.
 
-Items are never deleted.  An item that stops appearing in a stash keeps its row
-and its bytes -- "it left the stash" is information, not garbage.
+Items are almost never deleted.  An item that stops appearing in a stash keeps
+its row and its bytes -- "it left the stash" is information, not garbage.  The
+one exception is :meth:`Registry.forget`, which nothing calls on its own: it is
+the player deciding, by hand, that a stranded item the tool is holding was
+never theirs to keep -- see :meth:`~tl2stash.service.ItemService.remove`.
 """
 
 from __future__ import annotations
@@ -319,6 +322,39 @@ class Registry:
             added += 1
         self.conn.commit()
         return added
+
+    def forget(self, fingerprints: set[str]) -> int:
+        """Delete items outright: their rows, their bytes, and where they were.
+
+        The one destructive method here, and the one thing the registry's
+        "items are never deleted" rule has an exception for: a *stranded*
+        item -- handed to the game, absent from the file -- is sometimes one
+        the player can see is a duplicate a character is already carrying,
+        and keeping the tool's copy would leave them holding two.  The row is
+        not information then; it is a mistake being put down.
+
+        Placements go first, in the same transaction.  They reference
+        ``items`` and carry no ``ON DELETE`` clause, so with ``PRAGMA
+        foreign_keys`` on -- as it is here -- an item deleted while a
+        placement still points at it is not a lingering row but a failed
+        delete.
+
+        Nothing here guards *which* items may go: that is
+        :meth:`~tl2stash.service.ItemService.remove`'s job, and it is the
+        only caller.  Returns how many item rows went.
+        """
+        if not fingerprints:
+            return 0
+        marks = ",".join("?" * len(fingerprints))
+        params = tuple(fingerprints)
+        self.conn.execute(
+            f"DELETE FROM placements WHERE fingerprint IN ({marks})", params
+        )
+        cursor = self.conn.execute(
+            f"DELETE FROM items WHERE fingerprint IN ({marks})", params
+        )
+        self.conn.commit()
+        return cursor.rowcount
 
     # -- queries ---------------------------------------------------------
 

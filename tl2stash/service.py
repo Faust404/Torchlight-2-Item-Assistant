@@ -353,6 +353,8 @@ class ItemService:
         the player is carrying.  So the tool only ever offers, and this is
         what accepting it does: the row becomes ``absorbed`` -- an ordinary
         member of the collection, ours to keep -- and the game is not touched.
+        The other answer to the same state is :meth:`remove`, for the stranded
+        item the player can see is a duplicate.
 
         Only items that are stranded *now* are recovered.  An item the file
         holds is one the game really does have, and its own answer is the
@@ -365,6 +367,36 @@ class ItemService:
         if not wanted:
             return 0
         return self.registry.set_status(wanted, STATUS_ABSORBED)
+
+    def remove(self, fingerprints: set[str]) -> int:
+        """Drop stranded items from the collection for good.
+
+        The second of the two answers to the stranded state, and the answer
+        that exists because the state itself is ambiguous: an item handed to
+        the game and absent from the file now is either one the game's save
+        erased -- recover it -- or one a character is carrying, which makes
+        the tool's copy a duplicate the player never earned.  The file cannot
+        say which, so both answers are offered and the player, who can see
+        their own character, picks.  This is the destructive one, which is
+        why the window asks before calling it.
+
+        The guard is :meth:`recover`'s, for the same reason: only items that
+        are stranded *now*.  An item the file holds is one the game really
+        has, and deleting the tool's record of it would throw away something
+        the player can still see in their own stash -- absorbing is that
+        item's answer, and anything else in ``fingerprints`` is left exactly
+        as it was.  The stash file is never touched either: what is being
+        deleted is the tool's copy of the item, not the item.
+
+        Returns how many rows were deleted, which the window's status line
+        reports and which is 0 when the file moved in the player's favour
+        between the confirmation and the delete.
+        """
+        stranded = {row["fingerprint"] for row in self.stranded_rows()}
+        wanted = stranded & set(fingerprints)
+        if not wanted:
+            return 0
+        return self.registry.forget(wanted)
 
     def tab_for(self, print_: str) -> int:
         """Which tab an item goes in when the tool has no place of its own.

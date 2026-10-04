@@ -1267,6 +1267,7 @@ def test_a_stranded_item_is_drawn_without_a_way_back(stocked):
         "a way back into a game that has not got the item"
     )
     assert tile.findChild(QPushButton, "recover") is not None
+    assert tile.findChild(QPushButton, "remove") is not None
 
 
 def test_recovering_makes_the_item_a_normal_member_again(stocked):
@@ -1310,6 +1311,92 @@ def test_recovering_makes_the_item_a_normal_member_again(stocked):
     assert not tile.row.stranded
     assert tile.findChild(QPushButton, "transfer") is not None
     assert tile.findChild(QPushButton, "recover") is None
+
+
+def test_removing_a_stranded_item_asks_first_and_can_be_refused(stocked, monkeypatch):
+    """The user's request: a stranded duplicate can be dropped, but never
+    quietly.
+
+    The tool cannot tell an item the game's save erased from one a character
+    is carrying, and the second makes the collection's copy a duplicate the
+    player never earned -- so the destructive ending has to be offered, and
+    offered carefully.  Cancelling deletes nothing: the row, the card and the
+    count are all exactly where they were.
+    """
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    win._put_back_one(print_)
+    write_stash_of(win.service.source, [])
+    win._sync(write=False)
+    win.stranded_button.click()
+
+    asked = []
+
+    def refuse(*args, **kwargs):
+        asked.append((args, kwargs))
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "question", refuse)
+
+    win.grid.tile(0).findChild(QPushButton, "remove").click()
+
+    assert len(asked) == 1, "the delete went ahead without asking"
+    _, title, text, _buttons, default = asked[0][0]
+    assert title == "Remove from the collection?"
+    assert "Alpha" in text
+    assert default == QMessageBox.StandardButton.Cancel, (
+        "the box defaults to deleting"
+    )
+    assert win.service.registry.get(print_) is not None, "Cancel deleted the item"
+    assert win.grid.count() == 1, "the card went on a refused removal"
+    assert win.stranded_button.text() == "Show Stranded Items (1)"
+
+
+def test_confirmed_removal_takes_the_item_out_of_the_tool_for_good(
+    stocked, monkeypatch
+):
+    """What confirming does, and what it must not do.
+
+    The tool's copy goes -- row, bytes and all, the one destructive thing the
+    window can do -- and the game is untouched: the item is in no stash file
+    to begin with, so nothing is rewritten, not even to say goodbye.
+    Afterwards the stranded view is empty, the button has stopped counting,
+    and the item is not in the collection either: it is gone, not moved.
+    """
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    win = stocked
+    print_ = [r for r in win.service.registry.rows() if r["name"] == "Alpha"][0][
+        "fingerprint"
+    ]
+    win._put_back_one(print_)
+    write_stash_of(win.service.source, [])
+    win._sync(write=False)
+    untouched = win.service.source.read_bytes()
+    win.stranded_button.click()
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+
+    win.grid.tile(0).findChild(QPushButton, "remove").click()
+
+    assert "removed Alpha from the collection" in win.status.currentMessage()
+    assert win.service.source.read_bytes() == untouched, "removing wrote to the game"
+    assert win.service.registry.get(print_) is None
+    assert win.grid.count() == 0, "the card stayed in a view it has left"
+    assert win.collection_group.title() == "Stranded items (0)"
+    assert win.stranded_button.text() == "Show Stranded Items"
+
+    # Back to the collection, where it is not.  Recovering ends with three
+    # items here; a removal that quietly recovered instead would too.
+    win.stranded_button.click()
+    assert win.collection_group.title() == "In the tool (2)"
+    assert "Alpha" not in [row.name for row in win.grid.rows()]
 
 
 def test_the_stranded_view_says_what_it_is_for_when_there_is_nothing(stocked):

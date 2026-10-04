@@ -481,6 +481,56 @@ def test_an_item_the_file_has_is_not_recovered_behind_the_player_s_back(service)
     assert [item.fingerprint for item in service.stash_items()] == [print_]
 
 
+def test_removing_a_stranded_item_deletes_its_row_and_its_place(service, stash_path):
+    """The second answer to the stranded state, for the duplicate.
+
+    Recovering keeps the tool's copy; removing is for the stranded item the
+    player can see on a character, where the collection's copy is one the
+    game never gave them.  The row goes, its bytes go, and its placement goes
+    with them -- an item that is not in the registry has nowhere it was --
+    while the file is left byte for byte alone, because the tool's copy is
+    the only thing being deleted.
+    """
+    service.absorb_all()
+    print_ = {row["name"]: row["fingerprint"] for row in service.registry.rows()}[
+        "Beta"
+    ]
+    service.restore({print_})
+    write_stash_of(stash_path, [])
+    service.refresh()
+    untouched = stash_path.read_bytes()
+
+    assert service.remove({print_}) == 1
+
+    assert service.registry.get(print_) is None, "the row is still there"
+    assert print_ not in service.registry.placements_for(service.source_key), (
+        "a placement outlived its item"
+    )
+    assert service.stranded_rows() == []
+    assert stash_path.read_bytes() == untouched, "removing wrote to the game"
+
+
+def test_only_what_is_stranded_can_be_removed(service):
+    """The guard, and it is recovering's.
+
+    An item the file still holds is one the game really has; deleting the
+    tool's record of it would throw away something the player can see in
+    their own stash, and absorbing is that item's answer.  Announcing a
+    removal that did not happen would be worse than the removal -- the
+    player would believe a duplicate was gone.
+    """
+    service.absorb_all()
+    print_ = {row["name"]: row["fingerprint"] for row in service.registry.rows()}[
+        "Beta"
+    ]
+    service.restore({print_})
+
+    assert service.remove({print_}) == 0
+
+    assert service.registry.get(print_)["status"] == STATUS_RETURNED
+    assert [item.fingerprint for item in service.stash_items()] == [print_]
+
+
 # --------------------------------------------------------------------------
 # Where a returned item lands
 # --------------------------------------------------------------------------

@@ -92,7 +92,7 @@ _STYLE = STYLE + f"""
    a button on one is the tool's.  Word and outline are the same light, and the
    hover is the one step above it, because the resting state is already light
    and a hover that dimmed would read as the button switching itself off. */
-#compare, #transfer, #transferall, #recover {{
+#compare, #transfer, #transferall, #recover, #remove {{
     color: {PALE};
     background: transparent;
     border: 1px solid {PALE};
@@ -100,7 +100,8 @@ _STYLE = STYLE + f"""
     padding: 2px 8px;
     font-size: 11px;
 }}
-#compare:hover, #transfer:hover, #transferall:hover, #recover:hover {{
+#compare:hover, #transfer:hover, #transferall:hover, #recover:hover,
+#remove:hover {{
     color: {CHALK};
     border-color: {CHALK};
 }}
@@ -395,8 +396,12 @@ class ItemTile(CardFrame):
     #: sending: one copy, or every copy the card stands for.
     transfer = Signal(object)
     #: The recover button, with the row it stands for.  Only a stranded card
-    #: has one, and it is the only thing such a card can be asked to do.
+    #: has one; what recovering means is the window's to decide.
     recover = Signal(object)
+    #: The remove button, with the row it stands for.  Only a stranded card
+    #: has one, and it is the destructive ending: the window asks before it
+    #: does anything with it.
+    remove = Signal(object)
 
     #: This is the collection's wall, so the set name on the card is a link:
     #: the set is a thing the tool holds and the window can show it.
@@ -457,8 +462,10 @@ class ItemTile(CardFrame):
 
         A stranded item is the exception to all of that, because there is
         nowhere to send it: no file of the game holds it, so instead of a way
-        back there is a way to keep it, alone on the line and on the left,
-        which is where that ending begins.
+        back there are the two answers to the state it is in -- keep the
+        tool's copy, or drop it for good.  Keeping it stands on the left,
+        where that ending begins; the drop is the card's far end, across the
+        stretch from the button a click meant for one is not a click on.
         """
         foot = QWidget()
         row = QHBoxLayout(foot)
@@ -468,6 +475,7 @@ class ItemTile(CardFrame):
         if self.row.stranded:
             row.addWidget(self._recover_button())
             row.addStretch(1)
+            row.addWidget(self._remove_button())
             return foot
 
         if self.row.copies > 1:
@@ -530,7 +538,7 @@ class ItemTile(CardFrame):
         return button
 
     def _recover_button(self) -> QPushButton:
-        """The one thing a stranded item can be asked to do: stay here.
+        """The ending that keeps the item: stay here.
 
         There is no transfer to offer, because there is no copy of this item
         in the game to transfer it to -- no file holds it.  What went wrong is
@@ -542,7 +550,9 @@ class ItemTile(CardFrame):
         behind when it erases a write, and it is also what a character
         carrying the item leaves behind.  The file cannot tell the two apart,
         so a tool that wrote the item back in would be duplicating one the
-        player already has.
+        player already has.  Which of the two it is decides which button is
+        right: this one when the game erased it, and :meth:`_remove_button`
+        when the player is carrying it.
         """
         button = QPushButton("Recover Stranded Item")
         button.setObjectName("recover")
@@ -554,6 +564,32 @@ class ItemTile(CardFrame):
             "what the tool believes -- the game is not written to."
         )
         button.clicked.connect(lambda: self.recover.emit(self.row))
+        return button
+
+    def _remove_button(self) -> QPushButton:
+        """The other ending: the tool's copy goes, and the item with it.
+
+        For the stranded item that turns out to be a duplicate -- the one the
+        player can see on a character, which is why no file has it -- keeping
+        the tool's copy as well would leave them holding two of something the
+        game only ever gave them one of.  So the two endings stand on the
+        same line: keep it, or let it go.
+
+        Destructive, and drawn at the far end of the line rather than beside
+        the recover button, so a click meant for one is not a click on the
+        other.  It deletes nothing by itself -- the window asks first, and
+        this button only says which row was asked about.
+        """
+        button = QPushButton("Remove from Collection")
+        button.setObjectName("remove")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(
+            "Delete the tool's copy of this item for good.\n"
+            "For a stranded duplicate: a character carrying the real one\n"
+            "means the collection's copy is not the player's to keep.\n"
+            "Nothing in the game is touched, and this cannot be undone."
+        )
+        button.clicked.connect(lambda: self.remove.emit(self.row))
         return button
 
     # -- the mouse -------------------------------------------------------
@@ -590,6 +626,9 @@ class TileGrid(CardWall):
     #: A tile's recover button, passed on with the tile's row.  Only a stranded
     #: card has one; what recovering means is the window's to decide.
     recover = Signal(object)
+    #: A tile's remove button, passed on with the tile's row.  Only a stranded
+    #: card has one; the window asks before deleting anything.
+    remove = Signal(object)
     #: A tile's set name, passed on with the name that was clicked.  The grid
     #: does not know what a set is or what showing one would mean; the window
     #: does, and this is how it hears about it.
@@ -638,6 +677,7 @@ class TileGrid(CardWall):
                 tile.compare.connect(self.compare)
                 tile.transfer.connect(self.transfer)
                 tile.recover.connect(self.recover)
+                tile.remove.connect(self.remove)
                 tile.set_chosen.connect(self.set_chosen)
                 self._pool[row.fingerprint] = tile
             else:

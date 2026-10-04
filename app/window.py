@@ -522,6 +522,7 @@ class MainWindow(QMainWindow):
         self.grid.compare.connect(self._compare_copies)
         self.grid.transfer.connect(self._transfer_row)
         self.grid.recover.connect(self._recover_row)
+        self.grid.remove.connect(self._remove_row)
         self.grid.set_chosen.connect(self._show_set)
         right.addWidget(self.grid, stretch=1)
 
@@ -955,6 +956,51 @@ class MainWindow(QMainWindow):
             # one after all.
             self._set_status(f"{row.name} is in the shared stash after all")
 
+    def _remove_row(self, row: TileRow) -> None:
+        """Drop a stranded item from the collection, after asking.
+
+        The other ending a stranded card offers, and the one for the case the
+        tool cannot see: the item may be one a character is carrying, which
+        would make the collection's copy a duplicate the player never earned.
+        What gets deleted is the tool's own record of the item -- bytes and
+        all -- and nothing the game can see, because the item is in no stash
+        file to begin with.  See
+        :meth:`tl2stash.service.ItemService.remove` for the guard, which is
+        the same one recovering has.
+
+        Asking first is this window's habit for anything it cannot undo, and
+        this cannot: the row's bytes are the whole of the tool's copy.  The
+        default is Cancel, so a dismissed box removes nothing.
+        """
+        if self.service is None:
+            return
+        prints = set(row.members or (row.fingerprint,))
+        answer = QMessageBox.question(
+            self,
+            "Remove from the collection?",
+            f"Delete the tool's copy of {row.name} for good?\n\n"
+            "It is in no stash file, so the game is not touched -- but the "
+            "item cannot be recovered afterwards.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Ok:
+            return
+
+        removed = self.service.remove(prints)
+        self._refresh_views()
+
+        if removed:
+            self._set_status(
+                f"removed {row.name} from the collection · the tool no longer "
+                "holds it"
+            )
+        else:
+            # Same race as recovering, and the same answer: the file has it,
+            # so removing it here would be deleting something the player can
+            # see in their own stash.
+            self._set_status(f"{row.name} is in the shared stash after all")
+
     # -- the collection as a file ----------------------------------------
 
     def _export_collection(self) -> None:
@@ -1290,8 +1336,9 @@ class MainWindow(QMainWindow):
                     for row in self._stranded
                 ],
                 empty=(
-                    "No stranded items.  Everything you have put back is in "
-                    "the shared stash, or has been recovered."
+                    "No stranded items.  Every item you have put back is in "
+                    "the shared stash, has been recovered, or has been "
+                    "removed."
                 ),
             )
             return

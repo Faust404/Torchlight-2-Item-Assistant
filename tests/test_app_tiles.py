@@ -218,18 +218,19 @@ def test_a_row_that_changed_is_redrawn_in_place(qapp):
     assert tile.is_selected()
 
 
-def test_a_stranded_card_offers_only_the_way_to_keep_it(qapp):
-    """A card with nowhere to go gets the one button that says so.
+def test_a_stranded_card_offers_both_answers_and_no_way_back(qapp):
+    """A card with nowhere to go gets the two endings, and nothing else.
 
     Every other card's footer is a way back to the game.  A stranded item has
-    none -- no file holds it -- so what is offered instead is the only true
-    thing left to do with it: keep it.  And that is the whole footer: the
-    count and the comparison are both about copies the game might have, and
-    the game has none of this one.
+    none -- no file holds it -- so what is offered instead is the pair of
+    answers to the state it is in: keep the tool's copy, or drop it for good.
+    Nothing besides: the count and the comparison are both about copies the
+    game might have, and the game has none of this one.
     """
     gone = ItemTile(row(card(), stranded=True))
 
     assert button_label(gone, "recover") == "Recover Stranded Item"
+    assert button_label(gone, "remove") == "Remove from Collection"
     assert button_label(gone, "transfer") is None
     assert button_label(gone, "transferall") is None
     assert button_label(gone, "compare") is None
@@ -247,6 +248,19 @@ def test_the_recover_button_hands_the_tile_s_row_up(qapp):
     assert [r.stranded for r in asked] == [True]
 
 
+def test_the_remove_button_hands_the_tile_s_row_up_too(qapp):
+    """The destructive ending goes through the same door as the safe one: the
+    tile names the row and deletes nothing -- the window asks first, and only
+    a confirmed answer reaches the registry."""
+    tile = ItemTile(row(card(), stranded=True))
+    asked = []
+    tile.remove.connect(asked.append)
+
+    tile.findChild(QPushButton, "remove").click()
+
+    assert [r.stranded for r in asked] == [True]
+
+
 def test_a_card_that_becomes_stranded_exchanges_its_footer(qapp):
     """The same item one save later, when the game's save has erased it.
 
@@ -258,11 +272,13 @@ def test_a_card_that_becomes_stranded_exchanges_its_footer(qapp):
     held = row(card())
     tile = ItemTile(held)
     assert button_label(tile, "transfer") == "Transfer to Stash"
+    assert button_label(tile, "remove") is None, "a removal offered on a held item"
 
     tile.set_row(replace(held, stranded=True))
 
     assert button_label(tile, "transfer") is None
     assert button_label(tile, "recover") == "Recover Stranded Item"
+    assert button_label(tile, "remove") == "Remove from Collection"
 
 
 # --------------------------------------------------------------------------

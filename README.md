@@ -145,21 +145,29 @@ loaded, erased by the game's next save. The item is not lost — it is what the
 tool calls *stranded*.
 
 The **Show Stranded Items** button carries the count. It shows the cards that
-are in no stash file, and **Recover Stranded Item** on such a card takes it
-back into your collection. Nothing is written to the game at that moment: the
-tool cannot tell "the game erased the write" from "the player picked it up on
-a character", and re-sending a copy the game might already have would duplicate
-a real item. So it only ever offers, and you decide.
+are in no stash file, and each card offers the two answers to that state — the
+same two, because the tool cannot tell "the game erased the write" from "the
+player picked it up on a character". **Recover Stranded Item** keeps the
+tool's copy: right when the game erased the write. **Remove from Collection**
+deletes it for good, and asks first: right when a character is carrying the
+item, so the tool's copy is one the game never had and keeping it would leave
+you holding two. Nothing is written to the game either way — re-sending a copy
+the game might already have would duplicate a real item — so the tool only
+ever offers, and you decide.
 
 From then on, send items back from the main menu and it does not happen.
 
 ### Can I lose items?
 
-Not through the tool. It never deletes an item it has not stored first, never
-drops anything it could not read, and nothing is ever re-encoded — each item
-keeps its original bytes, so an item that comes back out is the item that went
-in. The one way an item can go missing is the game erasing a write, above, and
-that is recoverable.
+Not by accident, and never without being asked. The tool never deletes an item
+it has not stored first, never drops anything it could not read, and nothing is
+ever re-encoded — each item keeps its original bytes, so an item that comes
+back out is the item that went in. The one way an item can go missing is the
+game erasing a write, above, and that is recoverable. The one thing the tool
+will delete is a stranded item you press **Remove from Collection** on and then
+confirm — for the stranded duplicate you would rather let go than keep. That
+item is in no stash file, and everything else in the collection stays until you
+send it back yourself.
 
 ### Can I choose which tab an item goes into?
 
