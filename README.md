@@ -3,8 +3,8 @@
 An external item store for Torchlight 2 — an out-of-game stash that does not
 run out of room.
 
-Drop items into your shared stash in game, and the tool takes them out of the
-save file and keeps them. Put them back into the game whenever you want them.
+Drop items into your shared stash in game, and take them into the tool with one
+press. Put them back into the game whenever you want them.
 
 **Contents** — [Download](#download) · [Using it](#using-it) ·
 [FAQ](#frequently-asked-questions) · [Building it yourself](#building-it-yourself) ·
@@ -40,13 +40,14 @@ write to at all. Set `TL2IA_DATA` to a path to keep it somewhere else.
    anything — the tool does not care what it is.
 2. **Let the game save.** Exit to the title screen, change map, die. Anything
    that makes it write its save.
-3. **The items appear in the tool**, under *In the tool*. They have left the
-   stash at the same time: they are gone the next time the game reads it.
+3. **Press Absorb everything.** The items move from *In the game* to *In the
+   tool* — out of the file and into the collection. Until you press it they sit
+   under *In the game*, which is what the file the game wrote holds.
 4. **To get something back**, click **Transfer to Stash** on its card. It goes
    into the shared stash and is there the next time you load a character.
 
-That is the whole of it. The stash is the inbox: whatever is in it when the
-game saves, the tool takes.
+That is the whole of it. The stash is the inbox, and **Absorb everything** is
+the only thing that empties it: the tool never writes a stash file on its own.
 
 ### Reading the window
 
@@ -64,13 +65,15 @@ database — and that box is which one you are looking at. Then **Refresh**,
 **Show Stranded Items**, and at the right **Export Collection** and **Import
 Collection**.
 
-Over the "In the game" pane sit the two controls that decide what leaves the
+Over the "In the game" pane is the one control that decides what leaves the
 save file:
 
 * **Absorb everything** — empty the shared stash into the tool, now.
-* **Automatic** (ticked by default) — do that on every save by itself, and
-  keep your absorbed items from reappearing. This is what makes an item vanish
-  on its own.
+
+It is the only thing that does, and it only does it when you press it. An
+earlier version also ticked a box called **Automatic** and absorbed on every
+save by itself, which could hand you two of an item; the section below is why
+that is gone.
 
 Over the collection are the filters: a search box, the **Advanced** button
 (the full search — type, damage ranges, stat requirements, classes, and any
@@ -104,19 +107,28 @@ hidden behind a strip is one you would never decide about.
 
 ### When to do what
 
-There is one rule, and the tool warns you when you are about to break it:
+There is one rule, and it covers both directions:
 
-**Send items back to the stash while you are at the main menu.**
+**Do your stash work — absorbing and sending back — while you are at the main
+menu.**
 
-The game holds the shared stash in memory and rewrites the whole file when it
-saves. An item put into that file while a character is loaded is therefore
-erased by the game's next save, which never knew about it. From the main menu
-nothing overwrites it, and the item is there when you load a character.
+The game holds the shared stash in memory for the whole session and rewrites
+the whole file every time it saves. While a character is loaded, then, the file
+on disk and the stash on screen are two different things, and the game wins
+every disagreement:
 
-Taking items *out* has no such rule and no such timing: the tool takes them
-out again after every save, as many times as the game puts them back, so you
-can play normally and let it do the work. Ticking **Automatic** is all that is
-needed.
+* An item sent *to* the file is erased by the game's next save, which never
+  knew about it. That is the item that comes back *stranded*.
+* An item absorbed *from* the file is still in the game's memory to be picked
+  up, so you end up holding two: the tool's copy and the game's.
+
+The second is why the tool no longer absorbs by itself. It used to watch for
+the file to change and take what it found there, which is exactly a removal
+made behind the game's back — and the game, not knowing, would hand the item
+over again. Now nothing leaves the stash until you press **Absorb everything**,
+and from the main menu the game has already saved and let go, so what you
+absorb is yours alone. Sending the other way was always yours to time, and the
+tool still asks before it writes while the game is running.
 
 If you do send one at the wrong moment, it is not lost — see
 [stranded items](#i-sent-an-item-back-and-it-vanished).
@@ -141,11 +153,12 @@ the rest of the file still comes in.
 
 ### When exactly do my items disappear from the game?
 
-When the game next *reads* the stash, not the instant you save. The tool acts
-on the file the game writes; the game then shows you what it has in memory
-until it reads the file again — which is when the stash is opened or a
-character is loaded. So: drop items in, exit to the title screen, and they are
-gone from the stash when you next look at it.
+When you press **Absorb everything**, and the game has let go of them. The tool
+takes them out of the file the game wrote; the game, until it reads that file
+again, still has its own copy in memory to show you. That is why the press
+belongs at the main menu — there the game has already saved, so the items are
+gone from the stash for good. In short: drop items in, exit to the title
+screen, press Absorb everything.
 
 ### I sent an item back and it vanished.
 
@@ -195,7 +208,8 @@ would put the item somewhere the game draws nothing.
 
 No. It works on `sharedstash_v2.bin`, the shared stash, because that is the
 one container every character sees. Move an item from a bag into the shared
-stash in game and it is the tool's within a save.
+stash in game, exit to the main menu, and press **Absorb everything**: then it
+is the tool's.
 
 ### Will it corrupt my save file?
 
@@ -273,8 +287,9 @@ to move a collection across.
 
 ### Does it need the game closed?
 
-No. It watches the save file and acts when the game writes it. The only thing
-timing affects is sending items *back* — see
+No. It reads the save file whenever the game writes it, so the list under *In
+the game* keeps up while you play — and it never writes a stash file except
+when you press a button. When you press that button still matters, though: see
 [When to do what](#when-to-do-what).
 
 ### What does it need?

@@ -2,10 +2,15 @@
 
 There is no hook to install and nothing to intercept: Torchlight 2 is not
 aware the tool exists.  What it does give us is a file that changes whenever
-the game saves, and a save is exactly the moment items can be taken -- the
-game writes the stash with the player's new items in it, and then does not
-read it again until the next load.  Watching the file is therefore not a poor
+the game saves, and that change is the whole of what there is to notice -- the
+game writes the stash with the player's new items in it, and does not read the
+file again until the next load.  Watching the file is therefore not a poor
 substitute for hooking the game; it is the whole interface.
+
+Noticing is *all* this does, and all it is for.  What the tool does about a
+save -- whether anything is taken, and when -- is the player's decision, made
+at a button; the watcher's job is only that the list of what the game is
+holding is never stale.
 
 Polling a stat is enough.  The file is small, saves are seconds apart at the
 fastest, and the alternative -- a filesystem notification API -- has enough

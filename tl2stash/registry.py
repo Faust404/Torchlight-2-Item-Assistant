@@ -146,12 +146,11 @@ def held_key(fingerprint: str) -> str:
 
     So the tool's copy gets a key of its own, this one, and the bare
     fingerprint keeps meaning *the file's*.  Nothing else has to know: every
-    other reading of a fingerprint -- the vacuum, :meth:`enforce
-    <tl2stash.service.ItemService.enforce>`, the stranded list, the archive's
-    own skip -- compares whole fingerprints against ones read out of a file, so
-    a held key can never be mistaken for one of them.  A held row is never in
-    the file and is never expected to be; the scan finds it under no placement
-    and leaves it exactly as it is.
+    other reading of a fingerprint -- the stranded list, the archive's own
+    skip, the absorb's -- compares whole fingerprints against ones read out of
+    a file, so a held key can never be mistaken for one of them.  A held row is
+    never in the file and is never expected to be; the scan finds it under no
+    placement and leaves it exactly as it is.
 
     Downstream the key stays opaque.  A card gathers its members by guid and
     name rather than by fingerprint (``app.models._gathered``), so a held row

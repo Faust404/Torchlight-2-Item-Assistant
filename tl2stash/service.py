@@ -2,24 +2,28 @@
 
 Everything above this module is presentation.  Everything below it is a
 mechanism that has already been tested on its own.  This is where they meet,
-and it exists mostly to get one thing right: **convergence**.
+and it exists mostly to get one thing right: **a write is an answer**.
 
-The game holds the shared stash in memory and rewrites the whole file at save
-points.  So writing a file the game will later overwrite is not a mistake to
-be avoided -- it is the only thing the tool can do, and it is enough, provided
-the tool is willing to do it again.  Absorbing an item therefore has two
-halves that must both persist:
+Absorbing has two halves -- the item's bytes go into the registry, and the item
+comes out of the file -- and the second is the half the game can undo.  It
+undoes it by not knowing about it: the game holds the shared stash in memory
+for the whole session and rewrites the file from that memory at every save, so
+an item taken out from under a loaded character is an item the game still has,
+still offers, and will write back.
 
-1. the item's bytes are in the registry, marked ``absorbed``; and
-2. the item is out of the file.
+That is the wrong half to lose.  An item put *into* the file from under a
+running game survives only until the next save, and the player finds out about
+it as a stranded item -- recoverable, and told about.  An item taken *out* from
+under it is a duplicate: the player can pick it up in game and end up holding
+two of something the tool also has, and nothing afterwards can tell which of
+the two was the real one.
 
-Half 2 gets undone every time the game saves, because the game still has the
-item in memory.  Half 1 does not, because the registry is ours.  So the tool
-re-applies half 2 whenever the file changes -- :meth:`ItemService.enforce` --
-and the two halves converge on "the item is in the tool" no matter how many
-times the game puts it back.  This is what the player experiences as the item
-disappearing on save/transition, and it is why the tool can be simple: it
-never has to be faster than the game, only more patient than it.
+So nothing here happens on its own.  The file is read whenever the game writes
+it, and written only when the player asks -- absorbing, and the transfer
+buttons -- at a moment when the player can see what the game is doing.  The
+tool cannot tell a main menu from a loaded character and does not pretend to;
+what it can do is never act in the gaps between two of the player's own
+actions, which is where the duplicate came from.
 """
 
 from __future__ import annotations
@@ -53,8 +57,10 @@ __all__ = [
     "STATUS_RETURNED",
 ]
 
-#: Status of an item the tool has taken.  The game may put it back; we take it
-#: out again.
+#: Status of an item the tool has taken.  The game may put it back, because it
+#: holds the stash in memory and writes that memory over the file; when it
+#: does, the item appears in the list over this one again, and stays there
+#: until the player takes it -- nothing takes it back out on its own.
 STATUS_ABSORBED = "absorbed"
 
 #: Status of an item that belongs to the game right now.  Known to us, but not
@@ -63,12 +69,12 @@ STATUS_IN_STASH = "in_stash"
 
 #: Status of an item the player deliberately put back.
 #:
-#: This has to be distinguishable from ``in_stash``, and not for bookkeeping
-#: reasons.  With automatic intake on, every save runs the vacuum -- so an
-#: item the player had just restored would be taken straight back out, every
-#: single time, and "put it back" would be a button that does nothing.  An
-#: item the player returned is therefore exempt from the automatic pass until
-#: they ask for it back, with the Absorb button, which means it.
+#: Distinguishable from ``in_stash`` because the two are different things to
+#: say about the same bytes: ``in_stash`` is an item the tool has only ever
+#: seen in the file, and this one it used to hold.  Absorbing it again is
+#: therefore a *retake*, and is reported as one -- a player who put something
+#: back and later pressed Absorb everything meant it, and is owed the
+#: difference between what came back and what is new.
 STATUS_RETURNED = "returned"
 
 #: Which container to restore into when the item was never seen in a stash
@@ -84,9 +90,11 @@ class AbsorbResult:
     """What one absorb pass did."""
 
     taken: list[Item] = field(default_factory=list)
-    #: Items that were already ours and had reappeared -- the game putting
-    #: them back.  Re-taken, and worth reporting separately: a steady trickle
-    #: here is normal, and a flood means something is wrong.
+    #: Items the tool has had before and has in its hands again: put back by
+    #: the player, or put back by the game and written over the file, and left
+    #: there until this press.  Worth reporting separately, because the player
+    #: is being told that something they have seen before is coming back in,
+    #: rather than that it is new.
     retaken: list[Item] = field(default_factory=list)
     report: ArchiveReport | None = None
     #: How many entries in the file the parser could not read.  They are left
@@ -213,21 +221,19 @@ class ItemService:
 
     # -- absorbing -------------------------------------------------------
 
-    def absorb_all(
-        self, *, dry_run: bool = False, include_returned: bool = True
-    ) -> AbsorbResult:
+    def absorb_all(self, *, dry_run: bool = False) -> AbsorbResult:
         """Take every item currently in the stash.
 
         This is the whole intake model: the player puts things in the shared
         stash, and this empties it.  No filter, no selection -- the stash is
-        the inbox.
+        the inbox -- and no automatic caller: the press of the Absorb button
+        is the only way here, and the only thing in this tool that takes an
+        item out of the game.
 
-        ``include_returned=False`` spares items the player has deliberately
-        put back, and is what the automatic pass uses.  Without it, returning
-        an item would achieve nothing: the next save would vacuum it again,
-        and the player would watch it refuse to stay.  The explicit Absorb
-        gesture keeps the default, because clicking it is a decision that
-        outranks the earlier one.
+        Everything in the file goes, including an item the player put back
+        earlier and has not since removed from the stash.  Those come back
+        counted as retakes rather than as new, which is the one difference
+        worth saying out loud.
         """
         self.refresh()
         result = AbsorbResult(unreadable=len(self.stash.failed))
@@ -238,12 +244,9 @@ class ItemService:
         # returned item being swept up is exactly the case where they would
         # want to be told.
         already = self.registry.absorbed_fingerprints() | returned
-        spared = set() if include_returned else returned
 
         fingerprints: set[str] = set()
         for item in self.stash.items:
-            if item.fingerprint in spared:
-                continue
             fingerprints.add(item.fingerprint)
             (result.retaken if item.fingerprint in already else result.taken).append(item)
 
@@ -251,33 +254,11 @@ class ItemService:
             return result
 
         # Mark first, then write.  If the write fails, the items are recorded
-        # as ours and the next enforce pass finishes the job -- whereas the
-        # other order could remove an item nothing had a copy of.
+        # as ours and are still in the file -- which is a state the player can
+        # see and clear by pressing the button again, whereas the other order
+        # could remove an item nothing had a copy of.
         self.registry.set_status(fingerprints, STATUS_ABSORBED)
         result.report = archive_stash(self.source, fingerprints)
-        self.refresh()
-        return result
-
-    def enforce(self, *, dry_run: bool = False) -> AbsorbResult | None:
-        """Take back out anything ours that the game has put back.
-
-        Called after every observed change to the stash file.  Returns
-        ``None`` when there was nothing to do, which is the common case and
-        should stay silent.
-        """
-        self.refresh()
-        absorbed = self.registry.absorbed_fingerprints()
-        reappeared = [i for i in self.stash.items if i.fingerprint in absorbed]
-        if not reappeared:
-            return None
-
-        result = AbsorbResult(retaken=reappeared, unreadable=len(self.stash.failed))
-        if dry_run:
-            return result
-
-        result.report = archive_stash(
-            self.source, {i.fingerprint for i in reappeared}
-        )
         self.refresh()
         return result
 
@@ -286,10 +267,9 @@ class ItemService:
     def restore(self, fingerprints: set[str], *, dry_run: bool = False) -> RestoreReport:
         """Put absorbed items back into the stash, near where they were.
 
-        A restored item is marked ``returned``, which does two jobs.  It keeps
-        :meth:`enforce` from snatching it straight back out, and it keeps the
-        automatic vacuum off it, so an item the player put back stays put
-        until they say otherwise.
+        A restored item is marked ``returned``, which records whose it is: the
+        game's and not the tool's.  It comes off the collection, and the next
+        absorb says it came back rather than counting it as new.
 
         Where each one lands is :func:`~tl2stash.archive.next_free_slot`'s
         answer: the slot it had, if the tool saw it in one and the game is not
@@ -435,9 +415,9 @@ class ItemService:
         size.
 
         The write comes *first*, which is the opposite of the order
-        :meth:`absorb_all` uses and deliberately so.  An absorb is re-applied
-        by :meth:`enforce` until it takes, so recording it before the file
-        agrees costs nothing; a restore is not re-applied by anything, so
+        :meth:`absorb_all` uses and deliberately so.  An absorb can be repeated
+        by pressing the button again, so recording it before the file agrees
+        costs nothing; a restore is not re-applied by anything, so
         writing the registry ahead of the file would put fish in the tool's
         books that the file never got -- and the next transfer would send them
         again, for real.  Every mark below is made from

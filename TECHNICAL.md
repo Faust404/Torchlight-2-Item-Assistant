@@ -23,7 +23,7 @@ Nothing here is needed to use it.
 | stash container and item parsing | done — 107/107 items across both saves |
 | SQLite registry, move-stable identity | done |
 | item removal (the mechanism that makes items vanish) | done, verified on copies |
-| file watcher | done — acts on the game's own saves |
+| file watcher | done — the view follows the game's saves; nothing acts on them |
 | a separate stash and database per save file | done |
 | the game's data files (PAK/DAT) | done — 10,355 files in 0.74 s |
 | in-game item stats | done — damage, armour, effects and flat damage all render |
@@ -38,14 +38,20 @@ Nothing here is needed to use it.
 
 Torchlight 2 scrambles `sharedstash_v2.bin` and rewrites it from memory at
 save points (exit to title, map transition, death). That rewrite is what makes
-this tool possible *and* what constrains it: an external edit made while the
-game runs survives only until the game's next save.
+this tool possible *and* what constrains it. An external edit made while the
+game runs survives only until the game's next save — and an edit that *removes*
+something is worse than one that adds, because the game still has its own copy
+in memory: the item can be picked up again in game, and the player ends up
+holding two.
 
-So the tool does not try to intercept the game. It waits for the game to write
-the file, then rewrites it without the items you have taken. Applied after
-every save, this converges: on the next load the items are gone, and they are
-sitting in the tool instead. The items disappear when the stash is next *read*
-— opening the stash or re-entering the character — not the instant you save.
+So the tool does not try to intercept the game, and it does not try to outlast
+it either. It watches the file so that the list of what the game is holding is
+never stale, and it writes the file in exactly one place — the button that
+empties the stash. An earlier version absorbed on every save by itself, which
+is precisely the removal described above, made behind the game's back; the
+button is the fix, and pressing it at the main menu is what keeps it a fix.
+There the game has already saved and let go, so the items are gone from the
+file it wrote, and the next load reads a stash without them.
 
 Removal is safe because nothing is ever re-encoded. Each item keeps its
 original bytes, so taking one out means dropping its blob and decrementing a
@@ -55,12 +61,12 @@ container and slot live inside its own blob rather than in its file position,
 so removing one does not shift any other, and the player just sees an empty
 slot.
 
-`tl2stash/service.py` is where the two halves meet, and its module docstring
-is the full statement of the convergence argument: absorbing an item has to
-leave the bytes in the registry *and* the item out of the file, and only the
-second half is undone every time the game saves — so the tool re-applies it
-for as long as it takes. It never has to be faster than the game, only more
-patient than it.
+`tl2stash/service.py` is where the two halves meet, and its module docstring is
+the full statement of the rule they live by: absorbing an item means its bytes
+are in the registry *and* it is out of the file, and only the second half is
+ever written — at a button, on the player's word. An item the game puts back is
+not taken out again behind its back; it reappears under *In the game*, where
+the player can see it and absorb it once more.
 
 ## Layout
 
@@ -74,7 +80,7 @@ patient than it.
       saves.py     locating save files on disk, under the Documents folder
                    Windows names -- and TL2IA_SAVES when that is not it
       watcher.py   noticing the game's saves
-      service.py   absorb / restore, and the convergence between them
+      service.py   absorb / restore, and the one rule about writing
       portable.py  the collection as one file, out and back in
       taxonomy.py  kinds, and which shared-stash tab each belongs in
       pak.py       DATA.PAK.MAN and the archive beside it

@@ -86,7 +86,10 @@ from .version import __version__
 
 #: How often to look at the save file.  The file is a few tens of kilobytes
 #: and saves are seconds apart at the fastest, so this is generous; it exists
-#: to feel immediate, not to keep up.
+#: to feel immediate, not to keep up.  A poll is a *look*: it keeps the list of
+#: what the game is holding current while the player plays, and takes nothing.
+#: What the file holds is only half the story -- the other half is whether the
+#: player has asked for it.
 POLL_MS = 2000
 
 #: How many cards the wall draws before the rest go behind the strip under it.
@@ -97,6 +100,17 @@ POLL_MS = 2000
 #: deliberate click away, and putting any filter back to its rest is what
 #: turns the page again.  See :meth:`MainWindow._rebuild_collection`.
 PAGE_SIZE = 50
+
+#: The width the "In the game" pane is drawn at, and the narrowest the player
+#: may drag it.  Its floor used to arrive by accident: the absorb row was a
+#: button and, until recently, a checkbox beside it, and whichever was wider
+#: set how narrow the pane could get.  What the pane actually wants is a
+#: number of its own -- the three numeric columns cost a fixed 168 pixels
+#: whether the pane is 200 wide or 400, so below about this the name, the one
+#: column here worth reading, is what pays.  With the row down to one button
+#: the floor is stated here rather than inherited from whatever is above the
+#: table.
+STASH_WIDTH = 380
 
 #: Shown in place of an item's stats when the game's data files cannot be
 #: found.  Saying what to do about it is worth more than the space it takes --
@@ -373,7 +387,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.source_box)
 
         self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(lambda: self._sync(write=False))
+        self.refresh_button.clicked.connect(lambda: self._sync())
         bar.addWidget(self.refresh_button)
 
         # The third state of an item, and the only one with no pane: put back,
@@ -421,13 +435,19 @@ class MainWindow(QMainWindow):
         return bar
 
     def _build_absorb_row(self) -> QHBoxLayout:
-        """What decides which items leave the save file, over the list they leave.
+        """What empties the save file, over the list it empties.
 
-        These two used to sit in the bar at the top, beside the box naming the
-        save file -- which put them two panes away from the thing they act on.
-        ``Absorb everything`` empties the game's stash into the tool's, and
-        ``Automatic`` is whether that happens on its own every time the game
-        saves; both are about this one list, so both are over it.
+        This used to sit in the bar at the top, beside the box naming the save
+        file -- which put it two panes away from the thing it acts on.  It is
+        over that list because it is about that list.
+
+        It is one button, and deliberately the only thing here: an earlier
+        version had a checkbox beside it that absorbed on every save by itself,
+        and that is what duplicated items.  The game keeps the shared stash in
+        memory for the whole session, so an item taken out of the file behind
+        the game's back is still there to be picked up in game, and the player
+        ends up holding two.  Nothing in this window writes a stash file except
+        in answer to a press.
         """
         row = QHBoxLayout()
 
@@ -438,14 +458,6 @@ class MainWindow(QMainWindow):
         )
         self.absorb_button.clicked.connect(self._absorb_all)
         row.addWidget(self.absorb_button)
-
-        self.auto_absorb = QCheckBox("Automatic")
-        self.auto_absorb.setChecked(True)
-        self.auto_absorb.setToolTip(
-            "Absorb on every save, and keep absorbed items out.\n"
-            "This is what makes an item vanish when the game saves."
-        )
-        row.addWidget(self.auto_absorb)
         row.addStretch(1)
 
         return row
@@ -491,6 +503,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.type_group)
 
         self.stash_group = QGroupBox("In the game")
+        self.stash_group.setMinimumWidth(STASH_WIDTH)
         left = QVBoxLayout(self.stash_group)
         left.addLayout(self._build_absorb_row())
         self.stash_view, self.stash_model = self._table(STASH_COLUMNS)
@@ -572,13 +585,12 @@ class MainWindow(QMainWindow):
         # a level, a socket count, gone by the next save.  What the tool holds
         # is the thing worth the window.
         #
-        # Narrow, but not *narrower than its own columns*: a name, a level and
-        # a socket count want about 300 pixels between them, and the two
-        # numbers cost a fixed 96 of that whether the pane is 200 wide or 400.
-        # Below that the name -- the only column here worth reading -- is what
-        # pays, so this is the share that keeps it legible rather than the
-        # smallest the pane could be drawn at.
-        splitter.setSizes([180, 340, 900])
+        # Narrow, but not *narrower than its own columns*: the three numeric
+        # columns cost a fixed 168 of whatever the pane has, and below about
+        # :data:`STASH_WIDTH` the name -- the only column here worth reading --
+        # is what pays for it.  So this is the share that keeps the pane
+        # legible rather than the smallest it could be drawn at.
+        splitter.setSizes([180, STASH_WIDTH, 900])
         return splitter
 
     def _table(self, columns: list[str]) -> tuple[QTableView, object]:
@@ -793,7 +805,7 @@ class MainWindow(QMainWindow):
         )
         self.watcher = StashWatcher(location.path)
 
-        self._sync(write=False)
+        self._sync()
 
     # -- the loop --------------------------------------------------------
 
@@ -806,18 +818,17 @@ class MainWindow(QMainWindow):
         if self.watcher.changed():
             self._sync()
 
-    def _sync(self, *, write: bool = True) -> None:
-        """Re-read the file, take what is ours, and redraw.
+    def _sync(self) -> None:
+        """Re-read the file and redraw.
 
-        The order matters: absorb first (new items), then enforce (items the
-        game has put back).  On an ordinary save only one of them does
-        anything, and on most polls neither does.
-
-        ``write=False`` is for looking without acting -- opening the window,
-        or pressing Refresh.  Starting up must not vacuum what it finds: the
-        stash may hold a session's worth of things the player has not decided
-        about yet, and "I opened the app" is not a decision.  The automatic
-        pass is for *changes*, which is what a save is.
+        A look, and nothing else: this is what opening the window, pressing
+        Refresh and every poll call, and none of them may write.  The player
+        absorbs by pressing a button, because the game holds the shared stash
+        in memory and an item taken out from under it is an item the player can
+        still pick up in game -- two of the same thing, one of them a copy the
+        game never had.  So the file is read here and written only from
+        :meth:`_absorb_all` and the transfer buttons, both of which are
+        presses.
         """
         if self.service is None or self.watcher is None:
             return
@@ -836,37 +847,8 @@ class MainWindow(QMainWindow):
             return
 
         self.watcher.accept()
-
-        if write and self.auto_absorb.isChecked():
-            note = self._take_pass()
-        else:
-            note = ""
-
         self._refresh_views()
-        self._set_status(note or self._describe())
-
-    def _take_pass(self) -> str:
-        """Absorb new items, then take back anything the game has put back.
-
-        The vacuum spares items the player has returned.  It is still a
-        vacuum -- it takes everything else, without asking -- but an item
-        someone deliberately put back and then watched disappear again would
-        make the Restore button a lie.
-        """
-        assert self.service is not None
-        absorbed = self.service.absorb_all(include_returned=False)
-        if absorbed.count:
-            self.watcher.accept()
-            self.service.refresh()
-            return f"{absorbed.summary} · {self._in_game_count()} left in the game"
-
-        retaken = self.service.enforce()
-        if retaken is not None:
-            self.watcher.accept()
-            self.service.refresh()
-            return f"the game put {retaken.count} back · taken out again"
-
-        return ""
+        self._set_status(self._describe())
 
     # -- actions ---------------------------------------------------------
 

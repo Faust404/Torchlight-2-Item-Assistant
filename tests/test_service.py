@@ -1,8 +1,9 @@
-"""Tests for the watcher and the absorb/enforce/restore cycle.
+"""Tests for the watcher and the absorb/restore cycle.
 
 The interesting property here is not that absorbing works once.  It is that
-absorbing keeps working when the game undoes it -- which it does, every time
-it saves, because it still has the item in memory.
+absorbing *only* happens when it is asked for: the game undoes an absorb every
+time it saves, because it still has the item in memory, and the answer to that
+is to show the player the item again rather than to take it out again.
 """
 
 from __future__ import annotations
@@ -204,16 +205,19 @@ def test_absorb_dry_run_takes_nothing(service, stash_path):
 
 
 # --------------------------------------------------------------------------
-# Convergence -- the property the whole approach rests on
+# The game undoing an absorb -- what the tool does, and what it must not
 # --------------------------------------------------------------------------
 
 
-def test_the_game_putting_an_item_back_does_not_undo_the_absorb(service, stash_path):
-    """What actually happens on the player's next save.
+def test_the_game_putting_an_item_back_is_left_for_the_player(service, stash_path):
+    """What happens on the player's next save, and what must not happen.
 
-    Torchlight holds the stash in memory, so the next save rewrites the file
-    with the absorbed items still in it.  The tool has to take them out again
-    -- and again, for as long as the game keeps doing it.
+    Torchlight holds the stash in memory, so a save following an absorb
+    rewrites the file with the absorbed items still in it.  Taking them out
+    again is the thing that duplicates them -- the game still has them, and
+    the player can pick one up in game -- so the tool reads the file, shows
+    the item in the list again, and leaves the write to the next press of the
+    button.
     """
     write_synthetic_stash(stash_path, ["Alpha", "Beta", "Gamma"])
     game_saved = stash_path.read_bytes()
@@ -222,25 +226,17 @@ def test_the_game_putting_an_item_back_does_not_undo_the_absorb(service, stash_p
 
     # The game saves: the file is back, items and all.
     stash_path.write_bytes(game_saved)
-    result = service.enforce()
 
-    assert result is not None
+    # Looking at it changes nothing -- and looking is all the window does when
+    # a save arrives.
+    service.refresh()
+    assert stash_path.read_bytes() == game_saved
+    assert [i.base_name for i in service.stash_items()] == ["Alpha", "Beta", "Gamma"]
+
+    # When the player asks, they are told these are retakes and not new items.
+    result = service.absorb_all()
     assert len(result.retaken) == 3
     assert service.stash_items() == []
-
-
-def test_enforce_is_quiet_when_there_is_nothing_to_do(service, stash_path):
-    service.absorb_all()
-    assert service.enforce() is None, "a save with nothing of ours in it is not news"
-
-
-def test_enforce_leaves_items_the_player_just_put_in(service, stash_path):
-    """Only items we have taken are taken again.  New loot is the player's."""
-    service.absorb_all()
-    write_synthetic_stash(stash_path, ["Delta"])
-
-    assert service.enforce() is None
-    assert [i.base_name for i in service.stash_items()] == ["Delta"]
 
 
 def test_absorb_reports_retaken_separately_from_taken(service, stash_path):
@@ -294,45 +290,26 @@ def test_a_stack_is_stored_and_put_back_whole(service, stash_path):
     assert back.num_sockets == 0, "the count landed on the socket field"
 
 
-def test_a_restored_item_is_not_snatched_straight_back(service, stash_path):
-    """The trap in the vacuum model.
+def test_a_restored_item_stays_put(service, stash_path):
+    """A restored item is the game's, and nothing takes it back out.
 
-    Absorbed means "take this out of the game".  Restoring an item without
-    clearing that mark would make the very next enforce pass remove it again,
-    and the player would watch the item vanish the moment they put it back.
+    Absorbed means "the tool has this".  Restoring an item without clearing
+    that mark would leave the tool claiming something it had just handed back,
+    so the collection would go on listing an item that is in the game.
     """
     service.absorb_all()
     print_ = service.registry.rows()[0]["fingerprint"]
     service.restore({print_})
 
-    assert service.enforce() is None, "enforce took back an item we had just restored"
     assert len(service.stash_items()) == 1
     assert service.registry.get(print_)["status"] == STATUS_RETURNED
 
 
-def test_the_vacuum_spares_an_item_the_player_put_back(service, stash_path):
-    """The other half of the same trap.
+def test_absorbing_a_returned_item_again_is_a_retake(service, stash_path):
+    """It is in the stash, and the button takes everything in the stash.
 
-    enforce() is not the only thing that could re-take a returned item -- the
-    automatic vacuum takes everything in the stash, and an item the player
-    deliberately put back is in the stash.  Without the exemption the Restore
-    button would work for exactly one save cycle.
-    """
-    service.absorb_all()
-    print_ = service.registry.rows()[0]["fingerprint"]
-    service.restore({print_})
-
-    result = service.absorb_all(include_returned=False)
-
-    assert result.count == 0, "the vacuum took back a returned item"
-    assert len(service.stash_items()) == 1
-
-
-def test_the_explicit_button_still_takes_returned_items(service, stash_path):
-    """Spared by the vacuum, not by the user.
-
-    Clicking Absorb is a later decision than the one that returned the item,
-    and it wins.
+    Counted among the retakes rather than the new items, because the player
+    has seen it before.
     """
     service.absorb_all()
     print_ = service.registry.rows()[0]["fingerprint"]
@@ -586,20 +563,24 @@ def test_the_copy_left_behind_can_still_be_sent(pile, stash_path):
         )
 
 
-def test_the_vacuum_spares_the_fish_the_player_put_back(pile, stash_path):
+def test_a_pile_put_back_is_the_file_s_and_comes_back_as_a_retake(stash_path, pile):
     """A pile is an item like any other, and ``returned`` means the same.
 
-    The automatic pass runs on every save, so shares marked ``absorbed`` would
-    be vacuumed straight back out of the stash the player had just filled --
-    the same trap a single restored item has, with four times the fish in it.
+    Once the shares are in the stash they are the game's, so the next absorb
+    finds them there like anything else -- and knows them for retakes, which
+    is the half that is not obvious: the tool re-counted those fish on the way
+    out, so its rows carry different bytes from the file's stacks.
     """
     service = pile(20)
     with service:
         (row,) = service.registry.rows()
         service.restore_pile({row["fingerprint"]}, stack_limit=5)
 
-        assert service.absorb_all(include_returned=False).taken == []
-        assert _fish(stash_path) == [5, 5, 5, 5]
+        result = service.absorb_all()
+
+        assert result.taken == []
+        assert len(result.retaken) == 4
+        assert _fish(stash_path) == []
 
 
 def test_a_full_tab_refuses_and_every_fish_is_still_accounted_for(stash_path, db_path):
@@ -707,8 +688,8 @@ def test_an_item_the_file_has_is_not_recovered_behind_the_player_s_back(service)
 
     A returned item the file still holds is one the game really does have --
     the player has only to pick it up, or not.  Marking it ours would put it
-    on the wrong side of the vacuum and the tool would take it back out of
-    the player's stash on the next save, which is a thing nobody asked for.
+    on the collection's side of the ledger, and the tool would be holding a
+    copy of something it had already handed over.
     """
     service.absorb_all()
     print_ = {row["name"]: row["fingerprint"] for row in service.registry.rows()}[
@@ -833,8 +814,8 @@ def test_a_full_tab_refuses_and_the_item_stays_ours(stash_path, db_path):
 
     Both halves are the same fact seen twice: the item is not in the game, so
     it must not be marked as though it were.  A refused item marked
-    ``returned`` would be exempt from the automatic vacuum *and* gone from the
-    collection's own accounting -- sitting in neither place, which is the
+    ``returned`` would be gone from the collection's own accounting while
+    being nowhere in the game either -- sitting in neither place, which is the
     whole of what the refusal exists to avoid.
     """
     write_synthetic_stash(stash_path, ["Alpha", "Beta", "Gamma"])

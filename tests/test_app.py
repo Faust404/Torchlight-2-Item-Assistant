@@ -2,9 +2,9 @@
 
 These are not tests of the format or the file writes -- those live in
 tl2stash and are tested there.  What they cover is the wiring: that the
-window builds, that the tables are fed, and above all that the automatic
-pass acts on the right events.  A GUI that vacuums a stash when it opens is a
-bug no unit test below it would catch.
+window builds, that the tables are fed, and above all that nothing here
+writes a stash file except in answer to a press.  A GUI that vacuums a stash
+while the player watches is a bug no unit test below it would catch.
 """
 
 from __future__ import annotations
@@ -194,7 +194,6 @@ def stocked(game_window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    game_window.auto_absorb.setChecked(False)
     game_window._absorb_all()
     assert game_window.collection_model.rowCount() == 3, (
         "the fixture did not stock the tool"
@@ -220,7 +219,6 @@ def full_window(qapp, tmp_path, monkeypatch):
     write_synthetic_stash(stash, [f"Item {n:02d}" for n in range(PAGE_SIZE + 10)])
     win = MainWindow(db_path=tmp_path / "items.db", source=stash)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.collection_model.rowCount() == PAGE_SIZE + 10, (
             "the fixture did not stock the tool"
@@ -354,7 +352,6 @@ def test_the_collection_lists_only_what_the_tool_holds(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    window.auto_absorb.setChecked(False)
     window._sync()
     assert window.stash_model.rowCount() == 3
     assert window.collection_model.rowCount() == 0, (
@@ -378,7 +375,6 @@ def test_an_item_put_back_drops_off_the_collection(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    window.auto_absorb.setChecked(False)
     window._absorb_all()
     assert window.collection_model.rowCount() == 3
     assert window.grid.count() == 3
@@ -578,7 +574,6 @@ def test_search_filters_the_collection(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    window.auto_absorb.setChecked(False)
     window._absorb_all()
 
     window.filters.search.setText("Beta")
@@ -601,7 +596,6 @@ def test_a_search_that_matches_nothing_says_so(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    window.auto_absorb.setChecked(False)
     window._absorb_all()
 
     window.filters.search.setText("nothing like this")
@@ -643,13 +637,13 @@ def test_a_save_arriving_leaves_the_wall_revealed(full_window):
     win = full_window
     win.show_all_button.click()
 
-    # The save-arrival path exactly: the game writes the file, `Automatic`
-    # takes what is new, and the window redraws.
+    # The save-arrival path exactly: the game writes the file, the player
+    # absorbs what is new, and the window redraws.
     write_synthetic_stash(
         win.service.source, [f"Item {n:02d}" for n in range(PAGE_SIZE + 11)]
     )
-    win.auto_absorb.setChecked(True)
     win._sync()
+    win._absorb_all()
 
     assert win.collection_model.rowCount() == PAGE_SIZE + 11
     assert win.grid.count() == PAGE_SIZE + 11, "the reveal did not survive the save"
@@ -702,7 +696,7 @@ def test_the_stranded_view_has_no_strip(full_window):
     print_ = win.grid.rows()[0].fingerprint
     win._put_back_one(print_)
     write_stash_of(win.service.source, [])  # the game's save, from a memory
-    win._sync(write=False)
+    win._sync()
 
     win.stranded_button.click()
     assert win.grid.count() == 1, "the fixture's stranded item is not on the wall"
@@ -787,7 +781,6 @@ def test_the_advanced_panel_narrows_the_wall_and_clear_filters_puts_it_back(
     )
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.count() == 3, "the fixture did not stock the tool"
         assert win.sidebar.places() == set(), "something was ticked to start with"
@@ -880,7 +873,6 @@ def test_the_card_reading_facets_reach_the_wall(
     )
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.count() == 2, "the fixture did not stock the tool"
 
@@ -966,7 +958,6 @@ def test_the_wall_opens_on_the_ladder_and_the_arrow_turns_it(
     )
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.count() == 4, "the fixture did not stock the tool"
 
@@ -1020,7 +1011,6 @@ def test_one_card_stands_for_every_copy_of_its_item(qapp, tmp_path, monkeypatch)
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
 
         assert len(win.service.registry.absorbed_fingerprints()) == 2, (
@@ -1063,7 +1053,6 @@ def test_the_compare_button_shows_each_copy_and_puts_one_back(
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.count() == 1, "the two rolls were not one card"
         assert win.grid.rows()[0].copies == 2
@@ -1115,7 +1104,6 @@ def test_the_one_copy_card_sends_its_item_back_without_the_overlay(
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.rows()[0].copies == 1
         assert win.grid.tile(0).findChild(QPushButton, "compare") is None
@@ -1154,7 +1142,6 @@ def test_the_transfer_all_button_sends_every_copy_at_once(
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.rows()[0].copies == 2
 
@@ -1276,7 +1263,6 @@ def test_a_pile_is_one_card_counted_in_fish(qapp, tmp_path, game_install, monkey
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
 
         assert win.grid.count() == 1, "the two stacks were two cards"
@@ -1318,7 +1304,6 @@ def test_transfer_one_puts_a_single_fish_back(qapp, tmp_path, game_install, monk
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
 
         win.grid.tile(0).findChild(QPushButton, "transferone").click()
@@ -1352,7 +1337,6 @@ def test_transfer_all_counts_the_fish_rather_than_the_stacks(
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
 
         win.grid.tile(0).findChild(QPushButton, "transferall").click()
@@ -1450,7 +1434,7 @@ def test_a_stranded_item_is_drawn_without_a_way_back(stocked):
 
     # The game's save, from a memory that never had Alpha written into it.
     write_stash_of(win.service.source, [])
-    win._sync(write=False)
+    win._sync()
 
     assert win.stranded_button.text() == "Show Stranded Items (1)"
     win.stranded_button.click()
@@ -1485,7 +1469,7 @@ def test_recovering_makes_the_item_a_normal_member_again(stocked):
     ]
     win._put_back_one(print_)
     write_stash_of(win.service.source, [])
-    win._sync(write=False)
+    win._sync()
     untouched = win.service.source.read_bytes()
     win.stranded_button.click()
 
@@ -1528,7 +1512,7 @@ def test_removing_a_stranded_item_asks_first_and_can_be_refused(stocked, monkeyp
     ]
     win._put_back_one(print_)
     write_stash_of(win.service.source, [])
-    win._sync(write=False)
+    win._sync()
     win.stranded_button.click()
 
     asked = []
@@ -1572,7 +1556,7 @@ def test_confirmed_removal_takes_the_item_out_of_the_tool_for_good(
     ]
     win._put_back_one(print_)
     write_stash_of(win.service.source, [])
-    win._sync(write=False)
+    win._sync()
     untouched = win.service.source.read_bytes()
     win.stranded_button.click()
 
@@ -1789,7 +1773,7 @@ def test_clear_filters_puts_the_collection_back(stocked):
     ]
     win._put_back_one(print_)
     write_stash_of(win.service.source, [])  # the game's save, from a memory
-    win._sync(write=False)
+    win._sync()
 
     win.stranded_button.click()
     assert win.grid.count() == 1, "the fixture's stranded item is not on the wall"
@@ -1833,7 +1817,6 @@ def test_an_item_with_no_placement_of_its_own_is_routed_by_its_kind(
 
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win._game_data().stash_tabs == [24, 25, 26]
 
@@ -1880,7 +1863,6 @@ def test_a_click_on_a_set_name_shows_every_piece_of_that_set(
     )
     win = MainWindow(db_path=tmp_path / "items.db", source=stash, game=game_install)
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.grid.count() == 3, "the three were not all absorbed"
 
@@ -1957,7 +1939,7 @@ def test_the_selection_survives_a_refresh(stocked):
     stocked.grid.select_row(1)
     assert [row.name for row in stocked.grid.selected()] == ["Beta"]
 
-    stocked._sync(write=False)
+    stocked._sync()
 
     assert stocked.grid.count() == 3
     assert [row.name for row in stocked.grid.selected()] == ["Beta"], (
@@ -1991,7 +1973,7 @@ def test_the_poll_draws_no_card_again(stocked, monkeypatch):
     assert len(calls) == 0, "selecting a card drew it again"
 
     for _ in range(3):
-        stocked._sync(write=False)
+        stocked._sync()
 
     assert len(calls) == 0, "a refresh drew a card again"
     assert stocked.grid.tile(0).text() == "Alpha\nRequirements\nPlayer Level 5"
@@ -2034,7 +2016,6 @@ def test_a_window_that_cannot_read_the_game_still_absorbs(qapp, tmp_path, monkey
         db_path=tmp_path / "items.db", source=stash, game=tmp_path / "nowhere"
     )
     try:
-        win.auto_absorb.setChecked(False)
         win._absorb_all()
         assert win.collection_model.rowCount() == 2
         assert win.grid.count() == 2, "the cards were not drawn without the game"
@@ -2044,15 +2025,16 @@ def test_a_window_that_cannot_read_the_game_still_absorbs(qapp, tmp_path, monkey
 
 
 # --------------------------------------------------------------------------
-# The automatic pass -- what it acts on, and what it must not
+# Nothing is absorbed until the button is pressed
 # --------------------------------------------------------------------------
 
 
 def test_opening_the_window_does_not_absorb(window, tmp_path):
     """Looking is not deciding.
 
-    The stash may hold a session's worth of things the player has not thought
-    about yet, so startup shows them and touches nothing.
+    Opening the window is a look: the stash may hold a session's worth of
+    things the player has not thought about yet, and showing them is all that
+    happens.
     """
     assert window.stash_model.rowCount() == 3
     assert window.service.registry.absorbed_fingerprints() == set()
@@ -2060,14 +2042,21 @@ def test_opening_the_window_does_not_absorb(window, tmp_path):
 
 
 def test_pressing_refresh_does_not_absorb(window):
-    window._sync(write=False)
+    window.refresh_button.click()
     assert window.stash_model.rowCount() == 3
     assert window.service.registry.absorbed_fingerprints() == set()
 
 
-def test_a_save_is_absorbed_automatically(window, tmp_path):
-    """The flow the tool exists for: the player puts things in the stash, the
-    game saves, the items end up here and out of the game."""
+def test_a_save_is_not_absorbed(window, tmp_path):
+    """The whole of this change, in one test.
+
+    The player puts things in the stash and the game saves.  The tool shows
+    them -- the list over the button is what the file holds -- and takes
+    nothing, because nothing has been asked for.  Absorbing here is what
+    duplicated items: the game holds the shared stash in memory, so an item
+    taken out of the file from under a loaded character is an item the player
+    can still pick up in game.
+    """
     stash = window.service.source
     assert not window.watcher.changed(), "startup already accepted the file"
 
@@ -2077,35 +2066,36 @@ def test_a_save_is_absorbed_automatically(window, tmp_path):
 
     window._sync()
 
-    assert window.stash_model.rowCount() == 0
-    assert window.collection_model.rowCount() == 4
-    names = {
-        window.collection_model.item(r, 0).text()
-        for r in range(window.collection_model.rowCount())
-    }
-    assert "Delta" in names
-
-
-def test_automatic_off_leaves_the_stash_alone(window):
-    window.auto_absorb.setChecked(False)
-    window._sync()
-    assert window.stash_model.rowCount() == 3
+    assert window.stash_model.rowCount() == 4, "the new item is not in the list"
+    assert window.collection_model.rowCount() == 0
     assert window.service.registry.absorbed_fingerprints() == set()
+    assert [i.base_name for i in window.service.stash_items()][-1] == "Delta"
 
 
-def test_the_game_putting_an_item_back_is_undone(window):
-    """Torchlight saves from memory, so it re-adds what we took."""
+def test_the_game_putting_an_item_back_leaves_it_in_the_list(window, monkeypatch):
+    """Torchlight saves from memory, so it re-adds what was taken.
+
+    The tool's answer is to show it.  The item is in the game and the list
+    says so, and taking it back is the player's press to make -- not something
+    that happens to the file while they are looking at it.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
     stash = window.service.source
     game_saved = stash.read_bytes()
 
-    window._sync()
+    window._absorb_all()
     assert window.stash_model.rowCount() == 0
 
     stash.write_bytes(game_saved)  # the game saves its in-memory copy
     window._sync()
 
-    assert window.stash_model.rowCount() == 0
-    assert window.collection_model.rowCount() == 3
+    assert window.stash_model.rowCount() == 3
+    assert stash.read_bytes() == game_saved, "the tool took them out again"
+    assert window.collection_model.rowCount() == 3, "the tool's own copies are gone"
 
 
 # --------------------------------------------------------------------------
@@ -2119,7 +2109,6 @@ def test_absorb_everything_takes_the_lot(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    window.auto_absorb.setChecked(False)
 
     window._absorb_all()
 
@@ -2135,7 +2124,6 @@ def test_absorb_everything_can_be_cancelled(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel
     )
-    window.auto_absorb.setChecked(False)
 
     window._absorb_all()
 
@@ -2149,7 +2137,6 @@ def test_restore_puts_the_item_back(window, monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
     )
-    window.auto_absorb.setChecked(False)
     window._absorb_all()
     assert window.stash_model.rowCount() == 0
 
@@ -2161,8 +2148,8 @@ def test_restore_puts_the_item_back(window, monkeypatch):
     assert window.grid.count() == 2
 
 
-def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch):
-    """The whole point of the in_stash status, at the window level."""
+def test_restoring_does_not_get_undone_by_a_look(window, monkeypatch):
+    """A restored item is the game's until the player asks for it again."""
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(
@@ -2171,7 +2158,6 @@ def test_restoring_does_not_get_undone_by_the_automatic_pass(window, monkeypatch
     window._absorb_all()
     window.grid.tile(0).findChild(QPushButton, "transfer").click()
 
-    window.auto_absorb.setChecked(True)
     window._sync()
 
     assert window.stash_model.rowCount() == 1, "the restored item vanished again"

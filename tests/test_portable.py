@@ -206,10 +206,10 @@ def test_reading_the_same_file_back_in_changes_nothing(tmp_path):
 def test_an_item_the_registry_already_has_keeps_its_status(tmp_path):
     """An import must not resurrect an item the game now holds.
 
-    ``returned`` is what keeps the automatic vacuum off an item the player
-    deliberately put back.  If reading a collection reset it to ``absorbed``,
-    the tool would take the item out of the game again on the next save -- and
-    "put it back" would be a button that works until you save.
+    ``returned`` is what says an item is the game's and not the tool's.  If
+    reading a collection reset it to ``absorbed``, the collection would list
+    an item sitting in the player's stash -- one item claimed by two places,
+    which is exactly what the status keeps straight.
     """
     registry, location = _holding(tmp_path, ["Bashdrill"])
     text = _export(registry, location)
