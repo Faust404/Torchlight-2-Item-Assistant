@@ -24,6 +24,7 @@ Nothing here is needed to use it.
 | SQLite registry, move-stable identity | done |
 | item removal (the mechanism that makes items vanish) | done, verified on copies |
 | file watcher | done — the view follows the game's saves; nothing acts on them |
+| the game's own use of the file — a read at each character load, a write at each save, nothing in between | measured in game |
 | a separate stash and database per save file | done |
 | the game's data files (PAK/DAT) | done — 10,355 files in 0.74 s |
 | in-game item stats | done — damage, armour, effects and flat damage all render |
@@ -36,13 +37,21 @@ Nothing here is needed to use it.
 
 ## How it works
 
-Torchlight 2 scrambles `sharedstash_v2.bin` and rewrites it from memory at
-save points (exit to title, map transition, death). That rewrite is what makes
-this tool possible *and* what constrains it. An external edit made while the
-game runs survives only until the game's next save — and an edit that *removes*
-something is worse than one that adds, because the game still has its own copy
-in memory: the item can be picked up again in game, and the player ends up
-holding two.
+Torchlight 2 scrambles `sharedstash_v2.bin` and holds the shared stash in
+memory for the whole session. It meets the file at two moments and no others:
+it **reads** it when a character loads, and it **rewrites** it from what it is
+holding when it saves. Everything between those two moments is a gap in which
+the file and the game disagree, and two measurements in game say how the tool
+has to behave inside it — closing the shared stash does **not** write the file,
+and opening it does **not** re-read it. So a deposit is invisible here until
+the game commits it, and a write made from here is invisible in game until the
+next character loads.
+
+That rewrite is what makes this tool possible *and* what constrains it. An
+external edit made while the game runs survives only until the game's next
+save — and an edit that *removes* something is worse than one that adds,
+because the game still has its own copy in memory: the item can be picked up
+again in game, and the player ends up holding two.
 
 So the tool does not try to intercept the game, and it does not try to outlast
 it either. It watches the file so that the list of what the game is holding is
@@ -67,6 +76,22 @@ are in the registry *and* it is out of the file, and only the second half is
 ever written — at a button, on the player's word. An item the game puts back is
 not taken out again behind its back; it reappears under *In the game*, where
 the player can see it and absorb it once more.
+
+**Why it is not real-time, and cannot be.** The two moments above are the whole
+answer to the question this tool gets asked most. An item cannot be made to
+appear in game the moment it is sent, because the game is not reading: the only
+reads are character loads, and the save that ends a session — the exit to the
+title screen — rewrites the file from the game's own memory first. A write made
+while a character is loaded is erased by that save before any load could reach
+it; the one gap wide enough to slip a write through is between the save and the
+next load, and that gap is the title screen. The other direction has the same wall
+from the other side: the game is holding the item, so taking it out of the file
+leaves a copy behind that is still takeable in game. Both walls belong to the
+game's design rather than this tool's, and the only way past them is code
+running inside `Torchlight2.exe` — which is what Grim Dawn's item assistant
+does, by intercepting the call that adds an item to the stash and refusing it.
+This tool deliberately does not do that: it never touches the game's process,
+and that is worth more than the latency it costs.
 
 ## Layout
 

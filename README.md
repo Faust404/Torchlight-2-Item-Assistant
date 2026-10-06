@@ -38,16 +38,18 @@ write to at all. Set `TL2IA_DATA` to a path to keep it somewhere else.
 
 1. **In game, drop what you want to keep into the shared stash.** Any tab,
    anything — the tool does not care what it is.
-2. **Let the game save.** Exit to the title screen, change map, die. Anything
-   that makes it write its save.
+2. **Exit to the title screen.** That is the game's save, and the list under
+   *In the game* is the file the game last wrote — nothing sooner.
 3. **Press Absorb everything.** The items move from *In the game* to *In the
-   tool* — out of the file and into the collection. Until you press it they sit
-   under *In the game*, which is what the file the game wrote holds.
-4. **To get something back**, click **Transfer to Stash** on its card. It goes
-   into the shared stash and is there the next time you load a character.
+   tool* — out of the file and into the collection.
+4. **To get something back**, click **Transfer to Stash** on its card, also
+   from the title screen. It goes into the shared stash and is there the next
+   time you load a character.
 
 That is the whole of it. The stash is the inbox, and **Absorb everything** is
 the only thing that empties it: the tool never writes a stash file on its own.
+Both directions belong at the title screen — [When to do
+what](#when-to-do-what) is the why.
 
 ### Reading the window
 
@@ -56,7 +58,7 @@ Three panes, left to right:
 | pane | what it is |
 |---|---|
 | **Type** | the rail of item kinds. Tick one to narrow the collection to it. |
-| **In the game** | what is in the shared stash *right now*, as of the last look. |
+| **In the game** | the shared stash as the game last *saved* it — the file, not the screen. |
 | **In the tool** | your collection — everything the tool is holding for this stash. |
 
 Above them, a bar. The tool finds your stash files by itself and lists them in
@@ -112,17 +114,24 @@ There is one rule, and it covers both directions:
 **Do your stash work — absorbing and sending back — while you are at the main
 menu.**
 
-The game holds the shared stash in memory for the whole session and rewrites
-the whole file every time it saves. While a character is loaded, then, the file
-on disk and the stash on screen are two different things, and the game wins
-every disagreement:
+The game holds the shared stash in memory for the whole session. It meets the
+file at two moments only: it *reads* it when a character loads, and it
+*rewrites* it when it saves. Between those moments the file on disk and the
+stash on screen are two different things, and the game wins every
+disagreement:
 
-* An item sent *to* the file is erased by the game's next save, which never
-  knew about it. That is the item that comes back *stranded*.
-* An item absorbed *from* the file is still in the game's memory to be picked
-  up, so you end up holding two: the tool's copy and the game's.
+* It does not read the file again until the next character load, so an item
+  sent *to* the file while you are playing cannot appear in game — and the
+  game's next save erases it unseen. That is the item that comes back
+  *stranded*.
+* It does not let go of what it is holding until the session ends, so an item
+  absorbed *from* the file can still be picked up in game, and you end up
+  holding two: the tool's copy and the game's.
 
-The second is why the tool no longer absorbs by itself. It used to watch for
+Closing the shared stash is not a save, and opening it is not a re-read: the
+list in the tool is exactly as fresh as the game's last save, and no fresher.
+
+The second point is why the tool no longer absorbs by itself. It used to watch for
 the file to change and take what it found there, which is exactly a removal
 made behind the game's back — and the game, not knowing, would hand the item
 over again. Now nothing leaves the stash until you press **Absorb everything**,
@@ -155,10 +164,18 @@ the rest of the file still comes in.
 
 When you press **Absorb everything**, and the game has let go of them. The tool
 takes them out of the file the game wrote; the game, until it reads that file
-again, still has its own copy in memory to show you. That is why the press
-belongs at the main menu — there the game has already saved, so the items are
-gone from the stash for good. In short: drop items in, exit to the title
-screen, press Absorb everything.
+again — and it reads it only when a character loads — still has its own copy in
+memory to show you. That is why the press belongs at the main menu: there the
+game has already saved and let go, so the items are gone from the stash for
+good. In short: drop items in, exit to the title screen, press Absorb
+everything.
+
+### I dropped items in the shared stash but the tool does not show them yet.
+
+The tool shows what the game last *wrote*, and the game writes the file when
+it saves — closing the shared stash is not a save. Exit to the title screen and
+the list catches up. Nothing is lost in the meantime: the items are in the
+game, and they reach the tool the moment the game commits them to the file.
 
 ### I sent an item back and it vanished.
 
@@ -288,9 +305,9 @@ to move a collection across.
 ### Does it need the game closed?
 
 No. It reads the save file whenever the game writes it, so the list under *In
-the game* keeps up while you play — and it never writes a stash file except
-when you press a button. When you press that button still matters, though: see
-[When to do what](#when-to-do-what).
+the game* keeps up with the game's saves — and it never writes a stash file
+except when you press a button. When you press that button still matters,
+though: see [When to do what](#when-to-do-what).
 
 ### What does it need?
 
