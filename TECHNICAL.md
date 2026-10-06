@@ -24,7 +24,8 @@ Nothing here is needed to use it.
 | SQLite registry, move-stable identity | done |
 | item removal (the mechanism that makes items vanish) | done, verified on copies |
 | file watcher | done — the view follows the game's saves; nothing acts on them |
-| the game's own use of the file — a read at each character load, a write at each save, nothing in between | measured in game |
+| the game's own use of the file — a read at each character load, a write at each save, and a zone change is a save | measured in game |
+| the game's window title — the same at the title screen and in play, so it marks neither | measured in game |
 | a separate stash and database per save file | done |
 | the game's data files (PAK/DAT) | done — 10,355 files in 0.74 s |
 | in-game item stats | done — damage, armour, effects and flat damage all render |
@@ -40,12 +41,14 @@ Nothing here is needed to use it.
 Torchlight 2 scrambles `sharedstash_v2.bin` and holds the shared stash in
 memory for the whole session. It meets the file at two moments and no others:
 it **reads** it when a character loads, and it **rewrites** it from what it is
-holding when it saves. Everything between those two moments is a gap in which
-the file and the game disagree, and two measurements in game say how the tool
-has to behave inside it — closing the shared stash does **not** write the file,
-and opening it does **not** re-read it. So a deposit is invisible here until
-the game commits it, and a write made from here is invisible in game until the
-next character loads.
+holding when it saves — and it saves often, on a zone change and on the way out
+to the title screen. Everything between those two moments is a gap in which the
+file and the game disagree, and measurement in game says how the tool has to
+behave inside it — closing the shared stash does **not** write the file, and
+opening it does **not** re-read it. So a deposit is invisible here until the
+game commits it, and a write made from here is invisible in game until the next
+character load — if it survives that long, since the next save rewrites the
+stash from a memory that never had it.
 
 That rewrite is what makes this tool possible *and* what constrains it. An
 external edit made while the game runs survives only until the game's next
@@ -58,9 +61,9 @@ it either. It watches the file so that the list of what the game is holding is
 never stale, and it writes the file in exactly one place — the button that
 empties the stash. An earlier version absorbed on every save by itself, which
 is precisely the removal described above, made behind the game's back; the
-button is the fix, and pressing it at the main menu is what keeps it a fix.
-There the game has already saved and let go, so the items are gone from the
-file it wrote, and the next load reads a stash without them.
+button is the fix, and pressing it at the title screen is what keeps it a fix.
+With no character loaded, nothing can be taken back out of the stash, and the
+next load reads a file without the items.
 
 Removal is safe because nothing is ever re-encoded. Each item keeps its
 original bytes, so taking one out means dropping its blob and decrementing a
@@ -80,11 +83,13 @@ the player can see it and absorb it once more.
 **Why it is not real-time, and cannot be.** The two moments above are the whole
 answer to the question this tool gets asked most. An item cannot be made to
 appear in game the moment it is sent, because the game is not reading: the only
-reads are character loads, and the save that ends a session — the exit to the
-title screen — rewrites the file from the game's own memory first. A write made
-while a character is loaded is erased by that save before any load could reach
-it; the one gap wide enough to slip a write through is between the save and the
-next load, and that gap is the title screen. The other direction has the same wall
+reads are character loads, and every load begins by taking the file's word for
+what the stash holds. A write made while a character is loaded therefore has
+the life of a mayfly — measured in game, an item sent in play was erased five
+seconds later by the save a zone change makes, because that save rewrote the
+stash from the memory that never had it. The one gap wide enough to slip a
+write through is the one where nothing is loaded, which is the title screen.
+The other direction has the same wall
 from the other side: the game is holding the item, so taking it out of the file
 leaves a copy behind that is still takeable in game. Both walls belong to the
 game's design rather than this tool's, and the only way past them is code
